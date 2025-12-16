@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # ========================================
+  # BASE DE DATOS - PostgreSQL
+  # ========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: jmeter_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jmeter_user
+      POSTGRES_PASSWORD: jmeter_secure_2024
+      POSTGRES_DB: jmeter_analyzer_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - jmeter_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jmeter_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========================================
+  # BACKEND - FastAPI (Puerto 8001)
+  # ========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jmeter_backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://jmeter_user:jmeter_secure_2024@postgres:5432/jmeter_analyzer_db
+      - SECRET_KEY=bKp_8xN9mQ2vR5wZ1aE7fH3jL6kM0nY4cT2sW8dX1gV5pU9iO3hB7eN0qA4rJ6m
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BACKEND_PORT=8001
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    ports:
+      - "8001:8001"
+    networks:
+      - jmeter_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+  # ========================================
+  # FRONTEND - React (Puerto 5173)
+  # ========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jmeter_frontend
+    restart: unless-stopped
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8001/api/v1
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    networks:
+      - jmeter_network
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    stdin_open: true
+    tty: true
+
+# ========================================
+# NETWORKS
+# ========================================
+networks:
+  jmeter_network:
+    driver: bridge
+
+# ========================================
+# VOLUMES
+# ========================================
+volumes:
+  postgres_data:
+  uploads_data:

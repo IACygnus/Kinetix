@@ -1,0 +1,34 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Auth & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Data Processing (JTL Parser)
+pandas==2.1.4
+lxml==4.9.3
+numpy==1.24.3
+
+# AI - Gemini
+google-generativeai==0.3.1
+
+# Utilities
+python-dotenv==1.0.0
+httpx==0.25.2
+python-dateutil==2.8.2
+aiofiles==23.2.1
+email-validator==2.1.0.post1
+
+# Export HTML con gráficos (NUEVO)
+matplotlib==3.8.2
+pillow==10.1.0
