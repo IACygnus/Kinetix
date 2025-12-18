@@ -54,6 +54,7 @@ class TestExecutionResponse(TestExecutionBase):
     ai_analysis_transactions_per_second: Optional[str] = None
     ai_analysis_active_threads: Optional[str] = None
     ai_recommendations: Optional[str] = None
+    ai_conclusions: Optional[str] = None  # ✅ CORREGIDO: Sintaxis Pydantic correcta
     
     # Timestamps
     execution_date: Optional[datetime] = None
@@ -96,3 +97,4 @@ class ChartData(BaseModel):
     codes_per_second: List[TimeSeriesPoint] = []
     tps_by_label: List[TimeSeriesPoint] = []
     active_threads_timeline: List[TimeSeriesPoint] = []
+    # ✅ REMOVIDO: ai_conclusions no pertenece aquí (es metadata de TestExecution)

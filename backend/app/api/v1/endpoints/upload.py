@@ -1,5 +1,5 @@
 """
-Endpoints de JTL Upload y Análisis - CORREGIDO CON VALIDACIÓN UUID
+Endpoints de JTL Upload y Análisis - CON SÍNTESIS INTELIGENTE DE IA
 """
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ async def upload_jtl(
     acceptance_criteria: str = Query(""),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload y procesar archivo JTL con criterios de aceptación opcionales"""
+    """Upload y procesar archivo JTL con análisis IA completo y síntesis inteligente"""
     
     # Validar extensión
     if not file.filename.endswith(('.jtl', '.csv')):
@@ -49,27 +49,28 @@ async def upload_jtl(
         await f.write(content)
     
     try:
+        logger.info(f"🚀 Iniciando procesamiento de {file.filename}")
+        
         # Parsear JTL
         parser = JTLParser(str(file_path))
         df, metrics = parser.parse()
         
-        # Analizar con IA - ANÁLISIS GENERAL
-        ai_results = gemini_analyzer.analyze_performance(metrics, acceptance_criteria)
+        logger.info(f"📊 JTL parseado: {len(df)} muestras")
         
-        # Generar datos para análisis específicos
+        # ===== ANÁLISIS IA - TABLA RESUMEN =====
+        logger.info("🤖 [1/10] Analizando tabla resumen...")
         summary_df = parser.get_summary_table_data()
-        
-        # Análisis de tabla resumen
         ai_analysis_summary = gemini_analyzer.analyze_summary_table(summary_df, metrics)
         
-        # Análisis de errores
+        # ===== ANÁLISIS IA - ERRORES =====
+        logger.info("🤖 [2/10] Analizando errores...")
         errors_for_analysis = []
         for _, row in summary_df.iterrows():
             if row['errores'] > 0:
                 errors_for_analysis.append({
                     'label': row['label'],
                     'count': int(row['errores']),
-                    'code': '404/405',  # Simplificado
+                    'code': '404/405',
                     'message': 'Not Found / Method Not Allowed'
                 })
         
@@ -78,7 +79,100 @@ async def upload_jtl(
             metrics['total_requests']
         )
         
-        # Crear registro en BD - CON TODOS LOS ANÁLISIS
+        # ===== ANÁLISIS IA - GRÁFICOS =====
+        logger.info("🤖 [3-10/10] Analizando 8 gráficos individuales...")
+        
+        # Response Times por Transacción
+        ai_analysis_response_times = gemini_analyzer.analyze_chart(
+            'response_times',
+            f"Transacciones principales:\n" + "\n".join([
+                f"- {row['label']}: promedio {row['promedio']:.0f}ms, P95 {row['p95']:.0f}ms"
+                for _, row in summary_df.head(5).iterrows()
+            ])
+        )
+        
+        # Response Time Over Time
+        charts_data = parser.get_all_charts_data(interval_seconds=10)
+        timeline_summary = f"Tiempo promedio: {metrics['avg_response_time']:.0f}ms, Rango: {metrics['min_response_time']:.0f}ms - {metrics['max_response_time']:.0f}ms"
+        ai_analysis_response_time_over_time = gemini_analyzer.analyze_chart(
+            'response_time_over_time',
+            timeline_summary
+        )
+        
+        # Throughput
+        ai_analysis_throughput = gemini_analyzer.analyze_chart(
+            'throughput',
+            f"Throughput promedio: {metrics['throughput']:.2f} req/s durante {metrics['duration_seconds']:.0f} segundos"
+        )
+        
+        # Latency
+        ai_analysis_latency = gemini_analyzer.analyze_chart(
+            'latency',
+            f"Latencia promedio: {metrics.get('avg_latency', 0):.2f}ms"
+        )
+        
+        # Error Rate
+        ai_analysis_error_rate = gemini_analyzer.analyze_chart(
+            'error_rate',
+            f"Tasa de error: {metrics['error_rate']:.2f}% ({metrics['total_errors']} de {metrics['total_requests']} requests)"
+        )
+        
+        # Codes per Second
+        ai_analysis_codes_per_second = gemini_analyzer.analyze_chart(
+            'codes_per_second',
+            f"Códigos HTTP detectados durante la prueba"
+        )
+        
+        # Transactions per Second
+        tps_summary = f"TPS total: {metrics['throughput']:.2f} req/s distribuidos entre {len(summary_df)} transacciones"
+        ai_analysis_transactions_per_second = gemini_analyzer.analyze_chart(
+            'transactions_per_second',
+            tps_summary
+        )
+        
+        # Active Threads
+        ai_analysis_active_threads = gemini_analyzer.analyze_chart(
+            'active_threads',
+            f"Concurrencia durante la prueba de {metrics['duration_seconds']:.0f} segundos"
+        )
+        
+        logger.info("✅ Análisis individuales completados")
+        
+        # ===== ✅ SÍNTESIS INTELIGENTE - CONCLUSIONES =====
+        logger.info("🤖 💡 Sintetizando TODOS los análisis para generar conclusiones...")
+        ai_conclusions = gemini_analyzer.generate_conclusions(
+            metrics=metrics,
+            ai_analysis_summary=ai_analysis_summary,
+            ai_analysis_errors=ai_analysis_errors,
+            ai_analysis_response_times=ai_analysis_response_times,
+            ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
+            ai_analysis_throughput=ai_analysis_throughput,
+            ai_analysis_latency=ai_analysis_latency,
+            ai_analysis_error_rate=ai_analysis_error_rate,
+            ai_analysis_codes_per_second=ai_analysis_codes_per_second,
+            ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
+            ai_analysis_active_threads=ai_analysis_active_threads
+        )
+        
+        # ===== ✅ SÍNTESIS INTELIGENTE - RECOMENDACIONES =====
+        logger.info("🤖 💡 Generando recomendaciones basadas en TODOS los análisis...")
+        ai_recommendations = gemini_analyzer.generate_recommendations(
+            metrics=metrics,
+            ai_analysis_summary=ai_analysis_summary,
+            ai_analysis_errors=ai_analysis_errors,
+            ai_analysis_response_times=ai_analysis_response_times,
+            ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
+            ai_analysis_throughput=ai_analysis_throughput,
+            ai_analysis_latency=ai_analysis_latency,
+            ai_analysis_error_rate=ai_analysis_error_rate,
+            ai_analysis_codes_per_second=ai_analysis_codes_per_second,
+            ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
+            ai_analysis_active_threads=ai_analysis_active_threads
+        )
+        
+        logger.info("✅ Síntesis completada - Conclusiones y Recomendaciones generadas")
+        
+        # ===== CREAR REGISTRO EN BD =====
         execution = TestExecution(
             id=uuid.uuid4(),
             user_id=None,
@@ -110,20 +204,23 @@ async def upload_jtl(
             kb_per_sec_received=float(metrics.get('kb_per_sec_received', 0)),
             kb_per_sec_sent=float(metrics.get('kb_per_sec_sent', 0)),
             
-            # Análisis IA - TODOS LOS CAMPOS
+            # ✅ ANÁLISIS IA - TODOS LOS CAMPOS COMPLETOS
             ai_analysis_summary=ai_analysis_summary,
             ai_analysis_errors=ai_analysis_errors,
-            ai_recommendations=ai_results.get('recommendations', ''),
             
-            # Los otros análisis se generarán bajo demanda o aquí si quieres
-            ai_analysis_response_times='',
-            ai_analysis_response_time_over_time='',
-            ai_analysis_throughput='',
-            ai_analysis_latency='',
-            ai_analysis_error_rate='',
-            ai_analysis_codes_per_second='',
-            ai_analysis_transactions_per_second='',
-            ai_analysis_active_threads='',
+            # ✅ Análisis de gráficos
+            ai_analysis_response_times=ai_analysis_response_times,
+            ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
+            ai_analysis_throughput=ai_analysis_throughput,
+            ai_analysis_latency=ai_analysis_latency,
+            ai_analysis_error_rate=ai_analysis_error_rate,
+            ai_analysis_codes_per_second=ai_analysis_codes_per_second,
+            ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
+            ai_analysis_active_threads=ai_analysis_active_threads,
+            
+            # ✅ SÍNTESIS INTELIGENTE (basada en TODOS los análisis previos)
+            ai_conclusions=ai_conclusions,  # ✅ NUEVO: Guardado de conclusiones
+            ai_recommendations=ai_recommendations,
             
             execution_date=datetime.now()
         )
@@ -132,30 +229,20 @@ async def upload_jtl(
         await db.commit()
         await db.refresh(execution)
         
+        logger.info(f"✅ Ejecución guardada con análisis completo: {execution.id}")
+        
         return execution
         
     except Exception as e:
-        error_detail = f"Error procesando JTL: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-        raise HTTPException(status_code=400, detail=f"Error procesando JTL: {str(e)}")
-
-@router.get("/executions", response_model=List[TestExecutionResponse])
-async def get_executions(
-    limit: int = Query(10, ge=1, le=100),
-    db: AsyncSession = Depends(get_db)
-):
-    """Listar ejecuciones"""
-    result = await db.execute(
-        select(TestExecution)
-        .order_by(TestExecution.created_at.desc())
-        .limit(limit)
-    )
-    executions = result.scalars().all()
-    return executions
+        logger.exception(f"❌ Error procesando JTL: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando archivo JTL: {str(e)}\n{traceback.format_exc()}"
+        )
 
 @router.get("/executions/{execution_id}", response_model=TestExecutionResponse)
 async def get_execution(execution_id: str, db: AsyncSession = Depends(get_db)):
-    """Obtener ejecución específica"""
+    """Obtener detalles de una ejecución con validación UUID"""
     
     # ✅ VALIDACIÓN DEL UUID
     try:
@@ -179,45 +266,30 @@ async def get_execution(execution_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/executions/{execution_id}/charts", response_model=ChartData)
 async def get_execution_charts(execution_id: str, db: AsyncSession = Depends(get_db)):
-    """Obtener datos para gráficos - CORREGIDO CON VALIDACIÓN"""
+    """Obtener datos de gráficos para una ejecución con validación UUID"""
     
-    # ✅ VALIDACIÓN EXPLÍCITA DEL UUID
+    # ✅ VALIDACIÓN DEL UUID
     try:
         exec_uuid = uuid.UUID(execution_id)
-        logger.info(f"📊 Solicitando charts para execution_id: {exec_uuid}")
     except (ValueError, AttributeError) as e:
-        logger.error(f"❌ UUID inválido recibido: '{execution_id}' - Error: {str(e)}")
+        logger.error(f"UUID inválido en get_execution_charts: {execution_id} - Error: {str(e)}")
         raise HTTPException(
             status_code=400,
             detail=f"ID de ejecución inválido. Se esperaba un UUID válido, se recibió: '{execution_id}'"
         )
     
-    # Verificar que la ejecución existe
-    try:
-        result = await db.execute(
-            select(TestExecution).where(TestExecution.id == exec_uuid)
-        )
-        execution = result.scalar_one_or_none()
-        
-        if not execution:
-            logger.warning(f"⚠️ Ejecución no encontrada: {exec_uuid}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"No se encontró la ejecución con ID: {execution_id}"
-            )
-        
-        logger.info(f"✅ Ejecución encontrada: {execution.name} (archivo: {execution.jtl_filename})")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"❌ Error buscando ejecución {exec_uuid}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error consultando la ejecución: {str(e)}"
-        )
+    # Verificar que existe
+    result = await db.execute(
+        select(TestExecution).where(TestExecution.id == exec_uuid)
+    )
+    execution = result.scalar_one_or_none()
     
-    # Buscar archivo JTL original
+    if not execution:
+        raise HTTPException(status_code=404, detail="Ejecución no encontrada")
+    
+    logger.info(f"📊 Buscando archivo JTL para ejecución {exec_uuid}")
+    
+    # Buscar el archivo JTL correspondiente
     upload_dir = Path("/app/uploads")
     jtl_files = list(upload_dir.glob(f"*{execution.jtl_filename}"))
     
@@ -386,6 +458,7 @@ class UpdateAnalysisRequest(BaseModel):
     ai_analysis_transactions_per_second: Optional[str] = None
     ai_analysis_active_threads: Optional[str] = None
     ai_recommendations: Optional[str] = None
+    ai_conclusions: Optional[str] = None  # ✅ NUEVO: Agregar conclusiones
 
 @router.put("/executions/{execution_id}/analysis")
 async def update_analysis(
@@ -393,7 +466,7 @@ async def update_analysis(
     data: UpdateAnalysisRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Actualizar análisis IA editados"""
+    """Actualizar análisis IA editados incluyendo conclusiones"""
     
     # ✅ VALIDACIÓN DEL UUID
     try:
@@ -424,6 +497,6 @@ async def update_analysis(
             .values(**update_data)
         )
         await db.commit()
-        logger.info(f"✅ Análisis actualizado para {exec_uuid}")
+        logger.info(f"✅ Análisis actualizado para {exec_uuid} ({len(update_data)} campos)")
     
     return {"success": True, "message": "Análisis actualizado correctamente"}

@@ -6,6 +6,8 @@ import {
 import { ArrowLeft, BookOpen, Save, FileDown, FileCode } from 'lucide-react';
 import { testAPI } from '../../services/api';
 import LoadingSpinner from '../common/LoadingSpinner';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 interface DashboardProps {
   executionId: string | null;
@@ -30,6 +32,10 @@ export default function Dashboard({ executionId, onLogout, onBack }: DashboardPr
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [timeMode, setTimeMode] = useState<'elapsed' | 'real'>('elapsed');
+  
+  // ✅ NUEVO: Estados para exportar PDF
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState(0);
   
   const [analysisSummary, setAnalysisSummary] = useState('');
   const [analysisErrors, setAnalysisErrors] = useState('');
@@ -123,41 +129,99 @@ export default function Dashboard({ executionId, onLogout, onBack }: DashboardPr
       alert('Error al exportar HTML. Por favor, intenta de nuevo.');
     }
   };
-  
- <button
-    onClick={async () => {
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/api/v1/executions/${executionId}/export/pdf`,
-          {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
-            }
-          }
-        );
-        
-        if (response.ok) {
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `reporte_${execution.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
-          a.click();
-          window.URL.revokeObjectURL(url);
-        } else {
-          const errorText = await response.text();
-          alert(`Error al exportar PDF: ${errorText}`);
-        }
-      } catch (error) {
-        console.error('Error:', error);
-        alert('Error al exportar PDF. Verifica que WeasyPrint esté instalado.');
+
+  // ✅ NUEVA FUNCIÓN: Exportar PDF capturando TODO el dashboard
+  const handleExportPDF = async () => {
+    setIsExportingPDF(true);
+    setPdfProgress(10);
+
+    try {
+      console.log('🎨 Iniciando exportación PDF...');
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setPdfProgress(20);
+
+      const element = document.getElementById('dashboard-content');
+      if (!element) {
+        throw new Error('No se encontró el contenedor del dashboard');
       }
-    }}
-    className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2 transition-colors"
-  >
-    <FileDown size={20} />
-    📄 Exportar PDF
-  </button>
+
+      console.log('📦 Ocultando botones...');
+      const exportButtons = document.querySelector('.export-buttons');
+      if (exportButtons) {
+        (exportButtons as HTMLElement).style.display = 'none';
+      }
+
+      setPdfProgress(30);
+
+      console.log('📸 Capturando con html2canvas...');
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        allowTaint: false,
+        backgroundColor: '#f9fafb',
+        windowWidth: 1400,
+        onclone: (clonedDoc) => {
+          const clonedElement = clonedDoc.getElementById('dashboard-content');
+          if (clonedElement) {
+            clonedElement.style.width = '1400px';
+          }
+        }
+      });
+
+      setPdfProgress(60);
+
+      console.log('📄 Generando PDF...');
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      setPdfProgress(90);
+
+      const filename = `reporte_${execution.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(filename);
+
+      console.log('✅ PDF generado:', filename);
+      setPdfProgress(100);
+
+      if (exportButtons) {
+        (exportButtons as HTMLElement).style.display = '';
+      }
+
+      setTimeout(() => {
+        setIsExportingPDF(false);
+        setPdfProgress(0);
+      }, 1000);
+
+    } catch (error) {
+      console.error('❌ Error:', error);
+      alert('Error al generar el PDF. Por favor, intenta de nuevo.');
+      setIsExportingPDF(false);
+      setPdfProgress(0);
+      
+      const exportButtons = document.querySelector('.export-buttons');
+      if (exportButtons) {
+        (exportButtons as HTMLElement).style.display = '';
+      }
+    }
+  };
+  
 
   const prepareChartData = (timelineData: any[]) => {
     if (!timelineData || timelineData.length === 0) return [];
@@ -273,7 +337,7 @@ export default function Dashboard({ executionId, onLogout, onBack }: DashboardPr
     }));
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50" id="dashboard-content">
       {/* HEADER */}
       <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white shadow-2xl">
         <div className="max-w-[1400px] mx-auto px-8 py-6">
@@ -299,23 +363,28 @@ export default function Dashboard({ executionId, onLogout, onBack }: DashboardPr
 
           <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6">
             <h2 className="text-sm text-blue-200 mb-2">NOMBRE DEL PROYECTO</h2>
-            <h3 className="text-2xl font-bold mb-4">{execution.name}</h3>
+            <h3 className="text-2xl font-bold mb-2">{execution.name}</h3>
+            {execution.description && (
+              <p className="text-blue-100 text-sm mb-4">
+                <span className="text-blue-300">Cliente:</span> {execution.description}
+              </p>
+            )}
             <div className="grid grid-cols-4 gap-4">
               <div>
-                <p className="text-blue-200 text-xs mb-1 flex items-center gap-2"><span>📄</span> Archivo</p>
-                <p className="font-mono text-sm">{execution.jtl_filename}</p>
+                <p className="text-blue-200 text-sm mb-1 font-semibold flex items-center gap-2"><span>📄</span> Archivo</p>
+                <p className="font-mono text-base font-semibold">{execution.jtl_filename}</p>
               </div>
               <div>
-                <p className="text-blue-200 text-xs mb-1 flex items-center gap-2"><span>🚀</span> Inicio</p>
-                <p className="font-mono text-sm">{execution.start_time ? new Date(execution.start_time).toLocaleString('es-ES') : '--'}</p>
+                <p className="text-blue-200 text-sm mb-1 font-semibold flex items-center gap-2"><span>🚀</span> Inicio</p>
+                <p className="font-mono text-base font-semibold">{execution.start_time ? new Date(execution.start_time).toLocaleString('es-ES') : '--'}</p>
               </div>
               <div>
-                <p className="text-blue-200 text-xs mb-1 flex items-center gap-2"><span>🏁</span> Fin</p>
-                <p className="font-mono text-sm">{execution.end_time ? new Date(execution.end_time).toLocaleString('es-ES') : '--'}</p>
+                <p className="text-blue-200 text-sm mb-1 font-semibold flex items-center gap-2"><span>🏁</span> Fin</p>
+                <p className="font-mono text-base font-semibold">{execution.end_time ? new Date(execution.end_time).toLocaleString('es-ES') : '--'}</p>
               </div>
               <div>
-                <p className="text-blue-200 text-xs mb-1 flex items-center gap-2"><span>⏱️</span> Duración</p>
-                <p className="font-mono text-sm">{execution.duration_seconds ? `${Math.floor(execution.duration_seconds / 60)}m ${Math.floor(execution.duration_seconds % 60)}s` : '--'}</p>
+                <p className="text-blue-200 text-sm mb-1 font-semibold flex items-center gap-2"><span>⏱️</span> Duración</p>
+                <p className="font-mono text-base font-semibold">{execution.duration_seconds ? `${Math.floor(execution.duration_seconds / 60)}m ${Math.floor(execution.duration_seconds % 60)}s` : '--'}</p>
               </div>
             </div>
           </div>
@@ -763,18 +832,64 @@ export default function Dashboard({ executionId, onLogout, onBack }: DashboardPr
         </div>
 
         {/* BOTONES DE ACCIÓN */}
-        <div className="flex justify-center gap-4 mb-8">
-          <button onClick={handleSaveChanges} disabled={saving} className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg shadow-lg hover:from-green-700 hover:to-green-800 transition-all disabled:opacity-50">
+        {isExportingPDF && (
+          <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              <span className="text-blue-800 font-bold text-lg">
+                Generando PDF completo... {pdfProgress}%
+              </span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-2 overflow-hidden">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                style={{ width: `${pdfProgress}%` }}
+              ></div>
+            </div>
+            <div className="mt-2 text-sm text-blue-700">
+              {pdfProgress < 30 && '📦 Preparando contenido...'}
+              {pdfProgress >= 30 && pdfProgress < 60 && '📸 Capturando gráficas...'}
+              {pdfProgress >= 60 && pdfProgress < 90 && '📄 Generando documento...'}
+              {pdfProgress >= 90 && '✅ Finalizando...'}
+            </div>
+          </div>
+        )}
+        
+        <div className="export-buttons flex justify-center gap-4 mb-8">
+          <button 
+            onClick={handleSaveChanges} 
+            disabled={saving || isExportingPDF} 
+            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg shadow-lg hover:from-green-700 hover:to-green-800 transition-all disabled:opacity-50"
+          >
             <Save className="w-5 h-5" />
             {saving ? 'Guardando...' : '💾 Guardar Todos los Cambios'}
           </button>
-          <button onClick={handleExportHTML} className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg shadow-lg hover:from-blue-700 hover:to-blue-800 transition-all">
+          
+          <button 
+            onClick={handleExportHTML} 
+            disabled={isExportingPDF}
+            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg shadow-lg hover:from-blue-700 hover:to-blue-800 transition-all disabled:opacity-50"
+          >
             <FileCode className="w-5 h-5" />
             📄 Exportar HTML Interactivo
           </button>
-          <button onClick={handleExportPDF} className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg shadow-lg hover:from-red-700 hover:to-red-800 transition-all">
-            <FileDown className="w-5 h-5" />
-            📑 Exportar PDF
+          
+          <button 
+            onClick={handleExportPDF} 
+            disabled={isExportingPDF}
+            className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg shadow-lg hover:from-red-700 hover:to-red-800 transition-all disabled:opacity-50 relative overflow-hidden"
+          >
+            {isExportingPDF ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Generando... {pdfProgress}%</span>
+              </>
+            ) : (
+              <>
+                <FileDown className="w-5 h-5" />
+                📑 Exportar PDF Completo
+              </>
+            )}
           </button>
         </div>
 

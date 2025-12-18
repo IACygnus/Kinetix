@@ -1,15 +1,13 @@
 from fastapi import APIRouter
 
-# Importar TODOS los routers
 from app.api.v1.endpoints import upload
-from app.api.v1.endpoints import executions
 from app.api.v1.endpoints import export_html
-from app.api.v1.endpoints import export_pdf  # ← LÍNEA NUEVA
+from app.api.v1.endpoints import export_pdf
 
 api_router = APIRouter()
 
-# Incluir TODOS los routers
-api_router.include_router(upload.router, prefix="/upload", tags=["upload"])
-api_router.include_router(executions.router, prefix="/executions", tags=["executions"])
+# IMPORTANTE: El endpoint upload.router ya tiene @router.post("/upload")
+# Por eso NO lleva prefix aquí, o quedaría /upload/upload
+api_router.include_router(upload.router, tags=["upload"])
 api_router.include_router(export_html.router, tags=["export"])
-api_router.include_router(export_pdf.router, tags=["export"])  # ← LÍNEA NUEVA
+api_router.include_router(export_pdf.router, tags=["export"])

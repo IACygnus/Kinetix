@@ -55,7 +55,8 @@ class TestExecution(Base):
     ai_analysis_transactions_per_second = Column(Text, nullable=True)  # Transactions per Second
     ai_analysis_active_threads = Column(Text, nullable=True)  # Active Threads Over Time
     ai_recommendations = Column(Text, nullable=True)  # Recomendaciones generales
-    
+    ai_conclusions = Column(Text, nullable=True)  # ✅ NUEVO: Conclusiones generales
+
     # Timestamps
     execution_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

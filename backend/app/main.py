@@ -29,13 +29,12 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Importar routers
-from app.api.v1.endpoints import auth, upload, export_router
+# Importar API router centralizado
+from app.api.v1.api import api_router
 
-# Incluir routers
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
-app.include_router(upload.router, prefix="/api/v1", tags=["JTL Upload & Analysis"])
-app.include_router(export_router, prefix="/api/v1", tags=["export"])
+# Incluir API router
+app.include_router(api_router, prefix="/api/v1")
+
 # Endpoints básicos
 @app.get("/")
 async def root():
