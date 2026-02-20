@@ -1,48 +1,160 @@
-# Python
+# ============================================
+# .gitignore para JMeter Analyzer Pro v1.3.0
+# ============================================
+
+# ===== Python Backend =====
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.log
+
+# ===== Virtual Environments =====
 venv/
 ENV/
 env/
 .venv
-.env
 
-# Node
+# ===== Environment Variables (CRÍTICO - NO COMMITEAR) =====
+.env
+.env.local
+.env.*.local
+.env.production
+
+# ===== JMeter Uploads =====
+backend/uploads/*.jtl
+backend/uploads/*.csv
+backend/uploads/*.log
+backend/uploads/*.xml
+
+# ===== Database =====
+*.db
+*.sqlite
+*.sqlite3
+data/postgres/
+*.sql.backup
+
+# ===== Grafana Data (volumenes Docker) =====
+data/grafana/
+grafana-data/
+
+# ===== InfluxDB Data (volumenes Docker) =====
+data/influxdb/
+influxdb-data/
+
+# ===== Node / React Frontend =====
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-dist/
-dist-ssr/
-*.local
+.pnp/
+.pnp.js
+coverage/
+build/
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.tsbuildinfo
 
-# IDE
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+# ===== IDEs =====
+.vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+.settings/
 
-# OS
+# ===== OS =====
 .DS_Store
 Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
-# Uploads
-uploads/
-*.jtl
-data/
+# ===== Docker (mantener docker-compose.yml) =====
+# NO ignorar docker-compose.yml (necesario en repo)
 
-# Logs
-logs/
+# ===== Logs =====
 *.log
+logs/
+backend_logs.txt
+frontend_logs.txt
+grafana_logs.txt
+influxdb_logs.txt
 
-# Database
-*.db
-*.sqlite
+# ===== Temp/Debug =====
+*.tmp
+*.temp
+charts_debug.json
+test_output/
+screenshots/
 
-# Docker
-docker-compose.override.yml
+# ===== Documentation Backups =====
+*.backup
+README.md.backup
+CHANGELOG.md.backup
+*.bak
+
+# ===== Compiled Files =====
+*.pyc
+*.pyo
+*.class
+*.o
+*.so
+*.dll
+*.dylib
+
+# ===== Test Coverage =====
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# ===== Jupyter Notebooks =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== Distribution / Packaging =====
+*.whl
+*.tar.gz
+*.zip
+dist/
+
+# ===== Secrets (CRÍTICO) =====
+secrets/
+*.pem
+*.key
+*.cert
+api_keys.json
+credentials.json
+
+# ===== CI/CD =====
+.github/workflows/*.local
