@@ -1,255 +1,550 @@
-import { useState, useCallback } from 'react';
-import { Upload, FileText, AlertCircle, Settings, FolderOpen, Zap } from 'lucide-react';
-import { testAPI } from '../../services/api';
+import { useState, useCallback, useEffect } from 'react';
+import {
+  Upload,
+  FileText,
+  AlertCircle,
+  Settings,
+  FolderOpen,
+  Zap,
+  X,
+  AlertTriangle,
+  CheckCircle,
+  File as FileIcon,
+} from 'lucide-react';
+import { testAPI, clientsAPI } from '../../services/api';
+import type { ClientInfo } from '../../types';
 import LoadingSpinner from '../common/LoadingSpinner';
 
 interface UploadJTLProps {
   onUploadSuccess: (id: string) => void;
 }
 
+type TestType = 'load' | 'stress' | 'endurance' | 'scalability' | 'spike' | 'smoke';
+
+interface TestTypeOption {
+  value: TestType;
+  label: string;
+  description: string;
+  color: string;
+  bgColor: string;
+}
+
+const TEST_TYPE_OPTIONS: TestTypeOption[] = [
+  { value: 'load', label: 'Load Test', description: 'Carga esperada', color: 'text-blue-700', bgColor: 'bg-blue-50 border-blue-300' },
+  { value: 'stress', label: 'Stress Test', description: 'Punto de quiebre', color: 'text-red-700', bgColor: 'bg-red-50 border-red-300' },
+  { value: 'endurance', label: 'Endurance Test', description: 'Estabilidad prolongada', color: 'text-emerald-700', bgColor: 'bg-emerald-50 border-emerald-300' },
+  { value: 'scalability', label: 'Scalability Test', description: 'Escalamiento gradual', color: 'text-purple-700', bgColor: 'bg-purple-50 border-purple-300' },
+  { value: 'spike', label: 'Spike Test', description: 'Picos subitos', color: 'text-orange-700', bgColor: 'bg-orange-50 border-orange-300' },
+  { value: 'smoke', label: 'Smoke Test', description: 'Validacion basica', color: 'text-gray-700', bgColor: 'bg-gray-50 border-gray-300' },
+];
+
+interface ValidationWarning {
+  warnings: string[];
+  errors: string[];
+  compatible: boolean;
+  summary: Record<string, unknown> | null;
+}
+
 export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [cliente, setCliente] = useState('');
-  const [proyecto, setProyecto] = useState('');
-  
-  // Criterios estructurados
-  const [concurrenciaEsperada, setConcurrenciaEsperada] = useState('100');
-  const [tiempoRespuesta, setTiempoRespuesta] = useState('2000');
-  const [disponibilidad, setDisponibilidad] = useState('99.5');
-  
+  const [files, setFiles] = useState<File[]>([]);
+  const [clientId, setClientId] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [clients, setClients] = useState<ClientInfo[]>([]);
+  const [project, setProject] = useState('');
+  const [testType, setTestType] = useState<TestType>('load');
+
+  // Criterios de aceptacion
+  const [concurrency, setConcurrency] = useState('100');
+  const [responseTime, setResponseTime] = useState('2000');
+  const [availability, setAvailability] = useState('99.5');
+
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Validation modal
+  const [validationResult, setValidationResult] = useState<ValidationWarning | null>(null);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validating, setValidating] = useState(false);
+
+  // Fetch available clients on mount
+  useEffect(() => {
+    clientsAPI.getMyClients().then(setClients).catch(() => {});
+  }, []);
+
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
+    if (e.type === 'dragenter' || e.type === 'dragover') {
       setDragActive(true);
-    } else if (e.type === "dragleave") {
+    } else if (e.type === 'dragleave') {
       setDragActive(false);
     }
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      if (droppedFile.name.endsWith('.jtl') || droppedFile.name.endsWith('.csv')) {
-        setFile(droppedFile);
-        setError('');
-      } else {
-        setError('Solo se permiten archivos .jtl o .csv');
+  const addFiles = useCallback((newFiles: FileList | File[]) => {
+    const validFiles: File[] = [];
+    for (let i = 0; i < newFiles.length; i++) {
+      const f = newFiles[i];
+      if (f.name.endsWith('.jtl') || f.name.endsWith('.csv')) {
+        validFiles.push(f);
       }
     }
+
+    if (validFiles.length === 0) {
+      setError('Solo se permiten archivos .jtl o .csv');
+      return;
+    }
+
+    setFiles((prev) => {
+      const combined = [...prev, ...validFiles];
+      if (combined.length > 5) {
+        setError('Maximo 5 archivos JTL permitidos');
+        return prev;
+      }
+      setError('');
+      return combined;
+    });
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      setError('');
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        addFiles(e.dataTransfer.files);
+      }
+    },
+    [addFiles]
+  );
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      addFiles(e.target.files);
     }
+    // Reset input
+    e.target.value = '';
+  };
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+    setError('');
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleSubmit = async () => {
-    if (!file) {
-      setError('Por favor selecciona un archivo JTL');
+    if (files.length === 0) {
+      setError('Selecciona al menos un archivo JTL');
       return;
     }
 
-    if (!proyecto) {
-      setError('Por favor ingresa el nombre del proyecto');
+    if (!project) {
+      setError('El nombre del proyecto es obligatorio');
       return;
     }
 
+    // Si hay multiples archivos, validar primero
+    if (files.length > 1 && !validationResult) {
+      await validateFiles();
+      return;
+    }
+
+    // Si la validacion tiene errores, no continuar
+    if (validationResult && !validationResult.compatible) {
+      setError('Los archivos no son compatibles. Corrige los errores antes de continuar.');
+      return;
+    }
+
+    await uploadFiles();
+  };
+
+  const validateFiles = async () => {
+    setValidating(true);
+    setError('');
+    try {
+      const result = await testAPI.validateJTL(files);
+      setValidationResult(result);
+
+      if (!result.compatible) {
+        setShowValidationModal(true);
+      } else if (result.warnings && result.warnings.length > 0) {
+        setShowValidationModal(true);
+      } else {
+        // Todo ok, subir directamente
+        await uploadFiles();
+      }
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error validando archivos');
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const uploadFiles = async () => {
     setLoading(true);
     setError('');
+    setShowValidationModal(false);
 
     try {
-      // Construir criterios en formato texto
-      const criteriosTexto = `• Tiempo de respuesta promedio < ${tiempoRespuesta}ms
-• Tasa de error < ${(100 - parseFloat(disponibilidad))}%
-• Throughput > ${parseFloat(concurrenciaEsperada) / 2} req/s`;
+      const acceptanceCriteria = JSON.stringify({
+        concurrency: parseInt(concurrency) || 100,
+        response_time: parseInt(responseTime) || 2000,
+        availability: parseFloat(availability) || 99.5,
+      });
 
-      const name = proyecto;
-      const description = cliente ? `Cliente: ${cliente}` : '';
-
-      const result = await testAPI.uploadJTL(file, name, description, criteriosTexto);
+      const result = await testAPI.uploadJTL(
+        files,
+        project,
+        clientName ? `Cliente: ${clientName}` : '',
+        testType,
+        clientName,
+        project,
+        acceptanceCriteria,
+        clientId
+      );
+      // Store AI status for toast notification on Dashboard
+      if (result.ai_status) {
+        sessionStorage.setItem('ai_status', JSON.stringify(result.ai_status));
+      }
       onUploadSuccess(result.id);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error al subir el archivo');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(axiosErr.response?.data?.detail || 'Error al subir los archivos');
       setLoading(false);
     }
   };
 
   if (loading) {
-    return <LoadingSpinner message="Procesando archivo JTL y generando análisis..." />;
+    return (
+      <LoadingSpinner
+        message={`Procesando ${files.length} archivo(s) JTL y generando analisis...`}
+      />
+    );
   }
 
   return (
-    <div className="max-w-5xl mx-auto">
-      {/* Header Card Estilo SQA */}
-      <div className="bg-gradient-to-r from-blue-700 via-blue-600 to-purple-600 rounded-2xl shadow-2xl p-8 mb-8 text-white border-4 border-blue-800">
-        <div className="flex items-center justify-center mb-4">
-          <Settings className="w-12 h-12 mr-4" />
+    <div className="w-full space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-200">
+        <div className="flex items-center justify-center">
+          <Settings className="w-10 h-10 mr-4 text-sqa-gold" />
           <div className="text-center">
-            <h2 className="text-3xl font-bold mb-2">
-              ⚙️ Configuración del Reporte de Performance
+            <h2 className="text-4xl font-bold text-gray-800 mb-1">
+              Configuracion del Reporte de Performance
             </h2>
-            <p className="text-blue-100">
-              Configure los parámetros del proyecto y seleccione los archivos JTL
+            <p className="text-xl text-gray-500">
+              Configure los parametros y seleccione los archivos JTL para analizar
             </p>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-2xl p-8 border-2 border-blue-100">
-        {/* Sección: Cliente y Proyecto */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div className="bg-white rounded-2xl shadow-lg p-8 space-y-8 border border-gray-200">
+        {/* Tipo de Prueba */}
+        <div>
+          <h3 className="text-xl font-semibold text-gray-700 mb-3 uppercase tracking-wider">
+            Tipo de Prueba
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {TEST_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setTestType(opt.value)}
+                className={`p-5 rounded-xl border text-left transition-all ${
+                  testType === opt.value
+                    ? `${opt.bgColor} border-2 ring-1 ring-offset-0 ring-offset-transparent`
+                    : 'bg-gray-50 border-gray-200 hover:border-gray-400'
+                }`}
+              >
+                <p className={`font-semibold text-xl ${testType === opt.value ? opt.color : 'text-gray-700'}`}>
+                  {opt.label}
+                </p>
+                <p className="text-lg text-gray-500 mt-1">{opt.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Cliente y Proyecto */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label className="flex items-center text-sm font-semibold text-gray-700 mb-3">
-              <FolderOpen className="w-4 h-4 mr-2 text-blue-600" />
-              👤 Cliente
+            <label className="flex items-center text-xl font-semibold text-gray-700 mb-2">
+              <FolderOpen className="w-7 h-7 mr-2 text-sqa-gold" />
+              Cliente
             </label>
-            <input
-              type="text"
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              placeholder="Booking"
-            />
+            <select
+              value={clientId}
+              onChange={(e) => {
+                setClientId(e.target.value);
+                const selected = clients.find((c) => c.id === e.target.value);
+                setClientName(selected ? selected.name : '');
+              }}
+              className="w-full px-5 h-14 bg-gray-50 border border-gray-300 rounded-xl text-xl text-gray-800 focus:outline-none focus:border-sqa-gold focus:ring-2 focus:ring-sqa-gold/20 transition-colors appearance-none"
+            >
+              <option value="">Seleccionar cliente...</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
-            <label className="flex items-center text-sm font-semibold text-gray-700 mb-3">
-              <FileText className="w-4 h-4 mr-2 text-blue-600" />
-              📁 Proyecto
+            <label className="flex items-center text-xl font-semibold text-gray-700 mb-2">
+              <FileText className="w-7 h-7 mr-2 text-sqa-gold" />
+              Proyecto *
             </label>
             <input
               type="text"
-              value={proyecto}
-              onChange={(e) => setProyecto(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              placeholder="Proyecto de Performance"
+              value={project}
+              onChange={(e) => setProject(e.target.value)}
+              className="w-full px-5 h-14 bg-gray-50 border border-gray-300 rounded-xl text-xl text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-sqa-gold focus:ring-2 focus:ring-sqa-gold/20 transition-colors"
+              placeholder="Nombre del proyecto"
               required
             />
           </div>
         </div>
 
-        {/* Sección: Seleccionar Archivos JTL */}
-        <div className="mb-8 p-6 bg-blue-50 rounded-xl border-2 border-dashed border-blue-300">
-          <h3 className="flex items-center text-lg font-bold text-gray-900 mb-4">
-            📎 Seleccionar Archivos JTL
+        {/* Archivos JTL */}
+        <div>
+          <h3 className="text-xl font-semibold text-gray-700 mb-3 uppercase tracking-wider">
+            Archivos JTL (1-5 archivos)
           </h3>
-          
+
           <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+            className={`border-2 border-dashed rounded-2xl p-10 text-center transition-all ${
               dragActive
-                ? 'border-blue-500 bg-blue-100'
-                : 'border-blue-300 bg-white hover:border-blue-400'
+                ? 'border-sqa-gold bg-sqa-gold/5'
+                : 'border-gray-300 bg-gray-50 hover:border-gray-400'
             }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
             onDrop={handleDrop}
           >
-            <Upload className={`mx-auto h-12 w-12 mb-3 ${dragActive ? 'text-blue-600' : 'text-gray-400'}`} />
-            
+            <Upload
+              className={`mx-auto h-14 w-14 mb-4 ${
+                dragActive ? 'text-sqa-gold' : 'text-gray-400'
+              }`}
+            />
+
             <label className="cursor-pointer">
-              <span className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors mb-3">
-                📁 Seleccionar Archivo
+              <span className="inline-block bg-sqa-gold text-sqa-navy px-8 py-3 rounded-xl font-bold hover:bg-sqa-gold-light transition-colors text-xl">
+                Seleccionar Archivos
               </span>
               <input
                 type="file"
                 className="hidden"
                 accept=".jtl,.csv"
-                onChange={handleChange}
+                multiple
+                onChange={handleFileChange}
               />
             </label>
-            
-            <p className="text-sm text-gray-500 mt-2">
-              {file ? (
-                <span className="text-blue-600 font-semibold">{file.name}</span>
-              ) : (
-                'No se ha seleccionado ningún archivo'
-              )}
+
+            <p className="text-xl text-gray-500 mt-4">
+              Arrastra archivos o haz clic para seleccionar. Formatos: .jtl, .csv
             </p>
           </div>
+
+          {/* File list */}
+          {files.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {files.map((f, i) => (
+                <div
+                  key={`${f.name}-${i}`}
+                  className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-5 py-4"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <FileIcon className="w-7 h-7 text-sqa-gold flex-shrink-0" />
+                    <span className="text-xl text-gray-800 truncate">{f.name}</span>
+                    <span className="text-lg text-gray-500 flex-shrink-0">
+                      {formatFileSize(f.size)}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => removeFile(i)}
+                    className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                  >
+                    <X className="w-7 h-7" />
+                  </button>
+                </div>
+              ))}
+              <p className="text-lg text-gray-500">
+                {files.length} de 5 archivos seleccionados
+                {files.length > 1 && ' (se consolidaran en un solo analisis)'}
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* Sección: Criterios de Aceptación */}
-        <div className="mb-8 p-6 bg-purple-50 rounded-xl border-2 border-purple-200">
-          <h3 className="flex items-center text-lg font-bold text-gray-900 mb-6">
-            📋 Criterios de Aceptación
+        {/* Criterios de Aceptacion */}
+        <div className="p-6 bg-gray-50 rounded-2xl border border-gray-200">
+          <h3 className="text-xl font-semibold text-gray-700 mb-4 uppercase tracking-wider">
+            Criterios de Aceptacion
           </h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div>
-              <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                ⚙️ Concurrencia Esperada
+              <label className="text-xl font-medium text-gray-600 mb-2 block">
+                Concurrencia Esperada
               </label>
               <input
                 type="number"
-                value={concurrenciaEsperada}
-                onChange={(e) => setConcurrenciaEsperada(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                value={concurrency}
+                onChange={(e) => setConcurrency(e.target.value)}
+                className="w-full px-5 h-14 bg-white border border-gray-300 rounded-xl text-xl text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-sqa-gold focus:ring-2 focus:ring-sqa-gold/20 transition-colors"
                 placeholder="100"
               />
             </div>
 
             <div>
-              <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                ⏱️ Tiempo de Respuesta (ms)
+              <label className="text-xl font-medium text-gray-600 mb-2 block">
+                Tiempo de Respuesta (ms)
               </label>
               <input
                 type="number"
-                value={tiempoRespuesta}
-                onChange={(e) => setTiempoRespuesta(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                value={responseTime}
+                onChange={(e) => setResponseTime(e.target.value)}
+                className="w-full px-5 h-14 bg-white border border-gray-300 rounded-xl text-xl text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-sqa-gold focus:ring-2 focus:ring-sqa-gold/20 transition-colors"
                 placeholder="2000"
               />
             </div>
 
             <div>
-              <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                ✅ Disponibilidad (%)
+              <label className="text-xl font-medium text-gray-600 mb-2 block">
+                Disponibilidad (%)
               </label>
               <input
                 type="number"
                 step="0.1"
-                value={disponibilidad}
-                onChange={(e) => setDisponibilidad(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                value={availability}
+                onChange={(e) => setAvailability(e.target.value)}
+                className="w-full px-5 h-14 bg-white border border-gray-300 rounded-xl text-xl text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-sqa-gold focus:ring-2 focus:ring-sqa-gold/20 transition-colors"
                 placeholder="99.5"
               />
             </div>
           </div>
         </div>
 
-        {/* Error Message */}
+        {/* Error */}
         {error && (
-          <div className="mb-6 bg-red-50 border-2 border-red-200 rounded-lg p-4 flex items-start">
-            <AlertCircle className="w-5 h-5 text-red-600 mr-3 flex-shrink-0 mt-0.5" />
-            <span className="text-red-700 font-medium">{error}</span>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3">
+            <AlertCircle className="w-7 h-7 text-red-500 flex-shrink-0 mt-0.5" />
+            <span className="text-red-700 text-xl">{error}</span>
           </div>
         )}
 
-        {/* Action Button */}
+        {/* Submit */}
         <div className="flex justify-end">
           <button
             onClick={handleSubmit}
-            disabled={!file || !proyecto}
-            className="bg-gradient-to-r from-orange-500 to-orange-600 text-white font-bold py-4 px-8 rounded-lg hover:from-orange-600 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl flex items-center space-x-2"
+            disabled={files.length === 0 || !project || validating}
+            className="bg-sqa-gold text-sqa-navy font-bold h-16 px-14 rounded-xl text-xl hover:bg-sqa-gold-light disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl flex items-center gap-3"
           >
-            <Zap className="w-5 h-5" />
-            <span>🗑️ Generar Reporte</span>
+            {validating ? (
+              <>
+                <div className="w-7 h-7 border-2 border-sqa-navy/30 border-t-sqa-navy rounded-full animate-spin" />
+                <span>Validando...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-8 h-8" />
+                <span>Generar Reporte</span>
+              </>
+            )}
           </button>
         </div>
       </div>
+
+      {/* Validation Modal */}
+      {showValidationModal && validationResult && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-lg shadow-2xl">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                {validationResult.compatible ? (
+                  <AlertTriangle className="w-8 h-8 text-amber-500" />
+                ) : (
+                  <AlertCircle className="w-8 h-8 text-red-500" />
+                )}
+                <h3 className="text-3xl font-semibold text-gray-800">
+                  {validationResult.compatible
+                    ? 'Advertencias de Compatibilidad'
+                    : 'Archivos Incompatibles'}
+                </h3>
+              </div>
+
+              {validationResult.errors.length > 0 && (
+                <div className="mb-4 space-y-2">
+                  {validationResult.errors.map((err, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-4"
+                    >
+                      <AlertCircle className="w-6 h-6 text-red-500 mt-0.5 flex-shrink-0" />
+                      <span className="text-xl text-red-700">{err}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {validationResult.warnings.length > 0 && (
+                <div className="mb-4 space-y-2">
+                  {validationResult.warnings.map((warn, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-4"
+                    >
+                      <AlertTriangle className="w-6 h-6 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <span className="text-xl text-amber-700">{warn}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {validationResult.summary && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4">
+                  <p className="text-lg text-gray-500 mb-1">Resumen:</p>
+                  <div className="text-xl text-gray-700 space-y-1">
+                    {Object.entries(validationResult.summary).map(([key, val]) => (
+                      <p key={key}>
+                        <span className="text-gray-500">{key}:</span>{' '}
+                        {String(val)}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-gray-200 p-5 flex justify-end gap-3">
+              <button
+                onClick={() => setShowValidationModal(false)}
+                className="px-6 py-3 text-xl text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Cancelar
+              </button>
+              {validationResult.compatible && (
+                <button
+                  onClick={uploadFiles}
+                  className="px-6 py-3 bg-sqa-gold text-sqa-navy rounded-xl hover:bg-sqa-gold-light text-xl font-bold transition-colors flex items-center gap-2"
+                >
+                  <CheckCircle className="w-6 h-6" />
+                  Continuar de todas formas
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

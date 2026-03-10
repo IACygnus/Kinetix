@@ -1,21 +1,26 @@
 """
-Schemas de autenticación
+Schemas de autenticacion - v2.0
 """
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional
+from uuid import UUID
 
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-class TokenData(BaseModel):
-    email: Optional[str] = None
 
-class UserResponse(BaseModel):
-    id: str
+class TokenData(BaseModel):
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+
+class LoginUserResponse(BaseModel):
+    id: UUID
+    username: str
     email: str
-    full_name: Optional[str] = None
+    full_name: str
+    role: str
+    is_active: bool

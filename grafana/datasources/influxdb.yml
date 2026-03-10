@@ -7,11 +7,11 @@ datasources:
     url: http://influxdb:8086
     jsonData:
       version: Flux
-      organization: performance
-      defaultBucket: jmeter
+      organization: ${INFLUXDB_ORG:-performance}
+      defaultBucket: ${INFLUXDB_BUCKET:-jmeter}
       tlsSkipVerify: true
     secureJsonData:
-      token: jmeter-token-2024-super-secret
+      token: ${INFLUXDB_TOKEN:-jmeter-token-2024-super-secret}
     uid: influxdb-jmeter
     isDefault: true
     editable: true

@@ -5,11 +5,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# Instalar dependencias del sistema
-RUN apt-get update && apt-get install -y \
+# Instalar dependencias del sistema (incluye WeasyPrint deps)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     postgresql-client \
     curl \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libffi-dev \
+    libcairo2 \
+    libpango1.0-dev \
+    libgdk-pixbuf-2.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,7 +24,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copiar código
+# Copiar codigo
 COPY . .
 
 # Crear directorios

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ========================================
   # BASE DE DATOS - PostgreSQL
@@ -9,18 +7,18 @@ services:
     container_name: jmeter_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: jmeter_user
-      POSTGRES_PASSWORD: jmeter_secure_2024
-      POSTGRES_DB: jmeter_analyzer_db
+      POSTGRES_USER: ${POSTGRES_USER:-jmeter_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jmeter_secure_2024}
+      POSTGRES_DB: ${POSTGRES_DB:-jmeter_analyzer_db}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     networks:
       - jmeter_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jmeter_user"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jmeter_user}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,11 +33,15 @@ services:
     container_name: jmeter_backend
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql://jmeter_user:jmeter_secure_2024@postgres:5432/jmeter_analyzer_db
-      - SECRET_KEY=bKp_8xN9mQ2vR5wZ1aE7fH3jL6kM0nY4cT2sW8dX1gV5pU9iO3hB7eN0qA4rJ6m
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-jmeter_user}:${POSTGRES_PASSWORD:-jmeter_secure_2024}@postgres:5432/${POSTGRES_DB:-jmeter_analyzer_db}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - BACKEND_PORT=8001
-      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      - FERNET_KEY=${FERNET_KEY:-}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-sqa2024}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads
@@ -50,7 +52,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload --timeout-keep-alive 300
 
   # ========================================
   # FRONTEND - React (Puerto 5173)
@@ -62,7 +70,7 @@ services:
     container_name: jmeter_frontend
     restart: unless-stopped
     environment:
-      - VITE_API_BASE_URL=http://localhost:8001/api/v1
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8001/api/v1}
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -71,28 +79,29 @@ services:
     networks:
       - jmeter_network
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     command: npm run dev -- --host 0.0.0.0 --port 5173
     stdin_open: true
     tty: true
 
   # ========================================
-  # ✨ NUEVO: InfluxDB - Tiempo Real
+  # InfluxDB - Tiempo Real
   # ========================================
   influxdb:
     image: influxdb:2.7-alpine
     container_name: jmeter_influxdb
     restart: unless-stopped
     ports:
-      - "8086:8086"
+      - "${INFLUXDB_PORT:-8086}:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
-      - DOCKER_INFLUXDB_INIT_ORG=performance
-      - DOCKER_INFLUXDB_INIT_BUCKET=jmeter
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD:-admin123}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-performance}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-jmeter}
       - DOCKER_INFLUXDB_INIT_RETENTION=30d
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=jmeter-token-2024-super-secret
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-jmeter-token-2024-super-secret}
     volumes:
       - influxdb_data:/var/lib/influxdb2
       - influxdb_config:/etc/influxdb2
@@ -105,20 +114,23 @@ services:
       retries: 5
 
   # ========================================
-  # ✨ NUEVO: Grafana - Visualización
+  # Grafana - Visualizacion
   # ========================================
   grafana:
     image: grafana/grafana:10.2.3
     container_name: jmeter_grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
-      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=lax
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
@@ -147,6 +159,6 @@ networks:
 volumes:
   postgres_data:
   uploads_data:
-  influxdb_data:      # ✨ NUEVO
-  influxdb_config:    # ✨ NUEVO
-  grafana_data:       # ✨ NUEVO
+  influxdb_data:
+  influxdb_config:
+  grafana_data:

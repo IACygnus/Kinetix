@@ -12,6 +12,8 @@ psycopg2-binary==2.9.9
 # Auth & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+cryptography>=41.0.0
 python-multipart==0.0.6
 
 # Data Processing (JTL Parser)
@@ -19,8 +21,9 @@ pandas==2.1.4
 lxml==4.9.3
 numpy==1.24.3
 
-# AI - Gemini
+# AI - Gemini + OpenAI
 google-generativeai==0.3.1
+openai>=1.0.0
 
 # Utilities
 python-dotenv==1.0.0
@@ -29,6 +32,10 @@ python-dateutil==2.8.2
 aiofiles==23.2.1
 email-validator==2.1.0.post1
 
-# Export HTML con gráficos (NUEVO)
+# Export HTML con graficos
 matplotlib==3.8.2
 pillow==10.1.0
+
+# Export PDF (v2.0)
+weasyprint==61.2
+pydyf==0.10.0

@@ -158,3 +158,17 @@ credentials.json
 
 # ===== CI/CD =====
 .github/workflows/*.local
+
+# Backup files con fecha
+*.bak_*
+
+# Claude session files
+.claude/
+
+# Archivos temporales de trabajo
+phase3_extract.txt
+smoke_test.sh
+INICIO_RAPIDO.md
+
+# Env backups
+.env.bak*
