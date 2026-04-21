@@ -1,5 +1,5 @@
 # ============================================
-# .gitignore para JMeter Analyzer Pro v1.3.0
+# .gitignore para SQA Kinetix Pro v3.0.0
 # ============================================
 
 # ===== Python Backend =====
@@ -172,3 +172,32 @@ INICIO_RAPIDO.md
 
 # Env backups
 .env.bak*
+
+# ============================================
+# v3.0.0 additions (abril 2026)
+# ============================================
+
+# Artifacts de trabajo con IA (diagnosticos, inventarios, context dumps)
+diagnostico_*.md
+inventario_*.md
+INFORME_PROYECTO_*.md
+KINETIX_PRO_ESTADO_*.md
+PROMPT_NEW_CHAT_*.md
+
+# Basura de Windows / screenshots de debug
+test_screenshot.png
+backend/nul
+*.png.bak
+
+# ============================================
+# v3.0.0 - Runtime data (NEVER commit user data)
+# ============================================
+
+# Uploaded JTL files and test results
+backend/data/
+
+# Uploaded attachment images (user-generated content)
+backend/media/
+
+# Temp/diagnostic scratch
+tmp/
