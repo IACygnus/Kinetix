@@ -1,102 +1,163 @@
 # Changelog
 
-Todos los cambios notables de JMeter Analyzer Pro se documentan aqui.
+Todos los cambios notables del proyecto se documentan en este archivo.
+
+El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/)
+y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
-## [2.0.0] - 2026-02-25
+## [3.0.0] - 2026-04-21
 
-### Phase 1 — Autenticacion, Usuarios y Roles
-- Sistema de autenticacion JWT (login, token refresh)
-- CRUD de usuarios con roles: admin, tester, viewer
-- Pagina de perfil con edicion de datos y cambio de contrasena
-- Dashboard Home con estadisticas generales (total ejecuciones, errores, promedios)
-- Historial de ejecuciones de performance con busqueda y paginacion
-- Proteccion de rutas por rol (ProtectedRoute)
-- Contexto de autenticacion global (AuthContext)
+Expansión mayor del producto. Se consolidan 6 semanas de desarrollo (10 marzo → 21 abril) con funcionalidad nueva significativa que justifica un salto de versión mayor.
 
-### Phase 2 — Multi-JTL, Redirecciones y Gemini Mejorado
-- Upload de multiples archivos JTL (1-5 archivos por ejecucion)
-- Endpoint de validacion de compatibilidad entre JTLs (`POST /validate-jtl`)
-- Consolidacion temporal de datos multi-JTL con elapsed time
-- Separacion automatica de redirecciones (patron `TransactionName-N`)
-- Tabla de metricas de redirecciones separada
-- Tipos de prueba: load, stress, endurance, spike, scalability
-- Criterios de aceptacion configurables (concurrencia, response time, disponibilidad)
-- 12 metodos de analisis Gemini AI + 2 de sintesis (conclusiones, recomendaciones)
-- Cada seccion de AI almacenada en columna independiente en BD
-- Modelo `gemini-1.5-pro` con `max_output_tokens=8192`
-- Frontend multi-file con validacion previa y modal de advertencias
+### Added
 
-### Phase 3 — Graficos y Exportacion
-- 8 graficos interactivos con Chart.js (Response Times, Throughput, Latency, Error Rate, Codes/s, TPS, Active Threads, Pie de Codigos)
-- Configuracion de colores centralizada (`chartConfig.ts`)
-- Exportacion HTML profesional con graficos embebidos (base64)
-- Exportacion PDF con WeasyPrint + matplotlib (portada SQA, KPIs, tablas, graficos, analisis IA)
+#### Script Designer (nuevo módulo completo)
+- Diseñador visual de scripts de performance con 18 componentes React (~5,245 líneas)
+- Import desde HAR (browser network capture)
+- Import desde Postman collections
+- Import desde OpenAPI / Swagger specs
+- Import desde WSDL (SOAP)
+- Chrome Extension propia para captura de tráfico
+- Editor de requests con variables dinámicas
+- Data files (CSV) para parametrización
+- Correlación asistida por IA (detección automática de tokens y IDs)
+- Variables globales y por escenario
 
-### Phase 4 — Monitoreo en Tiempo Real (Grafana + InfluxDB)
-- Integracion Grafana via iframe (MonitoringRealtime)
-- Panel de configuracion de monitoreo (MonitoringSettings, admin only)
-- Modelo MonitoringConfig con token InfluxDB encriptado (Fernet)
-- Health checks de conectividad Grafana/InfluxDB
-- Grafana provisioning automatico (datasource + dashboards)
+#### Motor de Ejecución
+- VirtualUser basado en httpx + asyncio (sin dependencia de JMeter)
+- ExecutionManager con control de ciclo de vida
+- SteppingController para load tests con rampa configurable
+- SmokeTest engine para validación pre-carga
+- JTLWriter con formato compatible JMeter estándar
+- JMXExporter (export a .jmx para uso externo)
+- MetricsCollector con WebSocket live
 
-### Phase 5 — QA, Seguridad y Documentacion
-- Eliminado atributo `version` obsoleto de docker-compose.yml
-- Healthchecks para backend en docker-compose.yml
-- `docker-compose.prod.yml` con configuracion de produccion
-- Credenciales movidas a variables de entorno (no hardcoded en codigo)
-- CORS configurable: wildcard en dev, origenes especificos en produccion
-- Admin seed password configurable via `ADMIN_DEFAULT_PASSWORD`
-- Fernet key auto-generada si no se configura
-- Eliminados imports no utilizados y statements de debug
-- Respuestas de error sin stack traces
-- `.env.example` completo con todas las variables
-- README.md, CHANGELOG.md y INICIO_RAPIDO.md actualizados
+#### Informes Integrados
+- Generación drag-and-drop de informes consolidados
+- Bloques A (Executive Summary), A.1 (Scope), B (Technical Detail)
+- Persistencia en DB de informes integrados
+- Cover individual por sección
+- Integración con attachments de monitoreo
+
+#### Integración OpenAI
+- Proveedor alternativo a Gemini (GPT-4o)
+- Endpoint dinámico `/api/v1/ai-config/models/live` con cache de 5 minutos
+- OpenAI Vision API para análisis de imágenes (formato multimodal)
+- `OPENAI_MAX_TOKENS` dict configurable por modelo (4096 vs 16384)
+- Selector de proveedor en AIConfigPage
+- Fallback automático entre proveedores
+
+#### Attachments
+- Upload de imágenes de evidencia (monitoreo, errores, dashboards)
+- Análisis IA de imágenes (Gemini Vision + OpenAI Vision + OCR fallback)
+- Títulos editables por attachment
+- Integración en informes exportados
+
+#### Reportes Comparativos
+- Comparación side-by-side entre dos ejecuciones
+- Delta de métricas (avg, P95, P99, error rate, throughput)
+- Export a HTML/PDF
+
+#### Seguridad
+- Migración de JWT en body a **httpOnly cookies**
+- CSRF protection
+- **Fernet encryption** para API keys y monitoring tokens
+- Role-based access control (admin / user)
+- Password policy con bcrypt
+
+### Changed
+
+#### Exportación HTML
+- Plotly.js interactivo (reemplaza imágenes base64)
+- Anchos fijos 1400px para consistencia visual
+- Controles por gráfica: Mostrar/Ocultar todas, Auto-fit, P99, Reset, Max slider
+- Leyenda scrollable (maxHeight 90px) en Dashboard live
+- Color primario unificado Indigo `#4f46e5`
+
+#### Exportación PDF
+- Cover full-bleed con técnica `@page :first { margin: 0 }`
+- Footer sin duplicación
+- Portada de 1 página (antes se extendía a 2)
+- Fix de inflación tipográfica (conversión `rem → pt`, reducción de 35-42%)
+- Card styles atómicos
+- Strip ordering corregido (conclusions individual antes de report extras)
+
+#### Base de Datos
+- Migraciones idempotentes con `ADD COLUMN IF NOT EXISTS`
+- Ejecución en startup sin Alembic (`Base.metadata.create_all`)
+- Nuevas tablas: `script_designs`, `attachments`, `integrated_reports`, `comparison_reports`
+
+#### Frontend
+- React Query integrado para data fetching
+- httpOnly cookies en Axios client
+- Interceptors globales para refresh de token
+- Rebranding completo: "JMeter Analyzer Pro" → "SQA Kinetix Pro"
+
+### Fixed
+- Crash `NotFoundError: removeChild` en Dashboard con múltiples charts
+- Gemini transport gRPC causa 503 en Docker → forzado a `transport="rest"`
+- `sanitize_ai_text()` aplicado a toda salida IA (limpia markdown que rompía HTML)
+- EditableTextArea recreado en cada render (focus loss) → movido fuera del padre
+- LoadingSpinner con overlay fijo full-screen bloqueaba UI ante fallos de API
+- React hooks llamados después de early returns
+- Legend toggles iteraban individualmente → batching con replace atómico del Set
+
+### Technical Debt (reconocido, no resuelto en esta versión)
+- `report_generator.py` (~1,148 líneas) → candidato a refactor modular
+- `integrated_report.py` (1,852 líneas) → candidato a split
+- Alta cardinalidad en gráficas multi-línea (>15 transacciones) → fix programado para v3.1.0
+- Cleanup de 284 archivos `.bak` acumulados → programado para v3.1.0
+- Responsive para pantallas 15"/27" 1920×1080 → programado para v3.1.0
+- JMX export completo desde Script Designer → programado para v3.1.0
+- Deploy producción kinetix.sqasa.co → programado para v3.1.0
+
+### Security
+- Ningún secret commiteado al historial de git (verificado)
+- `.env` y `.env.bak*` cubiertos por `.gitignore` desde commit inicial
+- API keys y tokens cifrados en DB con Fernet
 
 ---
 
-## [1.3.0] - 2024-12-22
+## [2.0.0] - 2026-03-10
 
-### Monitoreo en Tiempo Real
-- Grafana 10.2.3 agregado al stack con Docker
-- InfluxDB 2.7 como base de datos de series temporales
-- Auto-provisioning de datasource InfluxDB en Grafana
-- Dashboard profesional con 9 paneles de metricas en tiempo real
-- Guia de configuracion para JMeter Backend Listener
-- Docker Compose ahora con 5 servicios
+Release con integración IA avanzada y fundamentos de seguridad.
 
----
+### Added
+- AI Config module con proveedor Gemini
+- Client management
+- User management (admin + user roles)
+- Mejoras en autenticación JWT
+- Export fixes para HTML y PDF
 
-## [1.2.0] - 2024-12-15
-
-### Sintesis Inteligente con IA
-- Campo `ai_conclusions` en modelo TestExecution
-- Funciones `generate_conclusions()` y `generate_recommendations()` en Gemini
-- Priorizacion automatica: CRITICO / ALTO / MEDIO
-- Visualizacion en Dashboard de conclusiones y recomendaciones
+### Note
+Este commit (`b83f736`) nunca fue taggeado en su momento. Se documenta retroactivamente sin crear el tag (política actual).
 
 ---
 
-## [1.1.0] - 2024-11-20
+## [1.3.0] - 2026-02-20
 
-### Analisis Completo de Graficos
-- 8 analisis IA individuales por grafico de performance
-- Exportacion PDF con html2canvas + jsPDF
-- Edicion inline de analisis IA
-- Branding SQA (logo, colores corporativos)
+### Added
+- Integración Grafana + InfluxDB para monitoreo en tiempo real
+- WebSocket de métricas live
 
 ---
 
-## [1.0.0] - 2024-10-15
+## [1.2.0] - 2025-12-18
 
-### Release Inicial
-- API REST con FastAPI 0.104+
-- PostgreSQL 15 como base de datos (SQLAlchemy Async)
-- Parser JTL con Pandas (avg, min, max, p90, p95, p99, throughput, error rate)
-- Servicio Gemini para analisis IA
-- React 18 + TypeScript + Vite + Tailwind CSS
-- Dashboard interactivo con 8 graficos (Recharts)
-- Upload de archivos JTL
-- Exportacion HTML con graficos embebidos
-- Docker Compose con 3 servicios (backend, frontend, postgres)
+### Added
+- Síntesis inteligente de análisis IA
+- Conclusiones generales consolidadas
+- Recomendaciones priorizadas (CRÍTICO / ALTO / MEDIO)
+
+---
+
+## [1.0.0] - 2025-11
+
+### Added
+- Release inicial
+- Upload y parsing de archivos JTL
+- Dashboard con 8 gráficas
+- Análisis IA básico con Gemini
+- Export HTML y PDF
