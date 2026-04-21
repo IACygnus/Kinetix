@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
@@ -6,7 +6,9 @@ import {
 import { ArrowLeft, Save, FileDown, FileCode, X, CheckCircle, AlertTriangle } from 'lucide-react';
 import type { AIStatus } from '../../types';
 import { testAPI } from '../../services/api';
-import LoadingSpinner from '../common/LoadingSpinner';
+// LoadingSpinner replaced with inline loading indicator for better UX
+// Monitoring, Evidence, Capacity, and Comparison moved to standalone pages (R3-A)
+import ChartYAxisZoom from './ChartYAxisZoom';
 import {
   CHART_LAYOUT,
   CHART_LABELS,
@@ -23,6 +25,7 @@ interface DashboardProps {
   executionId: string;
   onLogout: () => void;
   onBack: () => void;
+  embedded?: boolean;
 }
 
 // ===== CUSTOM TOOLTIP COMPONENT =====
@@ -69,11 +72,34 @@ interface ScrollableLegendProps {
   onToggle: (dataKey: string) => void;
 }
 
-function ScrollableLegend({ payload, hiddenLines, onToggle }: ScrollableLegendProps) {
+function ScrollableLegend({ payload, hiddenLines, onToggle, onSetAll }: ScrollableLegendProps & { onSetAll?: (keys: Set<string>) => void }) {
   if (!payload || payload.length === 0) return null;
+
+  const allKeys = payload.map((e: any) => e.dataKey || e.value);
+  const visibleCount = allKeys.filter((k: string) => !hiddenLines.has(k)).length;
+  const allVisible = visibleCount === allKeys.length;
+  const noneVisible = visibleCount === 0;
+
+  const handleMasterToggle = () => {
+    if (onSetAll) {
+      // Direct Set replacement — fixes the bug where only last item toggled
+      onSetAll(allVisible ? new Set(allKeys) : new Set());
+    }
+  };
 
   return (
     <div className="w-full px-2 py-1">
+      {/* KNX-06: Master select/deselect */}
+      {allKeys.length > 1 && (
+        <div className="flex justify-center mb-1">
+          <button
+            onClick={handleMasterToggle}
+            className="text-sm px-3 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            {allVisible ? 'Ocultar todas' : noneVisible ? 'Mostrar todas' : `${visibleCount}/${allKeys.length} visibles — Mostrar todas`}
+          </button>
+        </div>
+      )}
       <div
         className="flex flex-wrap gap-x-4 gap-y-1 justify-center overflow-y-auto"
         style={{ maxHeight: '90px' }}
@@ -106,19 +132,20 @@ function ScrollableLegend({ payload, hiddenLines, onToggle }: ScrollableLegendPr
 // ===== ADAPTIVE X AXIS PROPS =====
 function getXAxisProps(dataLength: number, labelCount?: number) {
   const count = labelCount ?? dataLength;
-  const rotate = shouldRotateLabels(count);
+  // KNX-11: Always rotate if >6 labels OR if data is dense (>50 points)
+  const rotate = shouldRotateLabels(count) || dataLength > 50;
   const fontSize = getAdaptiveFontSize(count);
   const interval = getXAxisInterval(dataLength);
 
   return {
     dataKey: 'displayTime',
-    tick: { fontSize },
-    height: rotate ? 80 : 50,
+    tick: { fontSize: rotate ? Math.min(fontSize, 11) : fontSize },
+    height: rotate ? 85 : 50,
     angle: rotate ? CHART_LABELS.rotationAngle : 0,
     textAnchor: rotate ? ('end' as const) : ('middle' as const),
     interval,
     tickFormatter: (value: string) => {
-      if (count > CHART_LABELS.truncateThreshold) {
+      if (count > CHART_LABELS.truncateThreshold || dataLength > 100) {
         return truncateLabel(value, 8);
       }
       return value;
@@ -126,10 +153,39 @@ function getXAxisProps(dataLength: number, labelCount?: number) {
   };
 }
 
-export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: DashboardProps) {
+// ===== EDITABLE TEXTAREA — defined OUTSIDE Dashboard to prevent re-creation on re-render =====
+const EditableTextArea = memo(function EditableTextArea({
+  initialValue,
+  onSave,
+  placeholder,
+  className,
+  minHeight = '176px',
+}: {
+  initialValue: string;
+  onSave: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  minHeight?: string;
+}) {
+  const [localValue, setLocalValue] = useState(initialValue);
+  useEffect(() => { setLocalValue(initialValue); }, [initialValue]);
+  return (
+    <textarea
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={() => onSave(localValue)}
+      placeholder={placeholder || 'Click para editar el analisis...'}
+      className={className || 'w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/50 focus:border-orange-500 resize-y cursor-text hover:border-orange-300 transition-colors'}
+      style={{ minHeight }}
+    />
+  );
+});
+
+export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false }: DashboardProps) {
   const [execution, setExecution] = useState<any>(null);
   const [charts, setCharts] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [timeMode, setTimeMode] = useState<'elapsed' | 'real'>('elapsed');
 
@@ -154,6 +210,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
   const [hiddenLinesCodes, setHiddenLinesCodes] = useState<Set<string>>(new Set());
   const [hiddenLinesTPS, setHiddenLinesTPS] = useState<Set<string>>(new Set());
 
+  // KNX-10: Collapsible charts
+  const [chartsExpanded, setChartsExpanded] = useState(true);
+
+  // P3: Y-axis zoom per chart
+  const [yAxisRanges, setYAxisRanges] = useState<Record<string, { min: number | 'auto'; max: number | 'auto' }>>({});
+
   // AI Status toast
   const [aiToast, setAiToast] = useState<AIStatus | null>(null);
 
@@ -177,6 +239,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
 
   useEffect(() => {
     if (executionId) {
+      setYAxisRanges({});  // Reset zoom when changing report
       loadData();
     }
   }, [executionId]);
@@ -204,8 +267,11 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
       setAnalysisRedirects(execData.ai_analysis_redirects || '');
       setConclusions(execData.ai_conclusions || '');
       setRecommendations(execData.ai_recommendations || '');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading data:', error);
+      setLoadError(error?.response?.status === 401
+        ? 'Sesion expirada. Por favor inicie sesion nuevamente.'
+        : 'Error al cargar el reporte. Verifique la conexion e intente de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -247,7 +313,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      a.remove();
     } catch (error) {
       console.error('Error exportando HTML:', error);
       alert('Error al exportar HTML. Por favor, intenta de nuevo.');
@@ -270,7 +336,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      a.remove();
 
       setPdfProgress(100);
       setTimeout(() => {
@@ -341,8 +407,62 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
     setHiddenLines(newHiddenLines);
   }, []);
 
-  if (loading) return <LoadingSpinner />;
-  if (!execution || !charts) return <div className="text-2xl text-gray-500 p-8">No hay datos</div>;
+  // Helper for chart analysis sections — MUST be before early returns (Rules of Hooks)
+  const AnalysisBox = useCallback(({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
+        <span className="text-xs text-gray-400 italic">Click para editar</span>
+      </div>
+      <EditableTextArea initialValue={value} onSave={onChange} placeholder="Analisis..." />
+    </div>
+  ), []);
+
+  // P3: Y-axis zoom helpers
+  const handleYRange = useCallback((key: string, yMin: number | 'auto', yMax: number | 'auto') => {
+    setYAxisRanges(prev => ({ ...prev, [key]: { min: yMin, max: yMax } }));
+  }, []);
+
+  const getYDomain = useCallback((key: string): [number | string, number | string] => {
+    const r = yAxisRanges[key];
+    if (!r) return ['auto', 'auto'];
+    return [r.min, r.max];
+  }, [yAxisRanges]);
+
+  const extractY = useCallback((data: any[], keys: string[]): number[] => {
+    if (!data) return [];
+    const vals: number[] = [];
+    data.forEach(p => keys.forEach(k => { const v = p[k]; if (v != null && typeof v === 'number') vals.push(v); }));
+    return vals;
+  }, []);
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-64 bg-white">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#f5a623] mx-auto mb-4"></div>
+        <p className="text-xl text-gray-500">Cargando reporte...</p>
+      </div>
+    </div>
+  );
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center h-64 bg-white gap-4">
+      <p className="text-2xl text-red-500 font-semibold">{loadError}</p>
+      <button onClick={() => { setLoadError(''); setLoading(true); loadData(); }}
+        className="px-6 py-2 bg-[#f5a623] text-[#0a1628] rounded-xl font-bold text-lg hover:bg-[#f5a623]/90 transition-colors">
+        Reintentar
+      </button>
+    </div>
+  );
+  if (!execution || !charts) return (
+    <div className="flex flex-col items-center justify-center h-64 bg-white gap-4">
+      <p className="text-2xl text-gray-500">No se encontraron datos para este reporte</p>
+      {!embedded && (
+        <button onClick={onBack} className="px-6 py-2 bg-gray-200 text-gray-700 rounded-xl text-lg hover:bg-gray-300 transition-colors">
+          Volver al historial
+        </button>
+      )}
+    </div>
+  );
 
   // ===== DATA PROCESSING =====
   const timelineData = prepareChartData(charts.timeline || []);
@@ -354,19 +474,17 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
   const tpsByLabel = prepareMultiLineData(charts.tps_by_label || []);
   const codesPerSecond = prepareMultiLineData(charts.codes_per_second || []);
 
-  const errorData = (charts.by_label || [])
-    .filter((row: any) => row.count - row.success_count > 0)
-    .map((row: any) => ({ name: row.label, value: row.count - row.success_count, percentage: ((row.count - row.success_count) / row.count * 100).toFixed(2) }));
+  // KNX-02: Use real error codes from error_detail (no more hardcoded "404/405")
+  const errorData = (charts.error_detail || []).map((row: any) => ({
+    name: row.label,
+    code: String(row.code),
+    value: row.count,
+    percentage: execution.total_requests > 0
+      ? ((row.count / execution.total_requests) * 100).toFixed(2)
+      : '0.00',
+  }));
 
-  const minH = Math.max(CHART_LAYOUT.minHeight, 600);
-
-  // Helper for chart analysis sections - standardized orange/amber AI styling
-  const AnalysisBox = ({ value, onChange }: { value: string; onChange: (v: string) => void; focusColor?: string }) => (
-    <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
-      <h4 className="font-bold text-orange-600 mb-2 text-xl">Analisis</h4>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} className="w-full h-44 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 resize-none" placeholder="Analisis..." />
-    </div>
-  );
+  const minH = Math.max(CHART_LAYOUT.minHeight, 700);
 
   return (
     <>
@@ -419,9 +537,11 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
           {/* Top row: SQA logo left, metadata right */}
           <div className="flex flex-col sm:flex-row justify-between items-start mb-6">
             <div className="flex items-center gap-4">
-              <button onClick={onBack} className="text-white/70 hover:text-white transition-colors">
-                <ArrowLeft className="w-8 h-8" />
-              </button>
+              {!embedded && (
+                <button onClick={onBack} className="text-white/70 hover:text-white transition-colors">
+                  <ArrowLeft className="w-8 h-8" />
+                </button>
+              )}
               <div>
                 <h1 className="text-4xl font-bold">
                   sqa<span className="text-[#f5a623]">_</span>
@@ -495,28 +615,93 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
           </div>
         </div>
 
-        {/* RESUMEN EJECUTIVO */}
+        {/* RESUMEN EJECUTIVO — KNX-10: Extended KPI Dashboard */}
         <div className="mb-8">
-          <h2 className="text-4xl font-bold text-gray-800 mb-5">Resumen Ejecutivo</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-l-blue-500 border border-gray-200">
-              <p className="text-2xl text-gray-500 mb-1">Total Requests</p>
-              <p className="text-6xl font-bold text-gray-800">{execution.total_requests.toLocaleString()}</p>
+          <h2 className="text-4xl font-bold text-gray-800 mb-5">Dashboard de KPIs</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-blue-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Total Requests</p>
+              <p className="text-4xl font-bold text-gray-800 mt-1">{execution.total_requests.toLocaleString()}</p>
+              <p className="text-sm text-gray-400 mt-1">samples</p>
             </div>
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-l-green-500 border border-gray-200">
-              <p className="text-2xl text-gray-500 mb-1">Avg Response Time</p>
-              <p className="text-6xl font-bold text-green-600">{execution.avg_response_time.toFixed(0)} <span className="text-3xl">ms</span></p>
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-green-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Avg Response Time</p>
+              <p className="text-4xl font-bold text-green-600 mt-1">{execution.avg_response_time.toFixed(0)} <span className="text-xl">ms</span></p>
             </div>
-            <div className={`bg-white rounded-2xl shadow-lg p-6 border-l-4 border border-gray-200 ${execution.error_rate < 1 ? 'border-l-green-500' : execution.error_rate < 5 ? 'border-l-orange-500' : 'border-l-red-500'}`}>
-              <p className="text-2xl text-gray-500 mb-1">Error Rate</p>
-              <p className={`text-6xl font-bold ${execution.error_rate < 1 ? 'text-green-600' : execution.error_rate < 5 ? 'text-orange-600' : 'text-red-600'}`}>{execution.error_rate.toFixed(2)} <span className="text-3xl">%</span></p>
+            <div className={`bg-white rounded-2xl shadow-lg p-5 border-l-4 border border-gray-200 ${execution.error_rate < 1 ? 'border-l-green-500' : execution.error_rate < 5 ? 'border-l-orange-500' : 'border-l-red-500'}`}>
+              <p className="text-base text-gray-500 uppercase tracking-wide">Error Rate</p>
+              <p className={`text-4xl font-bold mt-1 ${execution.error_rate < 1 ? 'text-green-600' : execution.error_rate < 5 ? 'text-orange-600' : 'text-red-600'}`}>{execution.error_rate.toFixed(2)} <span className="text-xl">%</span></p>
             </div>
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-l-purple-500 border border-gray-200">
-              <p className="text-2xl text-gray-500 mb-1">Throughput</p>
-              <p className="text-6xl font-bold text-purple-600">{execution.throughput.toFixed(2)} <span className="text-3xl">req/s</span></p>
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-purple-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Throughput</p>
+              <p className="text-4xl font-bold text-purple-600 mt-1">{execution.throughput.toFixed(2)} <span className="text-xl">req/s</span></p>
+            </div>
+            {/* Percentile cards */}
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-cyan-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Percentil 50</p>
+              <p className="text-4xl font-bold text-cyan-600 mt-1">{execution.p50_response_time?.toFixed(0) || '--'} <span className="text-xl">ms</span></p>
+            </div>
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-amber-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Percentil 90</p>
+              <p className="text-4xl font-bold text-amber-600 mt-1">{execution.p90_response_time.toFixed(0)} <span className="text-xl">ms</span></p>
+            </div>
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-orange-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Percentil 95</p>
+              <p className="text-4xl font-bold text-orange-600 mt-1">{execution.p95_response_time.toFixed(0)} <span className="text-xl">ms</span></p>
+            </div>
+            <div className="bg-white rounded-2xl shadow-lg p-5 border-l-4 border-l-red-500 border border-gray-200">
+              <p className="text-base text-gray-500 uppercase tracking-wide">Percentil 99</p>
+              <p className="text-4xl font-bold text-red-600 mt-1">{execution.p99_response_time.toFixed(0)} <span className="text-xl">ms</span></p>
             </div>
           </div>
         </div>
+
+        {/* KNX-09: Per-Transaction Verdicts */}
+        {execution.acceptance_criteria_json?.verdicts_per_transaction && Object.keys(execution.acceptance_criteria_json.verdicts_per_transaction).length > 0 && (
+          <div className="mb-8">
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
+              <div className="bg-[#0a1628] px-6 py-4">
+                <h2 className="text-3xl font-bold text-white">Veredicto por Transaccion</h2>
+              </div>
+              <div className="p-6">
+                <table className="w-full text-lg">
+                  <thead>
+                    <tr className="border-b-2 border-gray-200">
+                      <th className="text-left py-3 px-4 text-base font-bold text-gray-500 uppercase">Transaccion</th>
+                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">P90 (ms)</th>
+                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">Umbral RT (ms)</th>
+                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">% Error</th>
+                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">Veredicto</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {Object.entries(execution.acceptance_criteria_json.verdicts_per_transaction).map(([txn, verdict]: [string, any]) => {
+                      const txnData = (charts.by_label || []).find((r: any) => r.label === txn);
+                      const rtThreshold = execution.acceptance_criteria_json?.per_transaction?.[txn]?.response_time || execution.acceptance_criteria_json?.response_time || 2000;
+                      return (
+                        <tr key={txn} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 text-xl text-gray-900 font-medium">{txn}</td>
+                          <td className="py-3 px-4 text-xl text-center text-gray-700">{txnData?.p90?.toFixed(0) || '--'}</td>
+                          <td className="py-3 px-4 text-xl text-center text-gray-400">{rtThreshold}</td>
+                          <td className="py-3 px-4 text-xl text-center text-gray-700">{txnData?.error_rate?.toFixed(2) || '0.00'}%</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-3 py-1 rounded-full text-base font-bold uppercase ${
+                              verdict === 'APTO' ? 'bg-green-100 text-green-700' :
+                              verdict === 'NO APTO' ? 'bg-red-100 text-red-700' :
+                              'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              {verdict as string}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* REPORTE RESUMEN TABLE */}
         <div className="mb-8">
@@ -585,7 +770,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
           </div>
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
             <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
-            <textarea value={analysisSummary} onChange={(e) => setAnalysisSummary(e.target.value)} className="w-full h-44 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 resize-none" placeholder="El analisis aparecera aqui..." />
+            <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+            <EditableTextArea initialValue={analysisSummary} onSave={setAnalysisSummary} placeholder="El analisis aparecera aqui..." />
           </div>
 
           {/* TABLA DE REDIRECCIONES */}
@@ -642,7 +828,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
               </div>
               <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
                 <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Redirecciones</h3>
-                <textarea value={analysisRedirects} onChange={(e) => setAnalysisRedirects(e.target.value)} className="w-full h-44 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 resize-none" placeholder="Analisis de redirecciones..." />
+                <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <EditableTextArea initialValue={analysisRedirects} onSave={setAnalysisRedirects} placeholder="Analisis de redirecciones..." />
               </div>
             </div>
           )}
@@ -726,7 +913,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                         {errorData.map((error: any, idx: number) => (
                           <tr key={idx} className="hover:bg-red-50">
                             <td className="px-4 py-3 text-xl text-gray-900">{error.name}</td>
-                            <td className="px-4 py-3 text-xl font-mono text-red-600">404/405</td>
+                            <td className="px-4 py-3 text-xl font-mono text-red-600">{error.code}</td>
                             <td className="px-4 py-3 text-xl font-semibold text-red-600">{error.value.toLocaleString()}</td>
                             <td className="px-4 py-3 text-xl font-bold text-red-600">{error.percentage}%</td>
                           </tr>
@@ -739,25 +926,33 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
             </div>
             <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
               <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Errores</h3>
-              <textarea value={analysisErrors} onChange={(e) => setAnalysisErrors(e.target.value)} className="w-full h-44 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/30 focus:border-orange-400 resize-none" placeholder="Analisis de errores..." />
+              <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+              <EditableTextArea initialValue={analysisErrors} onSave={setAnalysisErrors} placeholder="Analisis de errores..." />
             </div>
           </div>
         )}
 
-        {/* GRAFICOS DE PERFORMANCE */}
+        {/* GRAFICOS DE PERFORMANCE — KNX-10: Collapsible */}
         <div className="mb-8">
           <div className="bg-[#0a1628] rounded-t-2xl px-6 py-4 flex items-center justify-between">
-            <h2 className="text-3xl font-bold text-white">Graficos de Performance</h2>
-            <div className="flex gap-2">
-              <button onClick={() => setTimeMode('elapsed')} className={`px-5 py-2.5 rounded-xl font-bold text-xl transition-all ${timeMode === 'elapsed' ? 'bg-sqa-gold text-sqa-navy shadow-lg' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-                Tiempo Transcurrido
-              </button>
-              <button onClick={() => setTimeMode('real')} className={`px-5 py-2.5 rounded-xl font-bold text-xl transition-all ${timeMode === 'real' ? 'bg-sqa-gold text-sqa-navy shadow-lg' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-                Hora Real
-              </button>
-            </div>
+            <button onClick={() => setChartsExpanded(!chartsExpanded)} className="flex items-center gap-3 text-white hover:text-[#f5a623] transition-colors">
+              <span className={`transform transition-transform text-2xl ${chartsExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
+              <h2 className="text-3xl font-bold">Graficos de Performance</h2>
+              <span className="text-lg text-white/50">(8 graficas)</span>
+            </button>
+            {chartsExpanded && (
+              <div className="flex gap-2">
+                <button onClick={() => setTimeMode('elapsed')} className={`px-5 py-2.5 rounded-xl font-bold text-xl transition-all ${timeMode === 'elapsed' ? 'bg-sqa-gold text-sqa-navy shadow-lg' : 'bg-white/10 text-white hover:bg-white/20'}`}>
+                  Tiempo Transcurrido
+                </button>
+                <button onClick={() => setTimeMode('real')} className={`px-5 py-2.5 rounded-xl font-bold text-xl transition-all ${timeMode === 'real' ? 'bg-sqa-gold text-sqa-navy shadow-lg' : 'bg-white/10 text-white hover:bg-white/20'}`}>
+                  Hora Real
+                </button>
+              </div>
+            )}
           </div>
 
+          {chartsExpanded && (
           <div className="bg-white rounded-b-2xl shadow-lg p-6 space-y-10 border border-gray-200 border-t-0">
             {/* 1. Response Times */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
@@ -766,14 +961,15 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                 <LineChart data={responseTimesByLabel.data} margin={CHART_LAYOUT.padding}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(responseTimesByLabel.data.length, responseTimesByLabel.labels.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('rtByLabel')} allowDataOverflow={true} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="ms" />} />
-                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesResponseTimes} onToggle={(key) => handleLegendClick(key, hiddenLinesResponseTimes, setHiddenLinesResponseTimes)} />} verticalAlign="bottom" />
+                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesResponseTimes} onToggle={(key) => handleLegendClick(key, hiddenLinesResponseTimes, setHiddenLinesResponseTimes)} onSetAll={setHiddenLinesResponseTimes} />} verticalAlign="bottom" />
                   {responseTimesByLabel.labels.map((label: string, idx: number) => (
-                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={2} dot={false} connectNulls hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 4, strokeWidth: 2 }} />
+                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 3 }} isAnimationActive={false} />
                   ))}
                 </LineChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(responseTimesByLabel.data, responseTimesByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('rtByLabel', mn, mx)} />
               <AnalysisBox value={analysisResponseTimes} onChange={setAnalysisResponseTimes} />
             </div>
 
@@ -785,11 +981,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                   <defs><linearGradient id="colorResponseTime" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(timelineData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('rtOverTime')} allowDataOverflow={true} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="ms" />} />
-                  <Area type="monotone" dataKey="avg_response_time" stroke="#3b82f6" strokeWidth={2} dot={false} fillOpacity={0.15} fill="url(#colorResponseTime)" connectNulls />
+                  <Area type="monotone" dataKey="avg_response_time" stroke="#3b82f6" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorResponseTime)" connectNulls isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(timelineData, ['avg_response_time'])} onRangeChange={(mn, mx) => handleYRange('rtOverTime', mn, mx)} />
               <AnalysisBox value={analysisResponseTimeOverTime} onChange={setAnalysisResponseTimeOverTime} />
             </div>
 
@@ -801,11 +998,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                   <defs><linearGradient id="colorThroughput" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#06b6d4" stopOpacity={0.8}/><stop offset="95%" stopColor="#06b6d4" stopOpacity={0.1}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(throughputData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Requests/sec', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('throughput')} allowDataOverflow={true} label={{ value: 'Requests/sec', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="req/s" />} />
-                  <Area type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={false} fillOpacity={0.15} fill="url(#colorThroughput)" connectNulls />
+                  <Area type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorThroughput)" connectNulls isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(throughputData, ['value'])} onRangeChange={(mn, mx) => handleYRange('throughput', mn, mx)} />
               <AnalysisBox value={analysisThroughput} onChange={setAnalysisThroughput} />
             </div>
 
@@ -817,11 +1015,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                   <defs><linearGradient id="colorLatency" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#eab308" stopOpacity={0.8}/><stop offset="95%" stopColor="#eab308" stopOpacity={0.1}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(latencyData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Latencia (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('latency')} allowDataOverflow={true} label={{ value: 'Latencia (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="ms" />} />
-                  <Area type="monotone" dataKey="value" stroke="#eab308" strokeWidth={2} dot={false} fillOpacity={0.15} fill="url(#colorLatency)" connectNulls />
+                  <Area type="monotone" dataKey="value" stroke="#eab308" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorLatency)" connectNulls isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(latencyData, ['value'])} onRangeChange={(mn, mx) => handleYRange('latency', mn, mx)} />
               <AnalysisBox value={analysisLatency} onChange={setAnalysisLatency} />
             </div>
 
@@ -833,11 +1032,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                   <defs><linearGradient id="colorErrorRate" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.8}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0.1}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(errorRateData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Error Rate (%)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('errorRate')} allowDataOverflow={true} label={{ value: 'Error Rate (%)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="%" />} />
-                  <Area type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2} dot={false} fillOpacity={0.15} fill="url(#colorErrorRate)" connectNulls />
+                  <Area type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorErrorRate)" connectNulls isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(errorRateData, ['value'])} onRangeChange={(mn, mx) => handleYRange('errorRate', mn, mx)} />
               <AnalysisBox value={analysisErrorRate} onChange={setAnalysisErrorRate} />
             </div>
 
@@ -848,15 +1048,16 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                 <LineChart data={codesPerSecond.data} margin={CHART_LAYOUT.padding}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(codesPerSecond.data.length, codesPerSecond.labels.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Codes/sec', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('codes')} allowDataOverflow={true} label={{ value: 'Codes/sec', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="count" />} />
-                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesCodes} onToggle={(key) => handleLegendClick(key, hiddenLinesCodes, setHiddenLinesCodes)} />} verticalAlign="bottom" />
+                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesCodes} onToggle={(key) => handleLegendClick(key, hiddenLinesCodes, setHiddenLinesCodes)} onSetAll={setHiddenLinesCodes} />} verticalAlign="bottom" />
                   {codesPerSecond.labels.map((label: string) => {
                     const code = label.replace('HTTP ', '');
-                    return <Line key={label} type="monotone" dataKey={label} stroke={getCodeColor(code)} strokeWidth={2} dot={false} connectNulls hide={hiddenLinesCodes.has(label)} activeDot={{ r: 4, strokeWidth: 2 }} />;
+                    return <Line key={label} type="monotone" dataKey={label} stroke={getCodeColor(code)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesCodes.has(label)} activeDot={{ r: 3 }} isAnimationActive={false} />;
                   })}
                 </LineChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(codesPerSecond.data, codesPerSecond.labels)} onRangeChange={(mn, mx) => handleYRange('codes', mn, mx)} />
               <AnalysisBox value={analysisCodesPerSecond} onChange={setAnalysisCodesPerSecond} />
             </div>
 
@@ -867,14 +1068,15 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                 <LineChart data={tpsByLabel.data} margin={CHART_LAYOUT.padding}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(tpsByLabel.data.length, tpsByLabel.labels.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'TPS', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('tps')} allowDataOverflow={true} label={{ value: 'TPS', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="tps" />} />
-                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesTPS} onToggle={(key) => handleLegendClick(key, hiddenLinesTPS, setHiddenLinesTPS)} />} verticalAlign="bottom" />
+                  <Legend content={<ScrollableLegend hiddenLines={hiddenLinesTPS} onToggle={(key) => handleLegendClick(key, hiddenLinesTPS, setHiddenLinesTPS)} onSetAll={setHiddenLinesTPS} />} verticalAlign="bottom" />
                   {tpsByLabel.labels.map((label: string, idx: number) => (
-                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={2} dot={false} connectNulls hide={hiddenLinesTPS.has(label)} activeDot={{ r: 4, strokeWidth: 2 }} />
+                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesTPS.has(label)} activeDot={{ r: 3 }} isAnimationActive={false} />
                   ))}
                 </LineChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(tpsByLabel.data, tpsByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('tps', mn, mx)} />
               <AnalysisBox value={analysisTransactionsPerSecond} onChange={setAnalysisTransactionsPerSecond} />
             </div>
 
@@ -886,17 +1088,20 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                   <defs><linearGradient id="colorThreads" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ec4899" stopOpacity={0.8}/><stop offset="95%" stopColor="#ec4899" stopOpacity={0.1}/></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(activeThreadsData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} label={{ value: 'Threads', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
+                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('threads')} allowDataOverflow={true} label={{ value: 'Threads', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
                   <Tooltip content={<CustomChartTooltip unit="count" />} />
-                  <Area type="monotone" dataKey="value" stroke="#ec4899" strokeWidth={2} dot={false} fillOpacity={0.15} fill="url(#colorThreads)" connectNulls />
+                  <Area type="monotone" dataKey="value" stroke="#ec4899" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorThreads)" connectNulls isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
+              <ChartYAxisZoom dataValues={extractY(activeThreadsData, ['value'])} onRangeChange={(mn, mx) => handleYRange('threads', mn, mx)} />
               <AnalysisBox value={analysisActiveThreads} onChange={setAnalysisActiveThreads} />
             </div>
           </div>
+          )}
         </div>
 
-        {/* CONCLUSIONES Y RECOMENDACIONES */}
+        {/* CONCLUSIONES Y RECOMENDACIONES — hidden when embedded in integrated report */}
+        {!embedded && (
         <div className="mb-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
@@ -904,7 +1109,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                 <h2 className="text-3xl font-bold text-white">Conclusiones</h2>
               </div>
               <div className="p-6">
-                <textarea value={conclusions} onChange={(e) => setConclusions(e.target.value)} className="w-full h-80 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-sqa-gold/30 focus:border-sqa-gold resize-none" placeholder="Escribe las conclusiones generales de la prueba de performance..." />
+                <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <EditableTextArea initialValue={conclusions} onSave={setConclusions} placeholder="Escribe las conclusiones generales de la prueba de performance..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold resize-y cursor-text hover:border-yellow-300 transition-colors" />
               </div>
             </div>
             <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
@@ -912,11 +1118,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
                 <h2 className="text-3xl font-bold text-white">Recomendaciones</h2>
               </div>
               <div className="p-6">
-                <textarea value={recommendations} onChange={(e) => setRecommendations(e.target.value)} className="w-full h-80 p-4 border border-gray-200 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-green-400/30 focus:border-green-400 resize-none" placeholder="Escribe las recomendaciones para mejorar el performance del sistema..." />
+                <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <EditableTextArea initialValue={recommendations} onSave={setRecommendations} placeholder="Escribe las recomendaciones para mejorar el performance del sistema..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-green-400/50 focus:border-green-400 resize-y cursor-text hover:border-green-300 transition-colors" />
               </div>
             </div>
           </div>
         </div>
+        )}
 
         {/* PDF PROGRESS */}
         {isExportingPDF && (
@@ -937,8 +1145,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
           </div>
         )}
 
-        {/* ACTION BUTTONS */}
-        <div className="export-buttons flex justify-center gap-5 mb-8">
+        {/* ACTION BUTTONS — hidden when embedded in integrated report */}
+        {!embedded && <div className="export-buttons flex justify-center gap-5 mb-8">
           <button onClick={handleSaveChanges} disabled={saving || isExportingPDF} className="flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-green-600 to-green-700 text-white text-xl font-bold rounded-2xl shadow-lg hover:from-green-700 hover:to-green-800 transition-all disabled:opacity-50">
             <Save className="w-7 h-7" />
             {saving ? 'Guardando...' : 'Guardar Todos los Cambios'}
@@ -954,12 +1162,14 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack }: 
               <><FileDown className="w-7 h-7" /><span>Exportar PDF</span></>
             )}
           </button>
-        </div>
+        </div>}
 
+        {!embedded && (
         <div className="text-center text-gray-500 text-xl py-8 border-t border-gray-200">
-          <p className="font-semibold text-2xl">sqa<span className="text-sqa-gold">_</span> Software Quality Assurance — Sistema de Reportes de Performance</p>
-          <p className="text-xl mt-2">Powered by FastAPI + React + PostgreSQL + Google Gemini AI</p>
+          <p className="font-semibold text-2xl">sqa<span className="text-sqa-gold">_</span> Software Quality Assurance</p>
+          <p className="text-lg mt-2 italic">Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos</p>
         </div>
+        )}
       </div>
     </div>
     </>

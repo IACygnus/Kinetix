@@ -8,9 +8,7 @@ import {
   FlaskConical,
   FileText,
   ClipboardList,
-  Activity,
-  BarChart3,
-  Settings,
+  // Activity, BarChart3, Settings — unused while Monitoreo section is hidden
   Users,
   Building2,
   UserCheck,
@@ -22,6 +20,12 @@ import {
   ChevronUp,
   LogOut,
   UserCircle,
+  PenTool,
+  Gauge,
+  FileBarChart,
+  Monitor,
+  Search,
+  GitCompare,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -57,7 +61,30 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       icon: <LayoutDashboard className="w-7 h-7" />,
     },
     {
-      label: 'Performance',
+      label: 'Diseño',
+      icon: <PenTool className="w-7 h-7" />,
+      roles: ['admin', 'analyst'],
+      children: [
+        {
+          label: 'Editor',
+          path: '/script-designer',
+          icon: <PenTool className="w-6 h-6" />,
+        },
+        {
+          label: 'Guardados',
+          path: '/script-designer/history',
+          icon: <ClipboardList className="w-6 h-6" />,
+        },
+      ],
+    },
+    {
+      label: 'Ejecución',
+      path: '/execution-dashboard',
+      icon: <Gauge className="w-7 h-7" />,
+      roles: ['admin', 'analyst'],
+    },
+    {
+      label: 'Análisis',
       icon: <FlaskConical className="w-7 h-7" />,
       children: [
         {
@@ -66,12 +93,33 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <FileText className="w-6 h-6" />,
         },
         {
+          label: 'Reporte',
+          path: '/performance/report-latest',
+          icon: <FileBarChart className="w-6 h-6" />,
+        },
+        {
+          label: 'Metricas Monitoreo',
+          path: '/performance/monitoring',
+          icon: <Monitor className="w-6 h-6" />,
+        },
+        {
+          label: 'Evidencias',
+          path: '/performance/evidence',
+          icon: <Search className="w-6 h-6" />,
+        },
+        {
+          label: 'Informe Integrado',
+          path: '/performance/integrated',
+          icon: <GitCompare className="w-6 h-6" />,
+        },
+        {
           label: 'Historial',
           path: '/performance/history',
           icon: <ClipboardList className="w-6 h-6" />,
         },
       ],
     },
+    /* OCULTO — Monitoreo Grafana (desarrollo futuro)
     {
       label: 'Monitoreo',
       icon: <Activity className="w-7 h-7" />,
@@ -89,6 +137,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         },
       ],
     },
+    */
     {
       label: 'Administracion',
       icon: <ShieldCheck className="w-7 h-7" />,
@@ -127,11 +176,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     const performanceActive = location.pathname.startsWith('/performance');
     const monitoringActive = location.pathname.startsWith('/monitoring');
     const adminActive = location.pathname.startsWith('/admin') || location.pathname.startsWith('/users');
+    const designActive = location.pathname.startsWith('/script-designer');
     setExpandedMenus((prev) => ({
       ...prev,
-      ...(performanceActive ? { Performance: true } : {}),
+      ...(performanceActive ? { 'Análisis': true } : {}),
       ...(monitoringActive ? { Monitoreo: true } : {}),
       ...(adminActive ? { Administracion: true } : {}),
+      ...(designActive ? { 'Diseño': true } : {}),
     }));
   }, [location.pathname]);
 

@@ -26,14 +26,14 @@ export const CHART_LAYOUT = {
 };
 
 export const CHART_LABELS = {
-  rotationThreshold: 8,
+  rotationThreshold: 6,
   rotationAngle: -45,
-  truncateThreshold: 12,
-  truncateLength: 15,
+  truncateThreshold: 10,
+  truncateLength: 12,
   fontSizeNormal: 12,
   fontSizeSmall: 10,
   fontSizeTiny: 8,
-  maxTicksX: 30,
+  maxTicksX: 20,
 };
 
 export const CHART_LEGEND = {
@@ -148,7 +148,8 @@ export function getAdaptiveFontSize(labelCount: number): number {
  */
 export function getXAxisInterval(dataLength: number): number {
   if (dataLength <= CHART_LABELS.maxTicksX) return 0;
-  return Math.max(0, Math.floor(dataLength / CHART_LABELS.maxTicksX) - 1);
+  // KNX-11: More aggressive interval for long tests to prevent label overlap
+  return Math.max(1, Math.ceil(dataLength / CHART_LABELS.maxTicksX));
 }
 
 /**

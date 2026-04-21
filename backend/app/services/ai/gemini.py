@@ -36,23 +36,80 @@ GENERATION_CONFIG = {
     "temperature": 0.7,
 }
 
+# Max completion tokens per OpenAI model (Gemini uses GENERATION_CONFIG directly)
+OPENAI_MAX_TOKENS = {
+    "gpt-3.5-turbo": 4096,
+    "gpt-4": 4096,
+    "gpt-4-turbo": 4096,
+    "gpt-4o": 16384,
+    "gpt-4o-mini": 16384,
+    "gpt-4.1": 16384,
+    "gpt-4.1-mini": 16384,
+}
+OPENAI_DEFAULT_MAX_TOKENS = 4096
+
 # Performance tier thresholds (ms)
 TIER_EXCELLENT = 500
 TIER_ACCEPTABLE = 2000
 TIER_DEGRADED = 5000
 
-SYSTEM_PROMPT = """Eres un ingeniero senior de performance testing. Escribes reportes ejecutivos concisos en espanol.
+SYSTEM_PROMPT = """Eres un analista senior de performance con 15 anos de experiencia. Redactas informes tecnicos para gerentes de TI en espanol profesional colombiano.
 
-REGLAS:
-- Parrafos narrativos breves (2-3 oraciones por parrafo)
-- Menciona transacciones POR NOMBRE con datos numericos dentro de oraciones narrativas
-- SE CONCISO: maximo 200 palabras por analisis de grafica
-- Para conclusiones y recomendaciones: maximo 600 palabras
-- NUNCA hagas listas de bullets con datos crudos como "- Transaction: 500ms"
-- Agrupa transacciones por comportamiento similar
-- Compara la mas rapida vs la mas lenta
-- Explica el impacto para el usuario final
+REGLAS DE ESTILO OBLIGATORIAS:
+
+1. PROHIBIDO usar markdown: nada de **, ##, *, -, ni vinetas con asteriscos o guiones.
+2. PROHIBIDO usar las palabras: "veredicto", "hallazgo", "se evidencia", "cabe destacar", "es importante mencionar", "en conclusion".
+3. PROHIBIDO encerrar palabras entre asteriscos o comillas para dar enfasis.
+4. PROHIBIDO numerar parrafos (1. 2. 3.) excepto en conclusiones y recomendaciones.
+5. Escribe en parrafos narrativos fluidos de 3-5 oraciones cada uno.
+6. Usa datos concretos (numeros, porcentajes, milisegundos) dentro de las frases, no como listas aparte.
+7. Cuando menciones transacciones, usa su nombre natural en el texto sin resaltarlo con formato especial.
+8. Maximo 200 palabras por analisis de grafica. Para conclusiones y recomendaciones maximo 600 palabras.
+9. Compara la transaccion mas rapida vs la mas lenta. Agrupa por comportamiento similar.
+10. Explica el impacto para el usuario final.
+11. El texto debe leerse como si un humano lo hubiera escrito, no generado por IA.
+
+EJEMPLO CORRECTO:
+"La transaccion de inicio de sesion mantuvo un tiempo de respuesta promedio de 245ms durante toda la prueba, dentro del umbral de 2000ms definido por el cliente. Sin embargo, a partir del minuto 15 los tiempos comenzaron a incrementarse de forma gradual, alcanzando picos de 890ms en el percentil 99. Este comportamiento sugiere que el pool de conexiones podria estar saturandose conforme aumenta la concurrencia sostenida."
 """
+
+
+def sanitize_ai_text(text: str) -> str:
+    """Clean Gemini output by removing markdown formatting artifacts."""
+    if not text:
+        return text
+    import re as _re
+    # Remove markdown headers
+    text = _re.sub(r'^#{1,6}\s+', '', text, flags=_re.MULTILINE)
+    # Remove bold markdown
+    text = _re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = _re.sub(r'__(.+?)__', r'\1', text)
+    # Remove italic markdown (careful with contractions)
+    text = _re.sub(r'(?<!\w)\*(.+?)\*(?!\w)', r'\1', text)
+    # Remove bullet markers at start of line
+    text = _re.sub(r'^[\*\-]\s+', '', text, flags=_re.MULTILINE)
+    # Remove backticks
+    text = _re.sub(r'`(.+?)`', r'\1', text)
+    # Remove horizontal rules
+    text = _re.sub(r'^[\-\*]{3,}$', '', text, flags=_re.MULTILINE)
+    # Collapse multiple blank lines
+    text = _re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+# KNX-08: Metric unit names for consistent AI analysis
+METRIC_UNIT_NAMES = {
+    "TPS": "Transacciones por segundo (TPS)",
+    "UVC": "Usuarios virtuales concurrentes (UVC)",
+}
+
+
+def get_metric_unit_instruction(metric_unit: str = "TPS") -> str:
+    """Returns the instruction to append to prompts for consistent metric unit usage."""
+    unit_name = METRIC_UNIT_NAMES.get(metric_unit, METRIC_UNIT_NAMES["TPS"])
+    return (
+        f"\n\nUNIDAD DE MEDIDA: Cuando menciones metricas de rendimiento/carga, "
+        f"usa siempre '{unit_name}'. NO mezcles TPS con UVC. Se consistente."
+    )
 
 
 # ==================== VERDICT CALCULATOR ====================
@@ -90,6 +147,53 @@ def compute_verdict(metrics: Dict, acceptance_criteria: Optional[Dict] = None) -
         return "APTO CON RESERVAS"
     else:
         return "APTO"
+
+
+def compute_per_transaction_verdicts(
+    summary_df, acceptance_criteria: Optional[Dict] = None
+) -> Dict:
+    """
+    KNX-09: Evaluate PASS/FAIL per transaction using per-transaction or global criteria.
+    Returns dict with 'verdicts_per_transaction' and updated 'verdict'.
+    """
+    if acceptance_criteria is None or acceptance_criteria.get('raw_text'):
+        return {}
+
+    global_rt = float(acceptance_criteria.get('response_time', 2000))
+    global_avail = float(acceptance_criteria.get('availability', 99.0))
+    per_txn = acceptance_criteria.get('per_transaction', {})
+
+    verdicts = {}
+    for _, row in summary_df.iterrows():
+        label = row['label']
+        txn_criteria = per_txn.get(label, {})
+        rt_threshold = float(txn_criteria.get('response_time', global_rt))
+        er_threshold = 100.0 - float(txn_criteria.get('availability', global_avail))
+
+        p90 = float(row['p90'])
+        error_rate = float(row['tasa_error'])
+
+        rt_fail = p90 > rt_threshold
+        er_fail = error_rate > er_threshold
+        rt_warning = p90 > (rt_threshold * 0.8) and not rt_fail
+
+        if rt_fail or er_fail:
+            verdicts[label] = "NO APTO"
+        elif rt_warning:
+            verdicts[label] = "APTO CON RESERVAS"
+        else:
+            verdicts[label] = "APTO"
+
+    global_verdict = "APTO"
+    if any(v == "NO APTO" for v in verdicts.values()):
+        global_verdict = "NO APTO"
+    elif any(v == "APTO CON RESERVAS" for v in verdicts.values()):
+        global_verdict = "APTO CON RESERVAS"
+
+    return {
+        'verdicts_per_transaction': verdicts,
+        'verdict': global_verdict,
+    }
 
 
 # ==================== FALLBACK ANALYZER ====================
@@ -552,7 +656,7 @@ class GeminiAnalyzer:
         logger.info(f"AIAnalyzer: using key prefix={self._api_key[:10]}...")
 
         if self.provider == "gemini":
-            genai.configure(api_key=self._api_key)
+            genai.configure(api_key=self._api_key, transport="rest")
             self.model = genai.GenerativeModel(
                 model_name=self.model_name,
                 generation_config=GENERATION_CONFIG,
@@ -590,7 +694,7 @@ class GeminiAnalyzer:
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": prompt},
                         ],
-                        max_tokens=GENERATION_CONFIG["max_output_tokens"],
+                        max_tokens=OPENAI_MAX_TOKENS.get(self.model_name, OPENAI_DEFAULT_MAX_TOKENS),
                         temperature=GENERATION_CONFIG["temperature"],
                     )
                     result = response.choices[0].message.content if response.choices else None
@@ -601,6 +705,7 @@ class GeminiAnalyzer:
                     GeminiAnalyzer._total_errors += 1
                     return None
 
+                result = sanitize_ai_text(result)
                 logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
                 return result
 
@@ -621,6 +726,134 @@ class GeminiAnalyzer:
         GeminiAnalyzer._circuit_open = True
         GeminiAnalyzer._total_errors += 1
         return None
+
+    def analyze_image(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        category: str,
+        title: str = "",
+        description: str = "",
+        attachment_type: str = "monitoring",
+    ) -> str:
+        """Analyze an image using Gemini Vision (multimodal) with OCR fallback."""
+        import base64
+
+        type_label = "monitoreo de performance" if attachment_type == "monitoring" else "evidencia de pruebas de performance"
+        ctx_parts = [f"Categoria: {category}"]
+        if title:
+            ctx_parts.append(f"Titulo: {title}")
+        if description:
+            ctx_parts.append(f"Descripcion del usuario: {description}")
+        context = "\n".join(ctx_parts)
+
+        if attachment_type == "monitoring":
+            instructions = (
+                "Describe lo que ves en la imagen de forma precisa y tecnica. "
+                "Si es una grafica identifica tendencias, picos, valores min/max y promedios aproximados. "
+                "Si es un dashboard describe cada metrica visible y su estado. "
+                "Si hay umbrales o alertas visibles mencionalos. "
+                "Relaciona los datos con el rendimiento del sistema."
+            )
+        else:
+            instructions = (
+                "Describe lo que muestra la imagen de forma precisa. "
+                "Si es un error identifica tipo, codigo HTTP, mensaje y stack trace si es visible. "
+                "Si es un log extrae las lineas relevantes. "
+                "Clasifica la severidad (critico, mayor, menor, informativo). "
+                "Sugiere posible causa raiz basandote en lo visible."
+            )
+
+        prompt = (
+            f"Analiza esta imagen de {type_label}.\n{context}\n\n"
+            f"INSTRUCCIONES:\n{instructions}\n"
+            f"Escribe en espanol profesional colombiano. "
+            f"Parrafos narrativos de 3-5 oraciones, sin markdown, sin bullets, sin asteriscos. "
+            f"Maximo 300 palabras. Se especifico con los datos que ves."
+        )
+
+        # ---- Multimodal analysis by provider ----
+        if self.provider == "gemini":
+            try:
+                image_part = {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode("utf-8")}
+                response = self.model.generate_content(
+                    [prompt, image_part],
+                    generation_config={"max_output_tokens": 1024, "temperature": 0.3},
+                )
+                if response and response.text:
+                    result = sanitize_ai_text(response.text)
+                    logger.info(f"Gemini Vision OK: {len(result)} chars for {category}/{title}")
+                    return result
+            except Exception as e:
+                logger.warning(f"Gemini Vision failed for {category}/{title}: {e}")
+
+        elif self.provider == "openai":
+            try:
+                b64_data = base64.b64encode(image_bytes).decode("utf-8")
+                response = self._openai_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {
+                                "url": f"data:{mime_type};base64,{b64_data}"
+                            }}
+                        ]
+                    }],
+                    max_tokens=min(OPENAI_MAX_TOKENS.get(self.model_name, OPENAI_DEFAULT_MAX_TOKENS), 1024),
+                    temperature=0.3,
+                )
+                text = response.choices[0].message.content if response.choices else None
+                if text:
+                    result = sanitize_ai_text(text)
+                    logger.info(f"OpenAI Vision OK: {len(result)} chars for {category}/{title}")
+                    return result
+            except Exception as e:
+                logger.warning(f"OpenAI Vision failed for {category}/{title}: {e}")
+
+        # ---- Fallback: OCR + text analysis ----
+        logger.info(f"Falling back to OCR for {category}/{title}")
+        return self._analyze_image_ocr_fallback(image_bytes, category, title, description, attachment_type)
+
+    def _analyze_image_ocr_fallback(
+        self, image_bytes: bytes, category: str, title: str, description: str, attachment_type: str
+    ) -> str:
+        """Fallback: extract text via OCR then analyze with Gemini text model."""
+        import io
+        extracted_text = ""
+
+        try:
+            from PIL import Image
+            import pytesseract
+            image = Image.open(io.BytesIO(image_bytes))
+            extracted_text = pytesseract.image_to_string(image, lang="spa+eng").strip()
+        except Exception as e:
+            logger.warning(f"OCR failed: {e}")
+
+        if not extracted_text:
+            extracted_text = "(No se pudo extraer texto de la imagen)"
+
+        type_label = "monitoreo" if attachment_type == "monitoring" else "evidencia"
+        prompt = (
+            f"Se extrajo el siguiente texto de una imagen de {type_label} de pruebas de performance usando OCR.\n"
+            f"Categoria: {category}\n"
+            f"{f'Titulo: {title}' if title else ''}\n"
+            f"{f'Descripcion: {description}' if description else ''}\n\n"
+            f"Texto extraido:\n---\n{extracted_text}\n---\n\n"
+            f"Genera un analisis tecnico basado en el texto extraido. "
+            f"Espanol profesional, parrafos narrativos, sin markdown. Maximo 200 palabras. "
+            f"Si el texto es pobre o vacio, indica que no fue posible analizar el contenido."
+        )
+
+        result = self._generate(prompt, section_name=f"ocr_fallback_{category}")
+        if result:
+            return result
+        return (
+            f"No fue posible analizar esta imagen automaticamente. "
+            f"Se recomienda agregar una descripcion manual. "
+            f"Categoria: {category}. Titulo: {title or 'Sin titulo'}."
+        )
 
     def _build_test_type_context(self, test_type: str) -> str:
         """Construye contexto del tipo de prueba"""
@@ -650,6 +883,7 @@ class GeminiAnalyzer:
         acceptance_criteria: Optional[Dict] = None,
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Analisis de la tabla resumen con datos completos por transaccion"""
         try:
@@ -673,7 +907,7 @@ class GeminiAnalyzer:
 
             logger.info(f"Enviando {len(summary_df)} transacciones a Gemini para analisis de tabla resumen")
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 TABLA DE RESULTADOS POR TRANSACCION:
@@ -718,6 +952,7 @@ Menciona TODAS las {insights['total_transactions']} transacciones por nombre de 
         total_requests: int,
         test_type: str = "load",
         test_date: str = "N/A",
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Analisis detallado de errores por transaccion y codigo HTTP"""
         if not error_data or len(error_data) == 0:
@@ -760,7 +995,7 @@ Menciona TODAS las {insights['total_transactions']} transacciones por nombre de 
                     f"{len(info['transactions'])} transacciones: {', '.join(info['transactions'])}\n"
                 )
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 ERRORES DETECTADOS:
@@ -794,6 +1029,7 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
         test_type: str = "load",
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Analisis de graficos individuales con contexto del tipo de prueba"""
         try:
@@ -836,7 +1072,7 @@ Menciona CADA transaccion por nombre. Cubre: distribucion por tiers, mas rapida 
             chart_name = chart_names.get(chart_type, chart_type)
             specific = chart_specific_instructions.get(chart_type, "Analiza los datos de esta grafica en detalle.")
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 DATOS DE LA GRAFICA "{chart_name}":
@@ -861,6 +1097,7 @@ Cierra con una oracion sobre el impacto en produccion.
         main_metrics: Dict,
         test_type: str = "load",
         test_date: str = "N/A",
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Analisis de redirecciones separadas del trafico principal"""
         try:
@@ -869,7 +1106,7 @@ Cierra con una oracion sobre el impacto en produccion.
 
             logger.info(f"Enviando {len(redirect_summary_df)} redirecciones a Gemini")
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 Se han detectado REDIRECCIONES HTTP separadas del trafico principal.
@@ -913,6 +1150,7 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
         acceptance_criteria: Optional[Dict] = None,
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Sintetiza TODOS los analisis en conclusiones ejecutivas"""
         try:
@@ -954,7 +1192,7 @@ Si el veredicto es NO APTO, explica que criterios se incumplen.
 Si es APTO CON RESERVAS, explica que metricas estan cerca del limite.
 """
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 Has completado el analisis de una prueba de performance JMeter. Sintetiza TODO en conclusiones ejecutivas.
@@ -1035,6 +1273,7 @@ CADA conclusion debe sintetizar multiples analisis y nombrar transacciones espec
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
         acceptance_criteria: Optional[Dict] = None,
+        metric_unit: str = "TPS",
     ) -> Optional[str]:
         """Genera recomendaciones tecnicas basadas en TODOS los analisis"""
         try:
@@ -1074,7 +1313,7 @@ CRITERIOS DE ACEPTACION DEL CLIENTE:
 Las recomendaciones DEBEN estar orientadas a cumplir estos criterios especificos.
 """
 
-            prompt = f"""{SYSTEM_PROMPT}
+            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 Genera recomendaciones tecnicas accionables basadas en los resultados de la prueba.

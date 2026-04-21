@@ -15,7 +15,7 @@ export default function Footer() {
           </span>
         </div>
         <div className="text-lg text-slate-500">
-          JMeter Analyzer Pro v2.0 &copy; {new Date().getFullYear()}
+          SQA Kinetix Pro &copy; {new Date().getFullYear()}
         </div>
       </div>
     </footer>

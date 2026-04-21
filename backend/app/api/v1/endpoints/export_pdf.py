@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import List
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
+import json
 import logging
 
 import pandas as pd
@@ -21,6 +23,7 @@ from app.db.models.user import User
 from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
 from app.config.chart_config import TEST_TYPE_LABELS
+# ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html,
 )
@@ -258,8 +261,49 @@ async def export_pdf(
             'acceptanceCriteria': execution.acceptance_criteria_json or {},
         }
 
-        # ---- Render PDF ----
+        # ---- Render PDF (individual: NO monitoring/evidence attachments) ----
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
+
+        # KNX-17: Capacity analysis for PDF
+        capacity_pdf = ''
+        cap_json = execution.capacity_analysis_json if hasattr(execution, 'capacity_analysis_json') else None
+        if cap_json:
+            try:
+                cap_data = json.loads(cap_json)
+                if cap_data.get('enabled') and cap_data.get('resources'):
+                    cap_rows = ''
+                    for r in cap_data['resources']:
+                        st = r.get('status', '')
+                        st_html = f'<span style="color:{"#166534" if st == "PASS" else "#991b1b"};font-weight:700">{st}</span>' if st else '--'
+                        cap_rows += f'''<tr>
+                            <td style="padding:2mm 1.5mm;font-weight:600;font-size:7.5pt">{r.get('name','')}</td>
+                            <td style="padding:2mm 1.5mm;text-align:center;font-size:7.5pt">{r.get('observed_value','')} {r.get('unit','')}</td>
+                            <td style="padding:2mm 1.5mm;text-align:center;font-size:7.5pt;color:#64748b">{r.get('threshold','')} {r.get('unit','')}</td>
+                            <td style="padding:2mm 1.5mm;text-align:center;font-size:7.5pt">{st_html}</td>
+                            <td style="padding:2mm 1.5mm;font-size:7pt;color:#334155">{r.get('analysis','')}</td>
+                        </tr>'''
+                    capacity_pdf = f'''
+                    <div style="margin-bottom:5mm">
+                        <div style="background:#0a1628;color:white;padding:2.5mm 4mm;font-size:10pt;font-weight:700;border-radius:2mm 2mm 0 0">
+                            Analisis de Capacidades del Sistema
+                        </div>
+                        <table style="width:100%;border-collapse:collapse;font-size:7.5pt;margin-bottom:4mm">
+                            <thead><tr style="background:#0a1628;color:white">
+                                <th style="padding:2mm 1.5mm;text-align:left;font-size:6.5pt">Recurso</th>
+                                <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Valor</th>
+                                <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Umbral</th>
+                                <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Estado</th>
+                                <th style="padding:2mm 1.5mm;text-align:left;font-size:6.5pt">Analisis</th>
+                            </tr></thead>
+                            <tbody>{cap_rows}</tbody>
+                        </table>
+                    </div>'''
+            except Exception:
+                pass
+
+        # Inject capacity analysis before closing </body> (no attachments in individual export)
+        if capacity_pdf:
+            html_content = html_content.replace('</body>', f'{capacity_pdf}</body>')
 
         logger.info("PDF: rendering with WeasyPrint...")
         pdf_bytes = HTML(string=html_content).write_pdf()
@@ -275,7 +319,7 @@ async def export_pdf(
         if client_part:
             client_part = client_part[0].upper() + client_part[1:]
         project_part = _safe(execution.name).lower()
-        _now = datetime.now()
+        _now = datetime.now(ZoneInfo("America/Bogota"))
         filename = f"{client_part}_{project_part}_{_now.strftime('%Y-%m-%d')}_{_now.strftime('%H%M')}.pdf"
 
         return Response(

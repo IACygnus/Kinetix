@@ -5,10 +5,14 @@ import re
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Tuple, Optional, Set
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Zona horaria para reportes — Colombia (UTC-5)
+REPORT_TIMEZONE = ZoneInfo("America/Bogota")
 
 
 def validate_jtl_compatibility(file_paths: List[str]) -> Dict:
@@ -31,9 +35,9 @@ def validate_jtl_compatibility(file_paths: List[str]) -> Dict:
             info = {
                 "file": Path(path).name,
                 "columns": set(df.columns),
-                "start_time": pd.to_datetime(df_full_ts['timeStamp'].min(), unit='ms'),
-                "end_time": pd.to_datetime(df_full_ts['timeStamp'].max(), unit='ms'),
-                "date": pd.to_datetime(df_full_ts['timeStamp'].min(), unit='ms').date(),
+                "start_time": pd.to_datetime(df_full_ts['timeStamp'].min(), unit='ms', utc=True).tz_convert(REPORT_TIMEZONE),
+                "end_time": pd.to_datetime(df_full_ts['timeStamp'].max(), unit='ms', utc=True).tz_convert(REPORT_TIMEZONE),
+                "date": pd.to_datetime(df_full_ts['timeStamp'].min(), unit='ms', utc=True).tz_convert(REPORT_TIMEZONE).date(),
                 "labels": set(df['label'].unique()),
                 "row_count": len(df_full_ts),
             }
@@ -121,6 +125,49 @@ def classify_transactions(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
     return df_main, df_redirects, redirect_labels
 
 
+LARGE_FILE_THRESHOLD_BYTES = 100 * 1024 * 1024  # 100MB
+CHUNK_SIZE = 50_000  # filas por chunk
+
+
+def _read_csv_optimized(file_path: str) -> pd.DataFrame:
+    """Read CSV with optimized dtypes to reduce memory ~50%."""
+    # First read a small sample to detect columns
+    sample = pd.read_csv(file_path, nrows=5)
+    cols = set(sample.columns)
+
+    dtype_map = {}
+    if 'elapsed' in cols:
+        dtype_map['elapsed'] = 'int32'
+    if 'bytes' in cols:
+        dtype_map['bytes'] = 'int32'
+    if 'sentBytes' in cols:
+        dtype_map['sentBytes'] = 'int32'
+    if 'Latency' in cols:
+        dtype_map['Latency'] = 'int32'
+    if 'allThreads' in cols:
+        dtype_map['allThreads'] = 'int16'
+    if 'grpThreads' in cols:
+        dtype_map['grpThreads'] = 'int16'
+
+    # Only read columns we actually use
+    usecols = [c for c in [
+        'timeStamp', 'elapsed', 'label', 'responseCode', 'success',
+        'bytes', 'sentBytes', 'Latency', 'allThreads',
+    ] if c in cols]
+
+    return pd.read_csv(file_path, usecols=usecols, dtype=dtype_map)
+
+
+def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert timestamp and success columns after reading."""
+    df['timestamp'] = pd.to_datetime(
+        df['timeStamp'], unit='ms', utc=True
+    ).dt.tz_convert(REPORT_TIMEZONE)
+    if 'success' in df.columns:
+        df['success'] = df['success'].astype(str).str.lower() == 'true'
+    return df
+
+
 class JTLParser:
     def __init__(self, file_path: str):
         self.file_path = file_path
@@ -130,16 +177,21 @@ class JTLParser:
         self.redirect_labels: Set[str] = set()
 
     def parse(self) -> Tuple[pd.DataFrame, Dict]:
-        """Parse JTL y calcular todas las metricas"""
-        self.df = pd.read_csv(self.file_path)
+        """Parse JTL y calcular todas las metricas.
+        Para archivos > 100MB usa lectura por chunks (KNX-04)."""
+        file_size = Path(self.file_path).stat().st_size
+
+        if file_size > LARGE_FILE_THRESHOLD_BYTES:
+            logger.info(
+                f"Archivo grande detectado ({file_size / 1024 / 1024:.0f}MB), "
+                f"usando lectura por chunks de {CHUNK_SIZE} filas"
+            )
+            return self._parse_chunked()
+
+        self.df = _read_csv_optimized(self.file_path)
         logger.debug(f"Columnas en JTL: {list(self.df.columns)}")
 
-        # Convertir timestamp a datetime
-        self.df['timestamp'] = pd.to_datetime(self.df['timeStamp'], unit='ms')
-
-        # Convertir success a boolean
-        if 'success' in self.df.columns:
-            self.df['success'] = self.df['success'].astype(str).str.lower() == 'true'
+        _prepare_df(self.df)
 
         # Clasificar transacciones
         self.df_main, self.df_redirects, self.redirect_labels = classify_transactions(self.df)
@@ -155,12 +207,147 @@ class JTLParser:
 
         return self.df, metrics
 
+    def _parse_chunked(self) -> Tuple[pd.DataFrame, Dict]:
+        """Parse JTL por chunks para archivos grandes (>100MB).
+        Acumula metricas incrementalmente y mantiene un subset
+        muestreado para generacion de graficos."""
+        import numpy as np
+
+        # Detect available columns
+        sample = pd.read_csv(self.file_path, nrows=5)
+        available_cols = set(sample.columns)
+        usecols = [c for c in [
+            'timeStamp', 'elapsed', 'label', 'responseCode', 'success',
+            'bytes', 'sentBytes', 'Latency', 'allThreads',
+        ] if c in available_cols]
+
+        dtype_map = {}
+        if 'elapsed' in available_cols:
+            dtype_map['elapsed'] = 'int32'
+        if 'bytes' in available_cols:
+            dtype_map['bytes'] = 'int32'
+        if 'sentBytes' in available_cols:
+            dtype_map['sentBytes'] = 'int32'
+        if 'Latency' in available_cols:
+            dtype_map['Latency'] = 'int32'
+        if 'allThreads' in available_cols:
+            dtype_map['allThreads'] = 'int16'
+
+        # Acumuladores
+        elapsed_by_label: Dict[str, list] = {}
+        error_count_total = 0
+        total_rows = 0
+        min_ts = float('inf')
+        max_ts = 0
+        total_bytes = 0
+        total_sent_bytes = 0
+        total_latency_sum = 0.0
+        latency_count = 0
+        sampled_chunks: List[pd.DataFrame] = []
+        SAMPLE_RATE = 100  # keep 1 out of every N rows for charts
+
+        for chunk in pd.read_csv(
+            self.file_path, usecols=usecols, dtype=dtype_map,
+            chunksize=CHUNK_SIZE
+        ):
+            total_rows += len(chunk)
+
+            # Success
+            if 'success' in chunk.columns:
+                chunk['success'] = chunk['success'].astype(str).str.lower() == 'true'
+                error_count_total += int((~chunk['success']).sum())
+
+            # Timestamps
+            if 'timeStamp' in chunk.columns:
+                chunk_min = chunk['timeStamp'].min()
+                chunk_max = chunk['timeStamp'].max()
+                if chunk_min < min_ts:
+                    min_ts = chunk_min
+                if chunk_max > max_ts:
+                    max_ts = chunk_max
+
+            # Elapsed by label
+            if 'label' in chunk.columns and 'elapsed' in chunk.columns:
+                for label in chunk['label'].unique():
+                    vals = chunk.loc[chunk['label'] == label, 'elapsed'].tolist()
+                    if label not in elapsed_by_label:
+                        elapsed_by_label[label] = []
+                    elapsed_by_label[label].extend(vals)
+
+            # Bytes
+            if 'bytes' in chunk.columns:
+                total_bytes += int(chunk['bytes'].sum())
+            if 'sentBytes' in chunk.columns:
+                total_sent_bytes += int(chunk['sentBytes'].sum())
+
+            # Latency
+            if 'Latency' in chunk.columns:
+                total_latency_sum += float(chunk['Latency'].sum())
+                latency_count += len(chunk)
+
+            # Sample for charts
+            if len(chunk) > SAMPLE_RATE:
+                sampled_chunks.append(chunk.iloc[::SAMPLE_RATE].copy())
+            else:
+                sampled_chunks.append(chunk.copy())
+
+        # Build sampled DataFrame for chart generation
+        if sampled_chunks:
+            self.df = pd.concat(sampled_chunks, ignore_index=True)
+        else:
+            self.df = pd.DataFrame()
+
+        _prepare_df(self.df)
+
+        # Classify transactions
+        self.df_main, self.df_redirects, self.redirect_labels = classify_transactions(self.df)
+
+        # Calculate metrics from accumulated data
+        all_elapsed = []
+        for vals in elapsed_by_label.values():
+            all_elapsed.extend(vals)
+        all_elapsed_arr = np.array(all_elapsed) if all_elapsed else np.array([0])
+
+        duration_seconds = (max_ts - min_ts) / 1000.0 if max_ts > min_ts else 1.0
+
+        metrics = {
+            'total_requests': total_rows,
+            'total_errors': error_count_total,
+            'error_rate': (error_count_total / total_rows * 100) if total_rows > 0 else 0.0,
+            'avg_response_time': float(all_elapsed_arr.mean()),
+            'median_response_time': float(np.median(all_elapsed_arr)),
+            'min_response_time': float(all_elapsed_arr.min()),
+            'max_response_time': float(all_elapsed_arr.max()),
+            'p50_response_time': float(np.percentile(all_elapsed_arr, 50)),
+            'p90_response_time': float(np.percentile(all_elapsed_arr, 90)),
+            'p95_response_time': float(np.percentile(all_elapsed_arr, 95)),
+            'p99_response_time': float(np.percentile(all_elapsed_arr, 99)),
+            'throughput': total_rows / duration_seconds if duration_seconds > 0 else 0.0,
+            'avg_latency': total_latency_sum / latency_count if latency_count > 0 else 0.0,
+            'kb_per_sec_received': (total_bytes / 1024) / duration_seconds if duration_seconds > 0 else 0.0,
+            'kb_per_sec_sent': (total_sent_bytes / 1024) / duration_seconds if duration_seconds > 0 else 0.0,
+            'start_time': pd.to_datetime(min_ts, unit='ms', utc=True).tz_convert(REPORT_TIMEZONE) if min_ts != float('inf') else None,
+            'end_time': pd.to_datetime(max_ts, unit='ms', utc=True).tz_convert(REPORT_TIMEZONE) if max_ts > 0 else None,
+            'duration_seconds': duration_seconds,
+            'total_redirects': len(self.df_redirects),
+            'redirect_labels': sorted(list(self.redirect_labels)),
+            'total_all_samples': total_rows,
+            'total_main_samples': total_rows - len(self.df_redirects),
+        }
+
+        logger.info(
+            f"Chunk parsing completado: {total_rows} filas totales, "
+            f"{len(self.df)} filas muestreadas para graficos"
+        )
+
+        return self.df, metrics
+
     @staticmethod
     def parse_multiple(file_paths: List[str]) -> Tuple[pd.DataFrame, Dict]:
         """Consolida multiples JTL en un unico DataFrame"""
         dataframes = []
         for path in file_paths:
-            df = pd.read_csv(path)
+            df = _read_csv_optimized(path)
             df['source_file'] = Path(path).name
             dataframes.append(df)
 
@@ -168,12 +355,7 @@ class JTLParser:
         combined.sort_values('timeStamp', inplace=True)
         combined.reset_index(drop=True, inplace=True)
 
-        # Convertir timestamp a datetime
-        combined['timestamp'] = pd.to_datetime(combined['timeStamp'], unit='ms')
-
-        # Convertir success a boolean
-        if 'success' in combined.columns:
-            combined['success'] = combined['success'].astype(str).str.lower() == 'true'
+        _prepare_df(combined)
 
         # Tiempo transcurrido desde el inicio del dataset consolidado
         consolidated_start = combined['timeStamp'].min()

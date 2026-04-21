@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <img src="icons/icon48.svg" alt="Logo" width="28" height="28">
+        <div>
+          <div class="brand">SQA Kinetix Pro</div>
+          <div class="subtitle">HTTP Traffic Recorder</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="status-bar" id="statusBar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Stopped</span>
+    </div>
+
+    <div class="section">
+      <label class="label" for="serverUrl">Server URL</label>
+      <input type="text" id="serverUrl" class="input" placeholder="http://localhost:8001">
+    </div>
+
+    <div class="section" id="sessionSection" style="display:none">
+      <label class="label">Session ID</label>
+      <div class="session-id" id="sessionId">—</div>
+    </div>
+
+    <div class="section">
+      <div class="counter">
+        <span class="counter-label">Captured Requests</span>
+        <span class="counter-value" id="requestCount">0</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="toggleBtn" class="btn btn-record">
+        <span class="btn-icon" id="toggleIcon">&#9679;</span>
+        <span id="toggleText">Start Recording</span>
+      </button>
+    </div>
+
+    <div class="actions row">
+      <button id="pushBtn" class="btn btn-push" disabled>Push to Server</button>
+      <button id="clearBtn" class="btn btn-clear" disabled>Clear</button>
+    </div>
+
+    <div id="message" class="message"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

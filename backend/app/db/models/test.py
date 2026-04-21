@@ -70,6 +70,12 @@ class TestExecution(Base):
     ai_recommendations = Column(Text, nullable=True)
     ai_conclusions = Column(Text, nullable=True)
 
+    # KNX-17: Capacity analysis (JSON string)
+    capacity_analysis_json = Column(Text, nullable=True)
+
+    # P4: Metric unit (TPS or UVC)
+    metric_unit = Column(String(10), nullable=True, default="TPS")
+
     # Timestamps
     execution_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

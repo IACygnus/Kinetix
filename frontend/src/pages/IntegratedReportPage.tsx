@@ -1,0 +1,476 @@
+/**
+ * IntegratedReportPage — Drag-and-drop report builder.
+ * Select executions, monitoring, evidence from history.
+ * Reorder sections via drag. Generate unified report with AI conclusions.
+ */
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor,
+  useSensor, useSensors, DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove, SortableContext, sortableKeyboardCoordinates,
+  verticalListSortingStrategy, useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { FileDown, GripVertical, X, Plus, Layers, Pencil } from 'lucide-react';
+import { testAPI } from '../services/api';
+import DashboardEmbed from '../components/integrated/DashboardEmbed';
+import MonitoringReportSection from '../components/integrated/MonitoringReportSection';
+import ConsolidatedAnalysisSection from '../components/integrated/ConsolidatedAnalysisSection';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface ReportSection {
+  id: string;
+  type: 'load_test' | 'stress_test' | 'monitoring' | 'evidence';
+  sourceId: string;
+  sourceName: string;
+  sourceDate: string;
+}
+
+// ─── Sortable Item ────────────────────────────────────────────────────────────
+function SortableItem({ section, onRemove }: { section: ReportSection; onRemove: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+
+  const icons: Record<string, string> = { load_test: '🔵', stress_test: '🔴', monitoring: '📊', evidence: '🔍' };
+  const labels: Record<string, string> = { load_test: 'Carga', stress_test: 'Estres', monitoring: 'Monitoreo', evidence: 'Evidencias' };
+
+  return (
+    <div ref={setNodeRef} style={style}
+      className={`flex items-center gap-3 p-4 rounded-xl border-2 ${isDragging ? 'border-[#f5a623] bg-gray-100' : 'border-gray-200 bg-white'} hover:border-gray-300 transition-colors shadow-sm`}>
+      <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 p-1" title="Arrastrar">
+        <GripVertical className="w-5 h-5" />
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-1">
+          <span>{icons[section.type]}</span>
+          <span className="text-sm px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-semibold">{labels[section.type]}</span>
+        </div>
+        <div className="text-lg font-medium text-gray-800">{section.sourceName}</div>
+        <div className="text-sm text-gray-400">{section.sourceDate}</div>
+      </div>
+      <button onClick={onRemove} className="text-red-400 hover:text-red-600 p-1 transition-colors" title="Quitar"><X className="w-5 h-5" /></button>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+export default function IntegratedReportPage() {
+  const { reportId: urlReportId } = useParams<{ reportId?: string }>();
+  const navigate = useNavigate();
+
+  const [executions, setExecutions] = useState<any[]>([]);
+  const [sections, setSections] = useState<ReportSection[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [reportHtml, setReportHtml] = useState('');
+  const [conclusions, setConclusions] = useState('');
+  const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<Record<string, any>>({});
+  const [attCounts, setAttCounts] = useState<Record<string, { monitoring: number; evidence: number }>>({});
+
+  // HF9.1: Persistence state
+  const [persistedId, setPersistedId] = useState<string | null>(null);
+  const [reportName, setReportName] = useState('');
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [hydrating, setHydrating] = useState(!!urlReportId);
+
+  const getCsrfToken = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '';
+  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
+
+  // HF9.1: Persist edits to DB
+  const persistEdit = useCallback(async (updates: Record<string, any>) => {
+    if (!persistedId) return;
+    try {
+      await fetch(`${apiBase}/reports/integrated-reports/${persistedId}`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify(updates),
+      });
+    } catch (e) { console.error('Error persisting edit:', e); }
+  }, [persistedId, apiBase]);
+
+  // HF9.1: Hydrate from DB when URL has reportId
+  useEffect(() => {
+    if (urlReportId) {
+      setHydrating(true);
+      fetch(`${apiBase}/reports/integrated-reports/${urlReportId}`, { credentials: 'include' })
+        .then(res => res.ok ? res.json() : Promise.reject('not found'))
+        .then(data => {
+          setPersistedId(data.id);
+          setReportName(data.name || '');
+          setConsolidatedAnalysis(data.consolidated_analysis || {});
+          // Rebuild sections from saved data
+          const savedSections: ReportSection[] = (data.sections || []).map((s: any, idx: number) => ({
+            id: `${s.type}-${idx}-${Date.now()}`,
+            type: s.type,
+            sourceId: s.source_id,
+            sourceName: s.source_name,
+            sourceDate: '',
+          }));
+          setSections(savedSections);
+          // Set reportHtml to trigger the report view
+          if (savedSections.length > 0) setReportHtml('hydrated');
+          // Flatten consolidated for exports
+          if (data.consolidated_analysis && Object.keys(data.consolidated_analysis).length > 0) {
+            const allText = Object.entries(data.consolidated_analysis).map(([tt, d]: [string, any]) => {
+              const label = tt === 'load' ? 'PRUEBA DE CARGA' : 'PRUEBA DE ESTRES';
+              return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
+            }).join('\n\n---\n\n');
+            setConclusions(allText);
+          }
+        })
+        .catch(e => console.error('Error hydrating integrated report:', e))
+        .finally(() => setHydrating(false));
+    }
+  }, [urlReportId, apiBase]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  useEffect(() => {
+    testAPI.getExecutions().then(async (d) => {
+      const list = Array.isArray(d) ? d : [];
+      setExecutions(list);
+      // Load attachment counts per execution
+      const counts: Record<string, { monitoring: number; evidence: number }> = {};
+      await Promise.all(list.map(async (e: any) => {
+        try {
+          const res = await fetch(`${apiBase}/executions/${e.id}/attachment-counts`, { credentials: 'include' });
+          if (res.ok) counts[e.id] = await res.json();
+        } catch { counts[e.id] = { monitoring: 0, evidence: 0 }; }
+      }));
+      setAttCounts(counts);
+    }).catch(() => {});
+  }, [apiBase]);
+
+  // HF9.3-B: Auto-validation of footer DOM structure
+  useEffect(() => {
+    if (hydrating || !reportHtml) return;
+    const timer = setTimeout(() => {
+      let footerCount = 0;
+      document.querySelectorAll('p').forEach(p => {
+        if (p.textContent?.includes('Del pasado aprendimos')) footerCount++;
+      });
+      if (footerCount === 0) console.error('[HF9.3-B AUTO-CHECK] Footer SQA NO encontrado en el DOM');
+      else if (footerCount > 1) console.error(`[HF9.3-B AUTO-CHECK] Hay ${footerCount} footers SQA en el DOM (esperaba 1)`);
+      else console.log('[HF9.3-B AUTO-CHECK] Footer SQA unico encontrado');
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [hydrating, reportHtml, sections]);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setSections(items => {
+        const oldIdx = items.findIndex(i => i.id === active.id);
+        const newIdx = items.findIndex(i => i.id === over.id);
+        return arrayMove(items, oldIdx, newIdx);
+      });
+    }
+  };
+
+  const addSection = (exec: any, type: ReportSection['type']) => {
+    setSections(prev => [...prev, {
+      id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      sourceId: exec.id,
+      sourceName: type === 'monitoring' ? `Monitoreo: ${exec.name}` : type === 'evidence' ? `Evidencias: ${exec.name}` : exec.name,
+      sourceDate: new Date(exec.start_time || exec.created_at).toLocaleString('es-CO'),
+    }]);
+  };
+
+  const handleGenerate = async () => {
+    if (sections.length === 0) return;
+    setGenerating(true);
+    try {
+      const res = await fetch(`${apiBase}/reports/integrated`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({
+          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReportHtml(data.report_html || '');
+        setConclusions(data.unified_conclusions || '');
+      }
+    } catch (err) { console.error(err); }
+    setGenerating(false);
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      const res = await fetch(`${apiBase}/reports/integrated/export-pdf`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({
+          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          unified_conclusions: conclusions,
+        }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `informe_integrado_${new Date().toISOString().slice(0, 10)}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const handleExportHTML = async () => {
+    try {
+      const res = await fetch(`${apiBase}/reports/integrated/export-html`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({
+          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          unified_conclusions: conclusions,
+        }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `informe_integrado_${new Date().toISOString().slice(0, 10)}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const typeMap: Record<string, ReportSection['type']> = { load: 'load_test', stress: 'stress_test', spike: 'stress_test', endurance: 'load_test', scalability: 'load_test', smoke: 'load_test' };
+
+  // HF9.2: Block render during hydration — show spinner instead
+  if (hydrating) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] p-8">
+        <div className="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-[#f5a623] mb-4"></div>
+        <p className="text-slate-600 text-lg font-medium">Cargando informe integrado...</p>
+        <p className="text-slate-400 text-sm mt-2">Recuperando analisis consolidado, metricas y evidencias</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full p-6">
+      <div className="flex items-center gap-3 mb-2">
+        <Layers className="w-8 h-8 text-[#f5a623]" />
+        <h1 className="text-4xl font-bold text-gray-800">
+          {persistedId && reportName ? reportName : 'Informe Integrado'}
+        </h1>
+        {persistedId && (
+          <button onClick={() => setRenameOpen(true)} className="p-1 text-gray-400 hover:text-[#f5a623] transition-colors" title="Renombrar">
+            <Pencil className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+      <p className="text-lg text-gray-500 mb-6">
+        {hydrating ? 'Cargando informe...' : 'Seleccione las ejecuciones, metricas de monitoreo y evidencias que desea integrar. Arrastre para reordenar.'}
+      </p>
+
+      {/* HF9.1: Rename modal */}
+      {renameOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow-xl w-96">
+            <h3 className="text-lg font-bold text-[#0a1628] mb-3">Renombrar Informe</h3>
+            <input type="text" defaultValue={reportName} autoFocus id="rename-input"
+              className="w-full p-3 border border-gray-300 rounded-lg text-lg focus:outline-none focus:border-[#f5a623]" />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setRenameOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>
+              <button onClick={async () => {
+                const input = document.getElementById('rename-input') as HTMLInputElement;
+                const newName = input?.value?.trim();
+                if (newName) {
+                  setReportName(newName);
+                  await persistEdit({ name: newName });
+                }
+                setRenameOpen(false);
+              }} className="px-4 py-2 bg-[#0a1628] text-white rounded-lg hover:bg-[#1a2638]">Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left: History */}
+        <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Historial Disponible</h2>
+          <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            {executions.map(exec => (
+              <div key={exec.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div>
+                  <div className="text-lg font-medium text-gray-800">{exec.name}</div>
+                  <div className="text-sm text-gray-400">
+                    {(exec.test_type || 'load').toUpperCase()} — {exec.client || 'N/A'} — {new Date(exec.start_time || exec.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={() => addSection(exec, typeMap[exec.test_type] || 'load_test')}
+                    className="px-2 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 flex items-center gap-1 transition-colors">
+                    <Plus className="w-3 h-3" /> Reporte
+                  </button>
+                  {(attCounts[exec.id]?.monitoring || 0) > 0 && (
+                    <button onClick={() => addSection(exec, 'monitoring')}
+                      className="px-2 py-1 text-sm bg-green-50 text-green-700 rounded-lg hover:bg-green-100 flex items-center gap-1 transition-colors">
+                      <Plus className="w-3 h-3" /> Monitor ({attCounts[exec.id].monitoring})
+                    </button>
+                  )}
+                  {(attCounts[exec.id]?.evidence || 0) > 0 && (
+                    <button onClick={() => addSection(exec, 'evidence')}
+                      className="px-2 py-1 text-sm bg-yellow-50 text-yellow-700 rounded-lg hover:bg-yellow-100 flex items-center gap-1 transition-colors">
+                      <Plus className="w-3 h-3" /> Evidencia ({attCounts[exec.id].evidence})
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Selected sections with DnD */}
+        <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Secciones del Informe ({sections.length})</h2>
+          <p className="text-sm text-gray-400 mb-4">Arrastre para reordenar. El informe se genera en este orden.</p>
+
+          {sections.length === 0 ? (
+            <div className="text-lg text-gray-400 text-center py-16 border-2 border-dashed border-gray-300 rounded-xl">
+              Seleccione items del historial para agregarlos
+            </div>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2">
+                  {sections.map(s => (
+                    <SortableItem key={s.id} section={s} onRemove={() => setSections(prev => prev.filter(x => x.id !== s.id))} />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
+
+          {sections.length > 0 && (
+            <div className="mt-6 flex gap-3 justify-center">
+              <button onClick={handleGenerate} disabled={generating}
+                className="px-8 py-3 bg-[#f5a623] text-[#0a1628] rounded-xl font-bold text-lg hover:bg-[#f5a623]/90 disabled:opacity-50 transition-colors">
+                {generating ? 'Generando...' : 'Generar Informe Integrado'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Generated report — full content */}
+      {reportHtml && (
+        <div className="mt-8 space-y-6">
+          {/* Title */}
+          <div className="text-center border-b-2 border-[#f5a623] pb-4">
+            <h1 className="text-3xl font-bold text-[#0a1628]">Informe Integrado de Performance</h1>
+            <p className="text-sm text-gray-500 mt-1">Generado: {new Date().toLocaleString('es-CO')}</p>
+          </div>
+
+          {/* Full report per execution — each section renders once, no duplicates */}
+          {sections.map((s, idx) => {
+            if (s.type === 'monitoring' || s.type === 'evidence') {
+              return (
+                <MonitoringReportSection
+                  key={s.id}
+                  executionId={s.sourceId}
+                  attachmentType={s.type === 'monitoring' ? 'monitoring' : 'evidence'}
+                  sectionTitle={s.type === 'monitoring' ? 'Metricas de Monitoreo' : 'Evidencias y Hallazgos'}
+                />
+              );
+            }
+            // For load_test/stress_test: only render monitoring/evidence if NOT already added as standalone sections
+            const hasMonitoring = sections.some(x => x.type === 'monitoring' && x.sourceId === s.sourceId);
+            const hasEvidence = sections.some(x => x.type === 'evidence' && x.sourceId === s.sourceId);
+            return (
+              <div key={s.id}>
+                {idx > 0 && <hr className="my-6 border-2 border-[#0a1628]" />}
+                <DashboardEmbed executionId={s.sourceId} />
+                {!hasMonitoring && <MonitoringReportSection executionId={s.sourceId} attachmentType="monitoring" sectionTitle="Metricas de Monitoreo" />}
+                {!hasEvidence && <MonitoringReportSection executionId={s.sourceId} attachmentType="evidence" sectionTitle="Evidencias y Hallazgos" />}
+              </div>
+            );
+          })}
+
+          {/* HF9: Consolidated Analysis — dual Load/Stress support */}
+          <ConsolidatedAnalysisSection
+            consolidatedAnalysis={consolidatedAnalysis}
+            sections={[
+              ...sections.map(s => ({ type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+              ...(persistedId ? [{ type: '__meta', source_id: persistedId, source_name: reportName || '' }] : []),
+            ]}
+            onGenerated={(rawData) => {
+              // HF9.1: Extract embedded __report_id and __report_name from response
+              const rid = (rawData as any).__report_id;
+              const rname = (rawData as any).__report_name;
+              const cleanData = { ...rawData };
+              delete (cleanData as any).__report_id;
+              delete (cleanData as any).__report_name;
+
+              setConsolidatedAnalysis(cleanData);
+              if (rid && !persistedId) {
+                setPersistedId(rid);
+                if (rname) setReportName(rname);
+                navigate(`/performance/integrated/${rid}`, { replace: true });
+              } else if (rid && persistedId) {
+                // Regeneration — just update analysis, keep same ID
+              }
+              // Flatten for exports
+              const allText = Object.entries(cleanData)
+                .filter(([k]) => !k.startsWith('_'))
+                .map(([tt, d]) => {
+                  const label = tt === 'load' ? 'PRUEBA DE CARGA' : 'PRUEBA DE ESTRES';
+                  return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
+                }).join('\n\n---\n\n');
+              setConclusions(allText);
+            }}
+            onEdit={(testType, field, value) => {
+              const updatedAnalysis = {
+                ...consolidatedAnalysis,
+                [testType]: { ...consolidatedAnalysis[testType], [field]: value, edited: true },
+              };
+              setConsolidatedAnalysis(updatedAnalysis);
+              // HF9.1: Persist edit to DB
+              persistEdit({ consolidated_analysis: updatedAnalysis });
+              // Flatten for exports
+              const allText = Object.entries(updatedAnalysis)
+                .filter(([k]) => !k.startsWith('_'))
+                .map(([tt, d]) => {
+                  const label = tt === 'load' ? 'PRUEBA DE CARGA' : 'PRUEBA DE ESTRES';
+                  return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
+                }).join('\n\n---\n\n');
+              setConclusions(allText);
+            }}
+          />
+
+          {/* Export buttons */}
+          <div className="flex gap-4 justify-center">
+            <button onClick={handleExportHTML}
+              className="px-8 py-3 bg-[#f5a623] text-[#0a1628] rounded-xl font-bold text-lg hover:bg-[#f5a623]/90 transition-colors">
+              Exportar HTML
+            </button>
+            <button onClick={handleExportPDF}
+              className="px-8 py-3 bg-red-600 text-white rounded-xl font-bold text-lg hover:bg-red-700 flex items-center gap-2 transition-colors">
+              <FileDown className="w-5 h-5" /> Exportar PDF
+            </button>
+          </div>
+
+          {/* HF9.2: Footer SQA — LAST element of the report */}
+          <div className="text-center text-gray-500 text-xl py-8 mt-8 border-t border-gray-200">
+            <p className="font-semibold text-2xl">sqa<span className="text-[#f5a623]">_</span> Software Quality Assurance</p>
+            <p className="text-lg mt-2 italic">Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

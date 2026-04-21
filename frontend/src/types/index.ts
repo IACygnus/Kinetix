@@ -1,5 +1,5 @@
 /**
- * Tipos compartidos - JMeter Analyzer Pro v2.0
+ * Tipos compartidos - SQA Kinetix Pro
  */
 
 export interface UserInfo {

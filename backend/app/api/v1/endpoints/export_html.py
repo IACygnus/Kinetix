@@ -12,6 +12,7 @@ import uuid
 import json
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 
 import pandas as pd
@@ -23,6 +24,7 @@ from app.db.models.user import User
 from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
+# ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,9 +58,13 @@ async def _check_execution_access(db: AsyncSession, user: User, execution) -> No
 
 
 def _markdown_to_html(text: str) -> str:
-    """Minimal markdown → HTML for AI analysis text."""
+    """Minimal markdown → HTML for AI analysis text.
+    Sanitizes HTML tags to prevent underline/style injection (KNX-05)."""
     if not text:
         return ''
+    # Sanitize: escape HTML tags from AI text to prevent style injection
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    # Convert markdown bold/italic AFTER escaping
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
     paragraphs = text.strip().split('\n\n')
@@ -360,7 +366,7 @@ async def export_html(
         pie_values = [int(row['count']) for _, row in response_codes.iterrows()]
         pie_colors = [HTTP_CODE_COLORS.get(c, '#94a3b8') for c in pie_labels]
 
-        # ---- Build HTML ----
+        # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
         html_content = _build_plotly_html(
             meta=meta,
             statistics=statistics,
@@ -379,6 +385,49 @@ async def export_html(
             pie_colors=pie_colors,
         )
 
+        # KNX-17: Capacity analysis section
+        capacity_html = ''
+        cap_json = execution.capacity_analysis_json if hasattr(execution, 'capacity_analysis_json') else None
+        if cap_json:
+            import json as _json
+            try:
+                cap_data = _json.loads(cap_json)
+                if cap_data.get('enabled') and cap_data.get('resources'):
+                    cap_rows = ''
+                    for r in cap_data['resources']:
+                        status_badge = ''
+                        if r.get('status') == 'PASS':
+                            status_badge = '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:700">PASS</span>'
+                        elif r.get('status') == 'FAIL':
+                            status_badge = '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:700">FAIL</span>'
+                        cap_rows += f'''<tr>
+                            <td style="padding:8px;font-weight:600">{r.get('name','')}</td>
+                            <td style="padding:8px;text-align:center">{r.get('observed_value','')} {r.get('unit','')}</td>
+                            <td style="padding:8px;text-align:center;color:#64748b">{r.get('threshold','')} {r.get('unit','')}</td>
+                            <td style="padding:8px;text-align:center">{status_badge}</td>
+                            <td style="padding:8px;font-size:.9rem;color:#334155">{r.get('analysis','')}</td>
+                        </tr>'''
+                    capacity_html = f'''
+                    <div class="section" style="margin-bottom:24px">
+                        <div class="section-title">Analisis de Capacidades del Sistema</div>
+                        <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+                            <thead><tr style="background:#0a1628;color:white">
+                                <th style="padding:8px;text-align:left">Recurso</th>
+                                <th style="padding:8px;text-align:center">Valor</th>
+                                <th style="padding:8px;text-align:center">Umbral</th>
+                                <th style="padding:8px;text-align:center">Estado</th>
+                                <th style="padding:8px;text-align:left">Analisis</th>
+                            </tr></thead>
+                            <tbody>{cap_rows}</tbody>
+                        </table>
+                    </div>'''
+            except Exception:
+                pass
+
+        # Inject capacity section before footer (no attachments in individual export)
+        if capacity_html:
+            html_content = html_content.replace('</div>\n</body>', f'{capacity_html}</div>\n</body>')
+
         logger.info(f"HTML export: done, {len(html_content)} chars")
 
         # Build filename: {Client}_{project}_{date}_{time}.html
@@ -391,7 +440,7 @@ async def export_html(
         if client_part:
             client_part = client_part[0].upper() + client_part[1:]
         project_part = _safe(execution.name).lower()
-        _now = datetime.now()
+        _now = datetime.now(ZoneInfo("America/Bogota"))
         filename = f"{client_part}_{project_part}_{_now.strftime('%Y-%m-%d')}_{_now.strftime('%H%M')}.html"
 
         return HTMLResponse(
@@ -430,7 +479,7 @@ def _build_plotly_html(
 
     duration_min = int(meta['duration'] // 60)
     duration_sec = int(meta['duration'] % 60)
-    now_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    now_str = datetime.now(ZoneInfo("America/Bogota")).strftime('%d/%m/%Y %H:%M:%S')
     files_list = ', '.join(meta.get('filenames', [meta['filename']]))
 
     er = meta['errorRate']
@@ -458,13 +507,14 @@ def _build_plotly_html(
         )
 
     # ---- AI box helper ----
-    def ai_box(key, title, border='#f97316'):
+    def ai_box(key, title, border='#4f46e5'):
         text = ia.get(key, '')
         if not text:
             return ''
         html_text = _markdown_to_html(text)
+        # HF10h BLOQUE A: unified yellow-dark border on white background
         return (
-            f'<div class="ai-box" style="border-left-color:{border}">'
+            f'<div class="ai-box">'
             f'<div class="ai-title">{title}</div>'
             f'<div class="ai-text">{html_text}</div>'
             f'</div>'
@@ -562,14 +612,18 @@ def _build_plotly_html(
         'paper_bgcolor': 'white',
         'plot_bgcolor': '#f8fafc',
         'font': {'family': '-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif', 'size': 12},
-        'margin': {'l': 80, 'r': 30, 't': 10, 'b': 60},
-        'legend': {'orientation': 'h', 'yanchor': 'top', 'y': -0.2, 'xanchor': 'center', 'x': 0.5},
-        'xaxis': {'gridcolor': '#e2e8f0', 'linecolor': '#e2e8f0', 'type': 'date', 'tickformat': '%H:%M:%S'},
-        'yaxis': {'gridcolor': '#e2e8f0', 'linecolor': '#e2e8f0', 'rangemode': 'tozero'},
+        'margin': {'l': 80, 'r': 30, 't': 20, 'b': 60},
+        'legend': {
+            'orientation': 'h', 'yanchor': 'top', 'y': -0.2, 'xanchor': 'center', 'x': 0.5,
+            'itemclick': 'toggle', 'itemdoubleclick': 'toggleothers',
+        },
+        'xaxis': {'gridcolor': '#e2e8f0', 'linecolor': '#e2e8f0', 'type': 'date', 'tickformat': '%H:%M:%S', 'tickangle': -45, 'nticks': 20, 'fixedrange': False},
+        'yaxis': {'gridcolor': '#e2e8f0', 'linecolor': '#e2e8f0', 'rangemode': 'tozero', 'nticks': 12, 'fixedrange': False},
         'hovermode': 'x unified',
+        'dragmode': 'zoom',
     }
 
-    def make_layout(ytitle='', height=420, ytickformat=',.0f'):
+    def make_layout(ytitle='', height=500, ytickformat=',.0f'):
         layout = dict(plotly_layout_base)
         layout['height'] = height
         layout['yaxis'] = dict(layout['yaxis'], title=ytitle,
@@ -578,7 +632,74 @@ def _build_plotly_html(
         layout['xaxis'] = dict(layout['xaxis'], title='Tiempo')
         return layout
 
-    plotly_config = {'responsive': True, 'displayModeBar': True, 'displaylogo': False}
+    plotly_config = {
+        'responsive': True,
+        'displayModeBar': True,
+        'displaylogo': False,
+        'scrollZoom': True,
+        'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'toImage'],
+    }
+
+    # HF10h BLOQUE A: compute P99 and max for charts with Y-axis controls
+    def _compute_trace_stats(traces):
+        """Given Plotly traces list, compute overall max and P99 of all y values."""
+        all_y = []
+        for t in traces:
+            y_vals = t.get('y', []) or []
+            for v in y_vals:
+                try:
+                    if v is not None:
+                        all_y.append(float(v))
+                except (TypeError, ValueError):
+                    pass
+        if not all_y:
+            return 100.0, 100.0
+        all_y_sorted = sorted(all_y)
+        max_val = all_y_sorted[-1]
+        p99_idx = max(0, int(len(all_y_sorted) * 0.99) - 1)
+        p99_val = all_y_sorted[p99_idx]
+        return max_val, p99_val
+
+    def _fmt_short_local(value):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if v >= 1000:
+            return f"{v/1000:.1f}k"
+        return f"{v:.0f}"
+
+    rt_label_max, rt_label_p99 = _compute_trace_stats(rt_by_label_traces)
+    rt_time_max, rt_time_p99 = _compute_trace_stats(rt_over_time_traces)
+    latency_max, latency_p99 = _compute_trace_stats(latency_traces)
+
+    # Helper: render chart controls (show/hide all + optional Y-axis controls)
+    def _ctrl_basic(chart_id):
+        return (
+            f'<div class="chart-controls">'
+            f'<button class="ctrl-btn" onclick="hf10hShowAll(\'{chart_id}\')">Mostrar todas</button>'
+            f'<button class="ctrl-btn" onclick="hf10hHideAll(\'{chart_id}\')">Ocultar todas</button>'
+            f'</div>'
+        )
+
+    def _ctrl_y_axis(chart_id, p99_value, max_value):
+        slider_id = f"{chart_id}-slider"
+        valdisp_id = f"{chart_id}-val"
+        return (
+            f'<div class="chart-controls">'
+            f'<button class="ctrl-btn" onclick="hf10hShowAll(\'{chart_id}\')">Mostrar todas</button>'
+            f'<button class="ctrl-btn" onclick="hf10hHideAll(\'{chart_id}\')">Ocultar todas</button>'
+            f'<span class="ctrl-sep">|</span>'
+            f'<span class="ctrl-label">Eje Y:</span>'
+            f'<button class="ctrl-btn" onclick="hf10hYAuto(\'{chart_id}\')">Auto-fit</button>'
+            f'<button class="ctrl-btn" onclick="hf10hYRange(\'{chart_id}\',{p99_value})">P99</button>'
+            f'<button class="ctrl-btn" onclick="hf10hYRange(\'{chart_id}\',{max_value})">Reset</button>'
+            f'<span class="ctrl-label">Max:</span>'
+            f'<input type="range" id="{slider_id}" min="1" max="{max_value:.0f}" value="{max_value:.0f}" '
+            f'oninput="hf10hSlider(\'{chart_id}\',this.value,\'{valdisp_id}\')">'
+            f'<span class="ctrl-value" id="{valdisp_id}">{_fmt_short_local(max_value)}</span>'
+            f'</div>'
+        )
 
     # ---- Full HTML ----
     return f'''<!DOCTYPE html>
@@ -589,7 +710,7 @@ def _build_plotly_html(
 <title>Reporte Performance - {meta['name']}</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
+*{{margin:0;padding:0;box-sizing:border-box;text-decoration:none}}
 :root{{--navy:#0a1628;--blue:#3E5AA9;--bg:#f0f4f8;--card:#fff;--border:#e2e8f0;--success:#10b981;--warn:#f59e0b;--error:#ef4444}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:#1e293b;line-height:1.6;font-size:14px}}
 .header{{background:linear-gradient(135deg,#0a1628 0%,#1e293b 50%,#1e40af 100%);color:#fff;padding:2rem;position:relative}}
@@ -623,7 +744,14 @@ tr:hover{{background:#f8fafc}}
 .chart-section{{background:var(--card);border-radius:10px;padding:1.5rem;margin-bottom:1.5rem;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
 .chart-title{{font-size:1.1rem;font-weight:700;color:var(--navy);border-left:4px solid #3b82f6;padding-left:.75rem;margin-bottom:1rem}}
 .plotly-chart{{width:100%;min-height:400px}}
-.ai-box{{background:#fff7ed;border-left:4px solid #f97316;border-radius:8px;padding:1.2rem;margin:1rem 0}}
+.chart-controls{{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;padding:.6rem .75rem;margin-top:.5rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:.8rem}}
+.chart-controls .ctrl-btn{{background:#f5a623;color:#0a1628;border:none;border-radius:6px;padding:.3rem .7rem;font-size:.75rem;font-weight:700;cursor:pointer;transition:background .15s}}
+.chart-controls .ctrl-btn:hover{{background:#4f46e5}}
+.chart-controls .ctrl-sep{{color:#cbd5e1;margin:0 .25rem}}
+.chart-controls .ctrl-label{{color:#64748b;font-weight:600}}
+.chart-controls input[type=range]{{accent-color:#f5a623;width:140px}}
+.chart-controls .ctrl-value{{color:#0a1628;font-weight:700;min-width:50px;text-align:right}}
+.ai-box{{background:#ffffff;border:2px solid #4f46e5;border-left:6px solid #4f46e5;border-radius:8px;padding:1.2rem;margin:1rem 0}}
 .ai-title{{font-size:1rem;font-weight:700;color:var(--navy);margin-bottom:.5rem}}
 .ai-text{{font-size:.9rem;line-height:1.8;color:#334155}}
 .ai-text p{{margin:0 0 8px 0}}
@@ -694,52 +822,63 @@ Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fi
 {redirect_section}
 
 <!-- ===== PLOTLY INTERACTIVE CHARTS ===== -->
+<p style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:8px">
+Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble click para resetear &bull; Click en leyenda para ocultar/mostrar series
+</p>
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#8b5cf6">Response Times por Transaccion</div>
 <div id="chart-rt-label" class="plotly-chart"></div>
+{_ctrl_y_axis('chart-rt-label', rt_label_p99, rt_label_max)}
 </div>
 {ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#3b82f6">Response Time Over Time</div>
 <div id="chart-rt-time" class="plotly-chart"></div>
+{_ctrl_y_axis('chart-rt-time', rt_time_p99, rt_time_max)}
 </div>
 {ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#10b981">Throughput Over Time</div>
 <div id="chart-throughput" class="plotly-chart"></div>
+{_ctrl_basic('chart-throughput')}
 </div>
 {ai_box('throughput', 'Analisis - Throughput', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#8b5cf6">Latency Over Time</div>
 <div id="chart-latency" class="plotly-chart"></div>
+{_ctrl_y_axis('chart-latency', latency_p99, latency_max)}
 </div>
 {ai_box('latency', 'Analisis - Latency', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#ef4444">Error Rate Over Time</div>
 <div id="chart-error-rate" class="plotly-chart"></div>
+{_ctrl_basic('chart-error-rate')}
 </div>
 {ai_box('errorRate', 'Analisis - Error Rate', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#6366f1">Response Codes per Second</div>
 <div id="chart-codes" class="plotly-chart"></div>
+{_ctrl_basic('chart-codes')}
 </div>
 {ai_box('codesPerSecond', 'Analisis - Response Codes', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#10b981">Transactions per Second</div>
 <div id="chart-tps" class="plotly-chart"></div>
+{_ctrl_basic('chart-tps')}
 </div>
 {ai_box('tps', 'Analisis - Transactions per Second', '#f97316')}
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#6366f1">Active Threads Over Time</div>
 <div id="chart-threads" class="plotly-chart"></div>
+{_ctrl_basic('chart-threads')}
 </div>
 {ai_box('activeThreads', 'Analisis - Active Threads', '#f97316')}
 
@@ -761,13 +900,53 @@ Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fi
 
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
-Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-<span style="font-size:.75rem">Powered by FastAPI + React + PostgreSQL + Gemini AI | JMeter Analyzer Pro v2.0 | Generado: {now_str}</span>
+sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
+<span style="font-size:.75rem">Generado: {now_str}</span>
 </div>
 
 </div>
 
 <script>
+// HF10h BLOQUE A: chart control helpers (idempotent, safe to define multiple times)
+if (typeof window.hf10hShowAll !== 'function') {{
+  window.hf10hShowAll = function(id) {{
+    var div = document.getElementById(id);
+    if (!div || !div.data) return;
+    var visArr = div.data.map(function() {{ return true; }});
+    Plotly.restyle(div, {{'visible': visArr}});
+  }};
+  window.hf10hHideAll = function(id) {{
+    var div = document.getElementById(id);
+    if (!div || !div.data) return;
+    var visArr = div.data.map(function() {{ return 'legendonly'; }});
+    Plotly.restyle(div, {{'visible': visArr}});
+  }};
+  window.hf10hYAuto = function(id) {{
+    var div = document.getElementById(id);
+    if (!div) return;
+    Plotly.relayout(div, {{'yaxis.autorange': true}});
+  }};
+  window.hf10hYRange = function(id, maxVal) {{
+    var div = document.getElementById(id);
+    if (!div) return;
+    Plotly.relayout(div, {{'yaxis.range': [0, maxVal]}});
+  }};
+  window.hf10hFmtShort = function(v) {{
+    v = parseFloat(v);
+    if (isNaN(v)) return '0';
+    if (v >= 1000) return (v/1000).toFixed(1) + 'k';
+    return v.toFixed(0);
+  }};
+  window.hf10hSlider = function(id, val, valDispId) {{
+    var div = document.getElementById(id);
+    if (!div) return;
+    var v = parseFloat(val);
+    Plotly.relayout(div, {{'yaxis.range': [0, v]}});
+    var disp = document.getElementById(valDispId);
+    if (disp) disp.textContent = window.hf10hFmtShort(v);
+  }};
+}}
+
 // ===== Plotly Chart Rendering =====
 var plotlyConfig = {jd(plotly_config)};
 

@@ -24,12 +24,36 @@ export default function AIConfigPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isLiveModels, setIsLiveModels] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
     loadData();
   }, []);
+
+  const fetchLiveModels = async (provider: string) => {
+    setLoadingModels(true);
+    setModelsError(null);
+    try {
+      const result = await aiConfigAPI.getModelsLive(provider);
+      setProviders(prev => prev.map(p =>
+        p.id === provider ? { ...p, models: result.models } : p
+      ));
+      setIsLiveModels(result.is_live);
+      if (!result.is_live && result.message) {
+        setModelsError(result.message);
+      }
+    } catch (err) {
+      console.error('Error fetching live models:', err);
+      setModelsError('No se pudieron cargar los modelos. Mostrando lista por defecto.');
+      setIsLiveModels(false);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -46,6 +70,10 @@ export default function AIConfigPage() {
       setIsActive(cfgData.is_active);
       setDailyLimit(cfgData.daily_request_limit);
       setMonthlyLimit(cfgData.monthly_request_limit);
+      // Fetch live models for the active provider after bootstrap
+      if (cfgData.provider) {
+        fetchLiveModels(cfgData.provider);
+      }
     } catch {
       setError('Error cargando configuracion');
     } finally {
@@ -62,6 +90,7 @@ export default function AIConfigPage() {
       setSelectedModel(prov.models[0]);
     }
     setTestResult(null);
+    fetchLiveModels(newProvider);
   };
 
   const handleSave = async () => {
@@ -202,15 +231,41 @@ export default function AIConfigPage() {
         {/* ===== SECTION 2: Model Selector ===== */}
         <div>
           <label className="block text-xl font-medium text-gray-300 mb-2">Modelo</label>
+          {modelsError && (
+            <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 px-4 py-3 rounded-lg mb-3 flex items-start gap-2 text-sm">
+              <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+              </svg>
+              <span className="flex-1">{modelsError}</span>
+            </div>
+          )}
           <select
             value={selectedModel}
             onChange={(e) => { setSelectedModel(e.target.value); setTestResult(null); }}
-            className="w-full bg-[#0d1f3c] border border-[#2a3f6f] rounded-xl px-4 py-3 text-xl text-white focus:outline-none focus:border-[#f5a623] transition-colors"
+            disabled={loadingModels}
+            className="w-full bg-[#0d1f3c] border border-[#2a3f6f] rounded-xl px-4 py-3 text-xl text-white focus:outline-none focus:border-[#f5a623] transition-colors disabled:opacity-50"
           >
             {availableModels.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
           </select>
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              type="button"
+              onClick={() => fetchLiveModels(selectedProvider)}
+              disabled={loadingModels}
+              className="text-sm text-[#f5a623] hover:text-[#e09410] disabled:text-gray-500 flex items-center gap-1 transition-colors"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${loadingModels ? 'animate-spin' : ''}`} />
+              {loadingModels ? 'Cargando...' : 'Refrescar modelos'}
+            </button>
+            {isLiveModels && !loadingModels && (
+              <span className="text-xs text-green-400 flex items-center gap-1">
+                <span className="w-2 h-2 bg-green-500 rounded-full inline-block"></span>
+                Modelos en vivo
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ===== SECTION 3: API Key ===== */}

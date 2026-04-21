@@ -50,3 +50,11 @@ class AITestResult(BaseModel):
     message: str
     provider: str
     model: str
+
+
+class LiveModelsResponse(BaseModel):
+    """Response from /models/live endpoint"""
+    provider: str
+    models: List[str]
+    is_live: bool
+    message: Optional[str] = None

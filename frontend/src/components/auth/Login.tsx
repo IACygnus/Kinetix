@@ -143,7 +143,7 @@ export default function Login() {
 
         <div className="text-center mt-8">
           <p className="text-2xl text-slate-500">
-            JMeter Analyzer Pro v2.0
+            SQA Kinetix Pro
           </p>
         </div>
       </div>

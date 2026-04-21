@@ -18,6 +18,13 @@ import ClientsPage from './components/clients/ClientsPage';
 import AssignmentsPage from './components/clients/AssignmentsPage';
 import AIConfigPage from './components/admin/AIConfigPage';
 import Profile from './components/profile/Profile';
+import ScriptDesigner from './pages/ScriptDesigner';
+import ExecutionDashboard from './pages/ExecutionDashboard';
+import ReportView from './pages/ReportView';
+import MonitoringPage from './pages/MonitoringPage';
+import EvidencePage from './pages/EvidencePage';
+import IntegratedReportPage from './pages/IntegratedReportPage';
+import ScriptHistory from './pages/ScriptHistory';
 
 function App() {
   return (
@@ -48,6 +55,11 @@ function App() {
               }
             />
             <Route path="/performance/report/:executionId" element={<ReportWrapper />} />
+            <Route path="/performance/report-latest" element={<ReportView />} />
+            <Route path="/performance/monitoring" element={<MonitoringPage />} />
+            <Route path="/performance/evidence" element={<EvidencePage />} />
+            <Route path="/performance/integrated" element={<IntegratedReportPage />} />
+            <Route path="/performance/integrated/:reportId" element={<IntegratedReportPage />} />
             <Route path="/performance/history" element={<History />} />
 
             {/* Monitoring */}
@@ -109,6 +121,42 @@ function App() {
               element={
                 <ProtectedRoute roles={['admin']}>
                   <AIConfigPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Script Designer */}
+            <Route
+              path="/script-designer"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <ScriptDesigner />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/script-designer/history"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <ScriptHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/script-designer/:scriptId"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <ScriptDesigner />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Execution Dashboard */}
+            <Route
+              path="/execution-dashboard"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <ExecutionDashboard />
                 </ProtectedRoute>
               }
             />

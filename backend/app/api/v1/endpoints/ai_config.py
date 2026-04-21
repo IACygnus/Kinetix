@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from cryptography.fernet import Fernet
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import uuid
 import logging
 import base64
@@ -19,7 +19,7 @@ import base64
 from app.db.session import get_db
 from app.db.models.ai_config import AIConfig
 from app.schemas.ai_config import (
-    AIConfigRead, AIConfigCreate, AIProviderInfo, AITestResult,
+    AIConfigRead, AIConfigCreate, AIProviderInfo, AITestResult, LiveModelsResponse,
 )
 from app.core.security import require_role
 from app.core.config import settings
@@ -44,6 +44,50 @@ PROVIDERS = {
 }
 
 _cached_fernet_key: str = ""
+
+# ---- Live models cache (TTL 5 min) ----
+_models_cache: dict = {}  # key: "provider:key_prefix" → value: (models_list, cached_at)
+_MODELS_CACHE_TTL = timedelta(minutes=5)
+
+
+def _invalidate_models_cache(provider: str = None):
+    """Invalidate cached models. If provider=None, clear all."""
+    global _models_cache
+    if provider is None:
+        _models_cache.clear()
+    else:
+        keys_to_remove = [k for k in _models_cache if k.startswith(f"{provider}:")]
+        for k in keys_to_remove:
+            del _models_cache[k]
+
+
+def _fetch_models_from_provider(provider: str, api_key: str) -> list:
+    """Call provider API to list available models. Raises on failure."""
+    if provider == "openai":
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        models_response = client.models.list()
+        chat_prefixes = ("gpt-", "o1", "o3", "o4")
+        filtered = [
+            m.id for m in models_response.data
+            if m.id.startswith(chat_prefixes)
+            and not any(x in m.id for x in ("embedding", "audio", "tts", "whisper", "image", "dall"))
+        ]
+        return sorted(filtered, reverse=True)
+
+    elif provider == "gemini":
+        import google.generativeai as genai
+        genai.configure(api_key=api_key, transport="rest")
+        models_response = genai.list_models()
+        filtered = [
+            m.name.replace("models/", "")
+            for m in models_response
+            if "generateContent" in (m.supported_generation_methods or [])
+        ]
+        return sorted(filtered, reverse=True)
+
+    else:
+        raise ValueError(f"Provider no soportado: {provider}")
 
 
 def _get_fernet() -> Fernet:
@@ -214,6 +258,9 @@ async def create_or_update_ai_config(
     config.updated_at = datetime.utcnow()
     await db.flush()
 
+    # Invalidate live models cache so next fetch uses new key/provider
+    _invalidate_models_cache(provider=config.provider)
+
     logger.info(f"AI config updated by {_current_user.username}: provider={config.provider}, model={config.model_name}")
     return _config_to_read(config)
 
@@ -222,8 +269,75 @@ async def create_or_update_ai_config(
 async def list_models(
     _current_user: User = Depends(require_role(["admin"])),
 ):
-    """Listar proveedores con sus modelos disponibles"""
+    """Listar proveedores con sus modelos disponibles (hardcoded)"""
     return list(PROVIDERS.values())
+
+
+@router.get("/models/live", response_model=LiveModelsResponse)
+async def list_models_live(
+    provider: str = "gemini",
+    _current_user: User = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """List models from provider API in real-time. Falls back to hardcoded list on failure.
+    Cache TTL: 5 minutes. Invalidated on config save."""
+    if provider not in PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Provider invalido: {provider}. Opciones: {list(PROVIDERS.keys())}")
+
+    # Read DB config to get the stored (encrypted) API key
+    config = await _get_or_create_config(db)
+
+    if not config.api_key_encrypted:
+        return LiveModelsResponse(
+            provider=provider,
+            models=PROVIDERS[provider].models,
+            is_live=False,
+            message="No hay API key configurada. Mostrando modelos genericos.",
+        )
+
+    # Decrypt
+    try:
+        api_key = _decrypt_key(config.api_key_encrypted)
+    except Exception:
+        return LiveModelsResponse(
+            provider=provider,
+            models=PROVIDERS[provider].models,
+            is_live=False,
+            message="No se pudo desencriptar la API key. Mostrando modelos genericos.",
+        )
+
+    # Check cache
+    cache_key = f"{provider}:{api_key[:8]}"
+    if cache_key in _models_cache:
+        cached_models, cached_at = _models_cache[cache_key]
+        if datetime.utcnow() - cached_at < _MODELS_CACHE_TTL:
+            return LiveModelsResponse(provider=provider, models=cached_models, is_live=True)
+
+    # Call provider API
+    try:
+        models = _fetch_models_from_provider(provider, api_key)
+        if not models:
+            models = PROVIDERS[provider].models
+        _models_cache[cache_key] = (models, datetime.utcnow())
+        logger.info(f"Live models fetched: provider={provider}, count={len(models)}")
+        return LiveModelsResponse(provider=provider, models=models, is_live=True)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "rate" in error_msg or "limit" in error_msg or "quota" in error_msg:
+            msg = "Rate limit excedido. Mostrando modelos genericos."
+        elif "auth" in error_msg or "401" in error_msg or "key" in error_msg:
+            msg = "API key invalida. Mostrando modelos genericos."
+        elif "timeout" in error_msg or "connect" in error_msg:
+            msg = "No se pudo conectar al provider. Mostrando modelos genericos."
+        else:
+            msg = f"Error consultando provider: {str(e)[:100]}. Mostrando modelos genericos."
+        logger.warning(f"Live models fetch failed: provider={provider}, error={str(e)[:120]}")
+        return LiveModelsResponse(
+            provider=provider,
+            models=PROVIDERS[provider].models,
+            is_live=False,
+            message=msg,
+        )
 
 
 @router.post("/test", response_model=AITestResult)
@@ -275,7 +389,7 @@ async def test_ai_connection(
     if provider == "gemini":
         try:
             import google.generativeai as genai
-            genai.configure(api_key=api_key)
+            genai.configure(api_key=api_key, transport="rest")
             m = genai.GenerativeModel(model)
             response = m.generate_content("Responde solo: OK")
             if response and response.text:

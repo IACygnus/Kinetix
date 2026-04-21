@@ -67,6 +67,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: builder
     container_name: jmeter_frontend
     restart: unless-stopped
     environment:

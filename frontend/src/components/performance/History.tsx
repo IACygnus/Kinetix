@@ -57,7 +57,21 @@ export default function History() {
   const fetchExecutions = async () => {
     try {
       const data = await testAPI.getExecutions();
-      setExecutions(data);
+      // Fetch attachment counts for each execution
+      const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
+      const withCounts = await Promise.all(
+        (data as any[]).map(async (exec: any) => {
+          try {
+            const res = await fetch(`${apiBase}/executions/${exec.id}/attachment-counts`, { credentials: 'include' });
+            if (res.ok) {
+              const counts = await res.json();
+              return { ...exec, monitoring_count: counts.monitoring || 0, evidence_count: counts.evidence || 0 };
+            }
+          } catch { /* ignore */ }
+          return { ...exec, monitoring_count: 0, evidence_count: 0 };
+        })
+      );
+      setExecutions(withCounts);
     } catch {
       setError('Error al cargar historial');
     } finally {
@@ -238,6 +252,7 @@ export default function History() {
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">Error %</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">Avg RT</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">TPS</th>
+              <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-center">Contenido</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">Acciones</th>
             </tr>
           </thead>
@@ -291,6 +306,17 @@ export default function History() {
                   <td className="px-4 py-3 text-base text-gray-700 text-right">
                     {exec.throughput.toFixed(2)}
                   </td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="flex gap-1 justify-center">
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600" title="Reporte de Performance">📄</span>
+                      {(exec as any).monitoring_count > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-green-50 text-green-600" title={`${(exec as any).monitoring_count} metricas`}>📊 {(exec as any).monitoring_count}</span>
+                      )}
+                      {(exec as any).evidence_count > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-600" title={`${(exec as any).evidence_count} evidencias`}>🔍 {(exec as any).evidence_count}</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
                       <button
@@ -330,7 +356,7 @@ export default function History() {
             })}
             {filteredExecutions.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-6 py-12 text-center bg-white">
+                <td colSpan={11} className="px-6 py-12 text-center bg-white">
                   <ClipboardList className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500 text-xl">No hay reportes en el historial</p>
                 </td>

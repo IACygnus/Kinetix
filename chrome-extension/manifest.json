@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "SQA Kinetix Pro Recorder",
+  "version": "1.0.0",
+  "description": "Record HTTP traffic for SQA Kinetix Pro performance testing",
+  "permissions": ["webRequest", "storage", "tabs", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.svg",
+      "128": "icons/icon128.svg"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.svg",
+    "128": "icons/icon128.svg"
+  }
+}

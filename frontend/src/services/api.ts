@@ -1,5 +1,5 @@
 /**
- * API Service - JMeter Analyzer Pro v2.0
+ * API Service - SQA Kinetix Pro
  */
 import axios from 'axios';
 import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult } from '../types';
@@ -135,6 +135,15 @@ export const profileAPI = {
 
 // ============ PERFORMANCE (v2.0 - multi-JTL) ============
 export const testAPI = {
+  extractJTLLabels: async (file: File): Promise<{ labels: string[]; count: number }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/extract-jtl-labels', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
   validateJTL: async (files: File[]) => {
     const formData = new FormData();
     files.forEach((f) => formData.append('files', f));
@@ -153,7 +162,8 @@ export const testAPI = {
     client: string = '',
     project: string = '',
     acceptanceCriteria: string = '',
-    clientId: string = ''
+    clientId: string = '',
+    metricUnit: string = 'TPS',
   ) => {
     const formData = new FormData();
     files.forEach((f) => formData.append('files', f));
@@ -166,6 +176,7 @@ export const testAPI = {
     params.append('project', project);
     params.append('client_id', clientId);
     params.append('acceptance_criteria', acceptanceCriteria);
+    params.append('metric_unit', metricUnit);
 
     const response = await api.post(`/upload?${params.toString()}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -280,7 +291,19 @@ export const aiConfigAPI = {
     const response = await api.post('/ai-config/reset-usage');
     return response.data;
   },
+
+  getModelsLive: async (provider: string): Promise<LiveModelsResponse> => {
+    const response = await api.get('/ai-config/models/live', { params: { provider } });
+    return response.data;
+  },
 };
+
+export interface LiveModelsResponse {
+  provider: string;
+  models: string[];
+  is_live: boolean;
+  message: string | null;
+}
 
 // ============ MONITORING (Phase 4) ============
 export const monitoringAPI = {

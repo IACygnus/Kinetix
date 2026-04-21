@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # General
-    APP_NAME: str = "JMeter Analyzer Pro"
+    APP_NAME: str = "SQA Kinetix Pro"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 

@@ -30,6 +30,7 @@ from app.schemas.test import (
     LabelStats,
     TimeSeriesPoint,
     ValidationResult,
+    ErrorDetail,
 )
 
 router = APIRouter()
@@ -77,7 +78,7 @@ async def test_gemini():
     }
 
     try:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=api_key, transport="rest")
 
         # List available flash/2.0 models
         models = []
@@ -105,6 +106,45 @@ async def test_gemini():
         result["error"] = str(e)[:500]
 
     return result
+
+
+@router.post("/extract-jtl-labels")
+async def extract_jtl_labels(
+    file: UploadFile = File(...),
+):
+    """Extrae los labels/transacciones unicos de un archivo JTL sin procesamiento completo."""
+    import csv
+    import io
+
+    content = await file.read()
+    text = content.decode('utf-8', errors='replace')
+
+    # Leer solo las primeras 10,000 lineas para ser rapido
+    lines = text.split('\n')[:10000]
+
+    labels = set()
+    reader = csv.reader(io.StringIO('\n'.join(lines)))
+
+    label_idx = None
+
+    for i, row in enumerate(reader):
+        if i == 0:
+            # Buscar columna "label" en el header
+            for j, col in enumerate(row):
+                if col.strip().lower() == 'label':
+                    label_idx = j
+                    break
+            if label_idx is None:
+                return {"labels": [], "error": "No se encontro columna 'label' en el archivo"}
+            continue
+
+        if label_idx is not None and len(row) > label_idx:
+            label = row[label_idx].strip()
+            if label and not label.startswith('TOTAL'):
+                labels.add(label)
+
+    sorted_labels = sorted(list(labels))
+    return {"labels": sorted_labels, "count": len(sorted_labels)}
 
 
 @router.post("/validate-jtl", response_model=ValidationResult)
@@ -153,6 +193,24 @@ async def validate_jtl_files(
                 pass
 
 
+@router.post("/parse-jmx")
+async def parse_jmx_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Parse a .jmx file and return test metadata for form pre-population."""
+    if not file.filename or not file.filename.endswith('.jmx'):
+        raise HTTPException(400, "El archivo debe ser .jmx")
+
+    content = await file.read()
+    try:
+        from app.services.jmx_parser import parse_jmx
+        return parse_jmx(content)
+    except Exception as e:
+        logger.error(f"Error parsing JMX: {e}")
+        raise HTTPException(400, f"Error parseando .jmx: {str(e)}")
+
+
 @router.post("/upload")
 async def upload_jtl(
     files: List[UploadFile] = File(...),
@@ -163,6 +221,7 @@ async def upload_jtl(
     project: str = Query(""),
     client_id: str = Query(""),
     acceptance_criteria: str = Query(""),
+    metric_unit: str = Query("TPS"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -180,8 +239,8 @@ async def upload_jtl(
         raise HTTPException(status_code=400, detail=f"test_type invalido. Opciones: {valid_types}")
 
     for f in files:
-        if not f.filename or not f.filename.endswith(('.jtl', '.csv')):
-            raise HTTPException(status_code=400, detail=f"Solo archivos .jtl o .csv: {f.filename}")
+        if not f.filename or not f.filename.endswith(('.jtl', '.csv', '.xml')):
+            raise HTTPException(status_code=400, detail=f"Solo archivos .jtl, .csv o .xml: {f.filename}")
 
     # Guardar archivos
     UPLOAD_DIR.mkdir(exist_ok=True)
@@ -201,14 +260,42 @@ async def upload_jtl(
 
         logger.info(f"Iniciando procesamiento de {len(files)} archivo(s)")
 
-        # Parse: single vs multi
-        if len(saved_paths) == 1:
-            parser = JTLParser(saved_paths[0])
-            df, metrics = parser.parse()
-        else:
-            df, metrics, parser = JTLParser.parse_multiple(saved_paths)
+        # KNX-16: Detect file format and parse accordingly
+        from app.services.parsers.format_detector import detect_file_format
+        file_format = detect_file_format(original_filenames[0], saved_paths[0])
+        logger.info(f"Formato detectado: {file_format} para {original_filenames[0]}")
 
-        logger.info(f"JTL parseado: {len(df)} muestras totales, {metrics.get('total_main_samples', 0)} principales")
+        parser = None
+        if file_format == 'jtl':
+            if len(saved_paths) == 1:
+                parser = JTLParser(saved_paths[0])
+                df, metrics = parser.parse()
+            else:
+                df, metrics, parser = JTLParser.parse_multiple(saved_paths)
+        elif file_format == 'locust':
+            from app.services.parsers.locust_parser import parse_locust_csv
+            with open(saved_paths[0], 'rb') as f_content:
+                df = parse_locust_csv(f_content.read())
+            # Use JTLParser on normalized DataFrame to compute metrics
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
+                df.to_csv(tmp.name, index=False)
+                parser = JTLParser(tmp.name)
+                df, metrics = parser.parse()
+        elif file_format in ('wapt_csv', 'wapt_xml'):
+            from app.services.parsers.wapt_parser import parse_wapt_csv, parse_wapt_xml
+            with open(saved_paths[0], 'rb') as f_content:
+                raw = f_content.read()
+            df = parse_wapt_csv(raw) if file_format == 'wapt_csv' else parse_wapt_xml(raw)
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
+                df.to_csv(tmp.name, index=False)
+                parser = JTLParser(tmp.name)
+                df, metrics = parser.parse()
+        else:
+            raise HTTPException(status_code=400, detail=f"Formato no soportado: {original_filenames[0]}")
+
+        logger.info(f"Parseado ({file_format}): {len(df)} muestras totales, {metrics.get('total_main_samples', 0)} principales")
 
         # Parse acceptance criteria JSON
         acceptance_criteria_dict = None
@@ -286,7 +373,7 @@ async def upload_jtl(
             ai_analysis_summary = gemini.analyze_summary_table(
                 summary_df, metrics, test_type=test_type,
                 acceptance_criteria=acceptance_criteria_dict, insights=insights,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_summary is None:
                 logger.info("Using FALLBACK for summary_table")
@@ -311,7 +398,7 @@ async def upload_jtl(
 
             ai_analysis_errors = gemini.analyze_errors(
                 errors_for_analysis, metrics['total_requests'], test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_errors is None:
                 logger.info("Using FALLBACK for errors")
@@ -332,7 +419,7 @@ async def upload_jtl(
             logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
             ai_analysis_response_times = gemini.analyze_chart(
                 'response_times', "\n".join(rt_lines), test_type=test_type, insights=insights,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_response_times is None:
                 logger.info("Using FALLBACK for response_times")
@@ -351,7 +438,7 @@ async def upload_jtl(
             )
             ai_analysis_response_time_over_time = gemini.analyze_chart(
                 'response_time_over_time', rt_over_time_summary, test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_response_time_over_time is None:
                 logger.info("Using FALLBACK for response_time_over_time")
@@ -365,7 +452,7 @@ async def upload_jtl(
                 f"Duracion: {metrics['duration_seconds']:.0f}s, "
                 f"Total requests: {metrics['total_requests']:,}",
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_throughput is None:
                 logger.info("Using FALLBACK for throughput")
@@ -379,7 +466,7 @@ async def upload_jtl(
                 f"KB/s recibidos: {metrics.get('kb_per_sec_received', 0):.2f}, "
                 f"KB/s enviados: {metrics.get('kb_per_sec_sent', 0):.2f}",
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_latency is None:
                 logger.info("Using FALLBACK for latency")
@@ -392,7 +479,7 @@ async def upload_jtl(
                 f"Tasa de error: {metrics['error_rate']:.2f}% "
                 f"({metrics['total_errors']:,} de {metrics['total_requests']:,} requests)",
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_error_rate is None:
                 logger.info("Using FALLBACK for error_rate")
@@ -409,7 +496,7 @@ async def upload_jtl(
                 'codes_per_second',
                 f"Codigos HTTP: {codes_summary}",
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_codes_per_second is None:
                 logger.info("Using FALLBACK for codes_per_second")
@@ -425,7 +512,7 @@ async def upload_jtl(
                 'transactions_per_second',
                 f"TPS total: {metrics['throughput']:.2f} req/s en {len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_transactions_per_second is None:
                 logger.info("Using FALLBACK for transactions_per_second")
@@ -437,7 +524,7 @@ async def upload_jtl(
                 'active_threads',
                 f"Concurrencia durante {metrics['duration_seconds']:.0f}s de prueba",
                 test_type=test_type,
-                test_date=test_date,
+                test_date=test_date, metric_unit=metric_unit,
             )
             if ai_analysis_active_threads is None:
                 logger.info("Using FALLBACK for active_threads")
@@ -452,7 +539,7 @@ async def upload_jtl(
                 logger.info("[11/12] Analizando redirecciones...")
                 ai_analysis_redirects = gemini.analyze_redirects(
                     redirect_summary, metrics, test_type=test_type,
-                    test_date=test_date,
+                    test_date=test_date, metric_unit=metric_unit,
                 )
                 if ai_analysis_redirects is None:
                     logger.info("Using FALLBACK for redirects")
@@ -482,6 +569,7 @@ async def upload_jtl(
                 insights=insights,
                 test_date=test_date,
                 acceptance_criteria=acceptance_criteria_dict,
+                metric_unit=metric_unit,
             )
             if ai_conclusions is None:
                 logger.info("Using FALLBACK for conclusions")
@@ -505,6 +593,7 @@ async def upload_jtl(
                 insights=insights,
                 test_date=test_date,
                 acceptance_criteria=acceptance_criteria_dict,
+                metric_unit=metric_unit,
             )
             if ai_recommendations is None:
                 logger.info("Using FALLBACK for recommendations")
@@ -519,9 +608,27 @@ async def upload_jtl(
 
         # ===== COMPUTE VERDICT =====
         if acceptance_criteria_dict and not acceptance_criteria_dict.get('raw_text'):
-            verdict = compute_verdict(metrics, acceptance_criteria_dict)
+            # P4: If per_scenario criteria exist for this test_type, merge into effective criteria
+            per_scenario = acceptance_criteria_dict.get('per_scenario', {})
+            effective_criteria = dict(acceptance_criteria_dict)
+            # Normalize: match test_type case-insensitively against per_scenario keys
+            test_type_lower = (test_type or '').lower().strip()
+            for sc_key, sc_vals in per_scenario.items():
+                if sc_key.lower().strip() == test_type_lower and isinstance(sc_vals, dict):
+                    for k, v in sc_vals.items():
+                        if v is not None and v != '':
+                            effective_criteria[k] = v
+                    break
+            verdict = compute_verdict(metrics, effective_criteria)
             acceptance_criteria_dict['verdict'] = verdict
-            logger.info(f"Verdict computed: {verdict}")
+            # KNX-09: Per-transaction verdicts
+            from app.services.ai.gemini import compute_per_transaction_verdicts
+            per_txn_result = compute_per_transaction_verdicts(summary_df, acceptance_criteria_dict)
+            if per_txn_result:
+                acceptance_criteria_dict['verdicts_per_transaction'] = per_txn_result.get('verdicts_per_transaction', {})
+                # Override global verdict if per-txn is stricter
+                acceptance_criteria_dict['verdict'] = per_txn_result.get('verdict', verdict)
+            logger.info(f"Verdict computed: {acceptance_criteria_dict['verdict']}")
 
         # ===== CREAR REGISTRO EN BD =====
         execution = TestExecution(
@@ -536,12 +643,14 @@ async def upload_jtl(
             client_id=uuid.UUID(client_id) if client_id else None,
             project=project if project else None,
             test_type=test_type,
+            metric_unit=metric_unit,
             jtl_filenames=original_filenames if len(original_filenames) > 1 else None,
             acceptance_criteria_json=acceptance_criteria_dict,
 
-            # Info del archivo
-            start_time=metrics.get('start_time'),
-            end_time=metrics.get('end_time'),
+            # Info del archivo — strip tzinfo for TIMESTAMP WITHOUT TIME ZONE column
+            # (values are already in COT from jtl_parser, just remove the tz marker)
+            start_time=metrics.get('start_time').replace(tzinfo=None) if hasattr(metrics.get('start_time'), 'tzinfo') and metrics.get('start_time') is not None else metrics.get('start_time'),
+            end_time=metrics.get('end_time').replace(tzinfo=None) if hasattr(metrics.get('end_time'), 'tzinfo') and metrics.get('end_time') is not None else metrics.get('end_time'),
             duration_seconds=float(metrics.get('duration_seconds', 0)),
 
             # Metricas basicas
@@ -897,6 +1006,18 @@ async def get_execution_charts(
                     label=row['label'],
                 ))
 
+        # KNX-02: Error detail — real error codes per transaction from JTL
+        error_detail = []
+        error_df = parser.df[~parser.df['success']].copy() if parser.df is not None else None
+        if error_df is not None and len(error_df) > 0:
+            error_grouped = error_df.groupby(['label', 'responseCode']).size().reset_index(name='count')
+            for _, row in error_grouped.iterrows():
+                error_detail.append(ErrorDetail(
+                    label=row['label'],
+                    code=str(row['responseCode']),
+                    count=int(row['count']),
+                ))
+
         # Totales
         total_main = len(parser.df_main) if parser.df_main is not None else len(df)
         total_all = len(df)
@@ -909,6 +1030,7 @@ async def get_execution_charts(
             by_label=by_label,
             by_label_redirects=by_label_redirects,
             response_codes=response_codes,
+            error_detail=error_detail,
             response_times_by_label=response_times_by_label,
             throughput_timeline=throughput_timeline,
             latency_timeline=latency_timeline,
@@ -986,3 +1108,57 @@ async def update_analysis(
         logger.info(f"Analisis actualizado para {exec_uuid} ({len(update_data)} campos)")
 
     return {"success": True, "message": "Analisis actualizado correctamente"}
+
+
+# ====== KNX-17: CAPACITY ANALYSIS ENDPOINTS ======
+
+@router.get("/executions/{execution_id}/capacity")
+async def get_capacity_analysis(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get capacity analysis data for an execution."""
+    try:
+        exec_uuid = uuid.UUID(execution_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "ID invalido")
+
+    result = await db.execute(select(TestExecution).where(TestExecution.id == exec_uuid))
+    execution = result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(404, "Ejecucion no encontrada")
+
+    await _check_execution_access(db, current_user, execution)
+
+    data = json.loads(execution.capacity_analysis_json or '{"resources": [], "enabled": false}')
+    return data
+
+
+@router.put("/executions/{execution_id}/capacity")
+async def update_capacity_analysis(
+    execution_id: str,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Update capacity analysis data for an execution."""
+    try:
+        exec_uuid = uuid.UUID(execution_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, "ID invalido")
+
+    result = await db.execute(select(TestExecution).where(TestExecution.id == exec_uuid))
+    execution = result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(404, "Ejecucion no encontrada")
+
+    await _check_execution_access(db, current_user, execution)
+
+    await db.execute(
+        update(TestExecution)
+        .where(TestExecution.id == exec_uuid)
+        .values(capacity_analysis_json=json.dumps(data))
+    )
+    await db.commit()
+    return {"status": "ok"}

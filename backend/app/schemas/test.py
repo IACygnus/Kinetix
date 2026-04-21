@@ -25,6 +25,7 @@ class TestExecutionResponse(TestExecutionBase):
     client_id: Optional[Any] = None
     project: Optional[str] = None
     test_type: str = "load"
+    metric_unit: Optional[str] = "TPS"
     jtl_filenames: Optional[List[str]] = None
     acceptance_criteria_json: Optional[Dict[str, Any]] = None
 
@@ -110,11 +111,20 @@ class TimeSeriesPoint(BaseModel):
     code: Optional[str] = None
 
 
+class ErrorDetail(BaseModel):
+    label: str
+    code: str
+    count: int
+
+
 class ChartData(BaseModel):
     timeline: List[TimelineData]
     by_label: List[LabelStats]
     by_label_redirects: List[LabelStats] = []
     response_codes: Dict[str, int]
+
+    # Detalle de errores por transaccion y codigo HTTP (KNX-02)
+    error_detail: List[ErrorDetail] = []
 
     # Datos para graficos
     response_times_by_label: List[TimeSeriesPoint] = []

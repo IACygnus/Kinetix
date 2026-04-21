@@ -3,7 +3,6 @@
  */
 import { useEffect, useState } from 'react';
 import {
-  UserCheck,
   Building2,
   Plus,
   X,

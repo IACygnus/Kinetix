@@ -1,9 +1,11 @@
 """
-JMeter Analyzer Pro - Aplicacion Principal v2.0
+SQA Kinetix Pro - Aplicacion Principal v2.0
 """
+import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 import logging
 import uuid
@@ -16,6 +18,11 @@ from app.db.models.test import TestExecution
 from app.db.models.client import Client, UserClient
 from app.db.models.monitoring import MonitoringConfig
 from app.db.models.ai_config import AIConfig
+from app.db.models.script_design import ScriptDesign
+from app.db.models.scenario import Scenario
+from app.db.models.performance_execution import PerformanceExecution
+from app.db.models.data_file import DataFile
+from app.db.models.attachment import ExecutionAttachment
 from app.core.security import get_password_hash
 
 # Configurar logging
@@ -26,7 +33,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.APP_NAME,
     description="Sistema de analisis de reportes JMeter con IA - v2.0",
-    version="2.0.0",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -40,6 +47,7 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    allow_origin_regex=r"chrome-extension://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +73,15 @@ from app.api.v1.api import api_router
 
 # Incluir API router
 app.include_router(api_router, prefix="/api/v1")
+
+# WebSocket router (Sprint 3 — incluido directamente en app para handshake correcto)
+from app.api.v1.endpoints import ws_metrics
+app.include_router(ws_metrics.router, prefix="/api/v1/ws", tags=["WebSocket"])
+
+# Mount media directory for serving attachment files (KNX-13, KNX-14)
+MEDIA_ROOT = "/app/media"
+os.makedirs(os.path.join(MEDIA_ROOT, "attachments"), exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIA_ROOT), name="media")
 
 
 async def create_tables():
@@ -131,6 +148,7 @@ async def migrate_test_executions_table():
             "ALTER TABLE test_executions ADD COLUMN IF NOT EXISTS total_redirects INTEGER DEFAULT 0",
             "ALTER TABLE test_executions ADD COLUMN IF NOT EXISTS redirect_labels JSON",
             "ALTER TABLE test_executions ADD COLUMN IF NOT EXISTS ai_analysis_redirects TEXT",
+            "ALTER TABLE test_executions ADD COLUMN IF NOT EXISTS capacity_analysis_json TEXT",
         ]
         for sql in migrations:
             try:
@@ -208,6 +226,39 @@ async def seed_admin_user():
             logger.error(f"Error creando usuario admin: {e}")
 
 
+async def migrate_script_designs_table():
+    """Sprint 6 — agregar script_type y client_name a script_designs"""
+    async with engine.begin() as conn:
+        migrations = [
+            "ALTER TABLE script_designs ADD COLUMN IF NOT EXISTS script_type VARCHAR(20) DEFAULT 'api'",
+            "ALTER TABLE script_designs ADD COLUMN IF NOT EXISTS client_name VARCHAR(255)",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+                logger.info(f"Migration OK: {sql}")
+            except Exception as e:
+                logger.warning(f"Migration skip: {e}")
+    logger.info("Migracion de tabla script_designs completada")
+
+
+async def migrate_attachments_table():
+    """Sprint P1-A — agregar ai_analysis a execution_attachments"""
+    async with engine.begin() as conn:
+        migrations = [
+            "ALTER TABLE execution_attachments ADD COLUMN IF NOT EXISTS ai_analysis TEXT",
+            "ALTER TABLE execution_attachments ADD COLUMN IF NOT EXISTS ai_analysis_updated_at TIMESTAMP",
+            "ALTER TABLE test_executions ADD COLUMN IF NOT EXISTS metric_unit VARCHAR(10) DEFAULT 'TPS'",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+                logger.info(f"Migration OK: {sql}")
+            except Exception as e:
+                logger.warning(f"Migration skip: {e}")
+    logger.info("Migracion de tabla execution_attachments completada")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Inicializacion al arrancar la aplicacion"""
@@ -217,6 +268,8 @@ async def startup_event():
     await migrate_test_executions_table()
     await migrate_clients_tables()
     await migrate_ai_config_table()
+    await migrate_script_designs_table()
+    await migrate_attachments_table()
     await seed_admin_user()
     logger.info("Aplicacion lista")
 
@@ -227,7 +280,7 @@ async def root():
     """Endpoint raiz"""
     return {
         "app": settings.APP_NAME,
-        "version": "2.0.0",
+        "version": "3.0.0",
         "status": "running",
         "environment": settings.ENVIRONMENT,
         "docs": "/docs"

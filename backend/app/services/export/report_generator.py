@@ -7,6 +7,7 @@ import io
 import re
 import base64
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
 
 import matplotlib
@@ -204,7 +205,7 @@ def build_pdf_html(
     """
     duration_min = int(meta['duration'] // 60)
     duration_sec = int(meta['duration'] % 60)
-    now_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    now_str = datetime.now(ZoneInfo("America/Bogota")).strftime('%d/%m/%Y %H:%M:%S')
     files_list = ', '.join(meta.get('filenames', [meta['filename']]))
 
     # Error-rate colour
@@ -214,10 +215,11 @@ def build_pdf_html(
     # Test-type badge
     tt_color = meta.get('testTypeColor', '#3b82f6')
 
-    # Verdict badge
+    # Verdict badge (inline in .cover-pretitle only — duplicated destacado block removed in Fix 3)
     criteria = meta.get('acceptanceCriteria', {})
     verdict_text = criteria.get('verdict', '') if isinstance(criteria, dict) else ''
-    verdict_html = ''
+    verdict_class = ''
+    criteria_str = ''
     if verdict_text:
         if verdict_text == 'APTO':
             verdict_class = 'apto'
@@ -225,28 +227,19 @@ def build_pdf_html(
             verdict_class = 'no-apto'
         else:
             verdict_class = 'reservas'
-        criteria_info = ''
         if isinstance(criteria, dict):
             rt_val = criteria.get('response_time', '')
             avail_val = criteria.get('availability', '')
-            if rt_val or avail_val:
-                parts = []
-                if rt_val:
-                    parts.append(f'&lt;{rt_val}ms')
-                if avail_val:
-                    parts.append(f'&gt;{avail_val}% disponibilidad')
-                criteria_info = f'<div style="font-size:7pt;color:rgba(255,255,255,0.5)">Criterio: {", ".join(parts)}</div>'
-        verdict_html = (
-            f'<div class="cover-verdict-section">'
-            f'<div class="cover-verdict {verdict_class}">{verdict_text}</div>'
-            f'<div style="text-align:left">'
-            f'<div style="font-size:8pt;color:rgba(255,255,255,0.7)">Veredicto: <strong style="color:rgba(255,255,255,0.9)">{verdict_text}</strong></div>'
-            f'{criteria_info}'
-            f'</div></div>'
-        )
+            parts = []
+            if rt_val:
+                parts.append(f'&lt;{rt_val}ms')
+            if avail_val:
+                parts.append(f'&gt;{avail_val}% disponibilidad')
+            if parts:
+                criteria_str = f' &nbsp;|&nbsp; Criterio: {", ".join(parts)}'
 
     # ----- helpers -----
-    def ai_box(key, title, border='#f97316', allow_break=False):
+    def ai_box(key, title, border='#4f46e5', allow_break=False):
         text = ia.get(key, '')
         if not text:
             return ''
@@ -356,7 +349,7 @@ def build_pdf_html(
                 <tbody>{redir_rows}{redir_total_row}</tbody>
             </table>
         </div>
-        {ai_box('redirects', 'Analisis de Redirecciones', '#f97316')}
+        {ai_box('redirects', 'Analisis de Redirecciones', '#4f46e5')}
         '''
 
     # ----- full HTML -----
@@ -376,11 +369,11 @@ def build_pdf_html(
 }}
 
 @page :first {{
-    margin-top: 0;
+    margin: 0;
     @bottom-center {{ content: none; }}
 }}
 
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; text-decoration: none; }}
 
 body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -393,18 +386,22 @@ body {{
 .cover {{
     page-break-after: always;
     width: 100%;
-    text-align: center;
-    background: linear-gradient(135deg, #0a1628 0%, #162040 50%, #1a3a7a 100%);
+    min-height: 210mm; /* Fill entire A4 landscape page — gradient full-bleed */
+    background: linear-gradient(135deg, #0a1628 0%, #1e293b 50%, #1e40af 100%);
     color: white;
-    padding: 8mm 20mm 6mm 20mm;
-    margin: -15mm -15mm 0 -15mm;
+    padding: 15mm 25mm 10mm 25mm;
+    margin: 0;
+}}
+
+.cover-top-table {{
+    width: 100%;
+    margin-bottom: 8mm;
 }}
 
 .cover-logo {{
     font-size: 36pt;
     font-weight: 800;
-    letter-spacing: -2px;
-    margin-bottom: 1mm;
+    letter-spacing: -1px;
 }}
 
 .cover-logo-accent {{
@@ -412,62 +409,66 @@ body {{
 }}
 
 .cover-subtitle {{
-    font-size: 8pt;
-    color: rgba(255,255,255,0.5);
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    margin-bottom: 3mm;
+    font-size: 10pt;
+    color: rgba(255,255,255,0.6);
+    margin-top: 0;
+}}
+
+.cover-info-box {{
+    background: rgba(255,255,255,0.08);
+    border-radius: 4mm;
+    padding: 6mm 8mm;
+    margin-bottom: 6mm;
 }}
 
 .cover-pretitle {{
     font-size: 10pt;
     color: rgba(255,255,255,0.6);
-    margin-bottom: 1mm;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2mm;
 }}
 
 .cover-title {{
-    font-size: 16pt;
+    font-size: 24pt;
     font-weight: 700;
-    margin-bottom: 3mm;
+    margin-bottom: 5mm;
 }}
 
-.cover-info-box {{
-    background: rgba(255,255,255,0.08);
-    border-radius: 3mm;
-    padding: 3mm 5mm;
-    margin-bottom: 3mm;
-    text-align: left;
+.cover-meta-grid {{
+    width: 100%;
+    gap: 2mm 6mm;
+    margin-top: 3mm;
 }}
 
-.cover-info-grid {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1mm 8mm;
-    font-size: 8pt;
-    color: rgba(255,255,255,0.7);
-    line-height: 1.5;
+.cover-meta-label {{
+    font-size: 7pt;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 0.5px;
 }}
 
-.cover-info-grid strong {{
+.cover-meta-value {{
+    font-size: 12pt;
     color: rgba(255,255,255,0.9);
+    font-weight: 600;
+    margin-top: 1mm;
 }}
 
-.cover-verdict-section {{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 3mm;
-    margin: 2mm 0 3mm 0;
+.cover-info-footer {{
+    font-size: 8pt;
+    color: rgba(255,255,255,0.4);
+    margin-top: 4mm;
 }}
 
 .cover-verdict {{
     display: inline-block;
-    padding: 1.5mm 6mm;
+    padding: 3mm 10mm;
     border-radius: 4mm;
-    font-size: 9pt;
+    font-size: 20pt;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
 }}
 
 .cover-verdict.apto {{
@@ -490,9 +491,9 @@ body {{
 
 .cover-badge {{
     display: inline-block;
-    padding: 1mm 5mm;
+    padding: 1.5mm 5mm;
     border-radius: 4mm;
-    font-size: 8pt;
+    font-size: 9pt;
     font-weight: 600;
     text-transform: uppercase;
     border: 0.4mm solid rgba(255,255,255,0.4);
@@ -504,42 +505,22 @@ body {{
     color: rgba(255,255,255,0.4);
 }}
 
-/* Cover KPI cards */
-.cover-kpis {{
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 5px;
-    margin-top: 3mm;
-    text-align: left;
+/* Cover KPI cards — using table for WeasyPrint compatibility */
+.cover-kpi-table {{
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 5px;
+    margin-top: 5mm;
 }}
 
-.cover-kpi {{
-    background: white;
-    border-radius: 4px;
-    padding: 3px 7px;
-    border-left: 3px solid #3b82f6;
-}}
-
-.cover-kpi-label {{
-    font-size: 5.5px;
-    color: #64748b;
-    text-transform: uppercase;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-}}
-
-.cover-kpi-val {{
-    font-size: 14pt;
-    font-weight: 700;
-    color: #1e293b;
-    margin-top: 0;
-    line-height: 1.2;
-}}
-
-.cover-kpi-val span {{
-    font-size: 7pt;
-    font-weight: 400;
-    color: #64748b;
+.cover-kpi-table td {{
+    width: 25%;
+    background: rgba(255,255,255,0.95);
+    border-radius: 3mm;
+    padding: 4mm 5mm;
+    border-left: 5px solid #3b82f6;
+    border-bottom: none;
+    vertical-align: top;
 }}
 
 /* ===== REPORT BODY ===== */
@@ -648,10 +629,11 @@ tbody tr:nth-child(even) {{
     max-height: 80mm;
 }}
 
-/* AI boxes — orange themed */
+/* AI boxes — Indigo themed (Bloque A.1 visual match) */
 .ai-box {{
-    background: #fff7ed;
-    border-left: 1mm solid #f97316;
+    background: #ffffff;
+    border: 0.4mm solid #4f46e5;
+    border-left: 1.5mm solid #4f46e5;
     border-radius: 1.5mm;
     padding: 3mm 4mm;
     margin: 2mm 0 5mm 0;
@@ -679,29 +661,24 @@ tbody tr:nth-child(even) {{
     color: #1e293b;
 }}
 
-/* Two-column grid */
+/* Two-column grid — table for WeasyPrint */
 .grid-2 {{
-    display: flex;
-    gap: 4mm;
+    width: 100%;
     margin-bottom: 5mm;
-}}
-
-.grid-2 > div {{
-    flex: 1;
 }}
 
 /* Footer */
 .report-footer {{
     text-align: center;
     font-size: 8pt;
-    color: #94a3b8;
-    padding-top: 4mm;
-    border-top: 0.3mm solid #e2e8f0;
-    margin-top: 8mm;
+    color: #64748b;
+    padding-top: 5mm;
+    border-top: 0.5mm solid #f5a623;
+    margin-top: 10mm;
 }}
 
 .report-footer strong {{
-    color: #1e293b;
+    color: #0a1628;
 }}
 </style>
 </head>
@@ -709,52 +686,50 @@ tbody tr:nth-child(even) {{
 
 <!-- ===== COVER PAGE ===== -->
 <div class="cover">
-    <div class="cover-logo">sqa<span class="cover-logo-accent">_</span></div>
-    <div class="cover-subtitle">SOFTWARE QUALITY ASSURANCE</div>
-    <div class="cover-pretitle">Reporte de Analisis de Performance</div>
-    <div class="cover-title">{meta['project'] or meta['name']}</div>
+    <table class="cover-top-table"><tr>
+        <td style="vertical-align:top;text-align:left">
+            <div class="cover-logo">sqa<span class="cover-logo-accent">_</span></div>
+            <div class="cover-subtitle">Software Quality Assurance</div>
+        </td>
+        <td style="vertical-align:top;text-align:right;font-size:10pt;color:rgba(255,255,255,0.7)">
+            Realizado por:<br><strong style="color:rgba(255,255,255,0.95);font-size:12pt">Celula de Performance SQA</strong>
+        </td>
+    </tr></table>
+
+    <div style="border-top:0.5mm solid #f5a623;margin-bottom:6mm"></div>
 
     <div class="cover-info-box">
-        <div class="cover-info-grid">
-            <div><strong>Proyecto:</strong> {meta['project'] or meta['name']}</div>
-            <div><strong>Cliente:</strong> {meta['client'] or 'N/A'}</div>
-            <div><strong>Tipo:</strong> <span class="cover-badge">{meta['testTypeLabel']}</span></div>
-            <div><strong>Duracion:</strong> {duration_min}m {duration_sec}s</div>
-            <div><strong>Archivo:</strong> {files_list}</div>
-            <div><strong>Inicio:</strong> {meta['startTime']} &nbsp; <strong>Fin:</strong> {meta['endTime']}</div>
+        <div class="cover-pretitle">
+            REPORTE DE ANALISIS DE PERFORMANCE
+            &nbsp;<span class="cover-badge" style="background:{tt_color}20;border-color:{tt_color}">{meta['testTypeLabel']}</span>
+            {f'&nbsp;<span class="cover-verdict {verdict_class}">{verdict_text}</span>' if verdict_text else ''}
+        </div>
+        <div class="cover-title">{meta['project'] or meta['name']}</div>
+        <table class="cover-meta-grid"><tr>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">CLIENTE</div><div class="cover-meta-value">{meta['client'] or 'N/A'}</div></td>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">NOMBRE DEL PROYECTO</div><div class="cover-meta-value">{meta['project'] or meta['name']}</div></td>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
+            <td style="border:none;padding:0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
+        </tr></table>
+        <div class="cover-info-footer">
+            Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']} &nbsp;|&nbsp; Generado: {now_str}{criteria_str}
         </div>
     </div>
 
-    {verdict_html}
+    <table class="cover-kpi-table"><tr>
+        <td style="border-left-color:#4CAF50"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">TOTAL REQUESTS</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['totalRequests']:,}</div></td>
+        <td style="border-left-color:#2196F3"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">AVG RESPONSE TIME</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['avgResponseTime']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
+        <td style="border-left-color:{er_color}"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">ERROR RATE</div><div style="font-size:22pt;font-weight:700;color:{er_color};margin-top:2mm">{meta['errorRate']:.2f}<span style="font-size:10pt;font-weight:400">%</span></div></td>
+        <td style="border-left-color:#4CAF50"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">THROUGHPUT</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['throughput']:.2f} <span style="font-size:10pt;font-weight:400;color:#64748b">req/s</span></div></td>
+    </tr><tr>
+        <td style="border-left-color:#ff9800"><div style="font-size:8pt;color:#ff9800;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">P90</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['p90']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
+        <td style="border-left-color:#ff9800"><div style="font-size:8pt;color:#ff9800;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">P95</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['p95']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
+        <td style="border-left-color:#9c27b0"><div style="font-size:8pt;color:#9c27b0;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">P99</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['p99']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
+        <td style="border-left-color:#2196F3"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">AVG LATENCY</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['avgLatency']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
+    </tr></table>
 
-    <div class="cover-kpis">
-        <div class="cover-kpi" style="border-left-color:#3b82f6"><div class="cover-kpi-label">Total Requests</div><div class="cover-kpi-val">{meta['totalRequests']:,}</div></div>
-        <div class="cover-kpi" style="border-left-color:#8b5cf6"><div class="cover-kpi-label">Avg Response Time</div><div class="cover-kpi-val">{meta['avgResponseTime']:.0f} <span>ms</span></div></div>
-        <div class="cover-kpi" style="border-left-color:{er_color}"><div class="cover-kpi-label">Error Rate</div><div class="cover-kpi-val" style="color:{er_color}">{meta['errorRate']:.2f}<span>%</span></div></div>
-        <div class="cover-kpi" style="border-left-color:#f59e0b"><div class="cover-kpi-label">Throughput</div><div class="cover-kpi-val">{meta['throughput']:.2f} <span>req/s</span></div></div>
-    </div>
-    <div class="cover-kpis" style="margin-top:3px">
-        <div class="cover-kpi" style="border-left-color:#06b6d4"><div class="cover-kpi-label">P90</div><div class="cover-kpi-val">{meta['p90']:.0f} <span>ms</span></div></div>
-        <div class="cover-kpi" style="border-left-color:#06b6d4"><div class="cover-kpi-label">P95</div><div class="cover-kpi-val">{meta['p95']:.0f} <span>ms</span></div></div>
-        <div class="cover-kpi" style="border-left-color:#06b6d4"><div class="cover-kpi-label">P99</div><div class="cover-kpi-val">{meta['p99']:.0f} <span>ms</span></div></div>
-        <div class="cover-kpi" style="border-left-color:#8b5cf6"><div class="cover-kpi-label">Avg Latency</div><div class="cover-kpi-val">{meta['avgLatency']:.0f} <span>ms</span></div></div>
-    </div>
-    <div class="cover-footer">
+    <div style="margin-top:5mm;text-align:center;font-size:9pt;color:rgba(255,255,255,0.4)">
         Celula de Performance SQA | Generado: {now_str}
-    </div>
-</div>
-
-<!-- ===== INFORMACION DEL PROYECTO ===== -->
-<div style="margin-bottom:5mm;">
-    <div class="section-header">Informacion del Proyecto</div>
-    <div style="display:flex;gap:3mm;padding:3mm 4mm;background:#f8fafc;border:0.3mm solid #e2e8f0;border-radius:0 0 2mm 2mm;">
-        <div style="flex:1"><div style="font-size:7pt;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Cliente</div><div style="font-size:9pt;font-weight:600;margin-top:1mm">{meta['client'] or 'N/A'}</div></div>
-        <div style="flex:1"><div style="font-size:7pt;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Nombre del Proyecto</div><div style="font-size:9pt;font-weight:600;margin-top:1mm">{meta['project'] or meta['name']}</div></div>
-        <div style="flex:1"><div style="font-size:7pt;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Duracion</div><div style="font-size:9pt;font-weight:600;margin-top:1mm">{duration_min}m {duration_sec}s</div></div>
-        <div style="flex:1"><div style="font-size:7pt;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Tipo de Prueba</div><div style="font-size:9pt;font-weight:600;margin-top:1mm"><span style="background:{tt_color}22;color:{tt_color};padding:1mm 3mm;border-radius:2mm;font-size:8pt;border:0.3mm solid {tt_color}">{meta['testTypeLabel']}</span></div></div>
-    </div>
-    <div style="font-size:7.5pt;color:#64748b;padding:2mm 4mm;background:#f8fafc;border:0.3mm solid #e2e8f0;border-top:none;border-radius:0 0 2mm 2mm;">
-        <strong>Archivo:</strong> {files_list} &nbsp;|&nbsp; <strong>Inicio:</strong> {meta['startTime']} &nbsp;|&nbsp; <strong>Fin:</strong> {meta['endTime']}
     </div>
 </div>
 
@@ -778,71 +753,71 @@ tbody tr:nth-child(even) {{
 
 <!-- ===== CHARTS ===== -->
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#8b5cf6">Response Times por Transaccion</div>
+    <div class="chart-title" style="border-left-color:#8884d8">Response Times por Transaccion</div>
     <img class="chart-img" src="data:image/png;base64,{charts['rt_label']}" />
 </div>
-{ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#f97316')}
+{ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#3b82f6">Response Time Over Time</div>
+    <div class="chart-title" style="border-left-color:#2196F3">Response Time Over Time</div>
     <img class="chart-img" src="data:image/png;base64,{charts['rt_time']}" />
 </div>
-{ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time', '#f97316')}
+{ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#10b981">Throughput Over Time</div>
+    <div class="chart-title" style="border-left-color:#4CAF50">Throughput Over Time</div>
     <img class="chart-img" src="data:image/png;base64,{charts['throughput']}" />
 </div>
-{ai_box('throughput', 'Analisis - Throughput', '#f97316')}
+{ai_box('throughput', 'Analisis - Throughput', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#8b5cf6">Latency Over Time</div>
+    <div class="chart-title" style="border-left-color:#9c27b0">Latency Over Time</div>
     <img class="chart-img" src="data:image/png;base64,{charts['latency']}" />
 </div>
-{ai_box('latency', 'Analisis - Latency', '#f97316')}
+{ai_box('latency', 'Analisis - Latency', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#ef4444">Error Rate Over Time</div>
+    <div class="chart-title" style="border-left-color:#f44336">Error Rate Over Time</div>
     <img class="chart-img" src="data:image/png;base64,{charts['error_rate']}" />
 </div>
-{ai_box('errorRate', 'Analisis - Error Rate', '#f97316')}
+{ai_box('errorRate', 'Analisis - Error Rate', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#6366f1">Response Codes per Second</div>
+    <div class="chart-title" style="border-left-color:#4CAF50">Response Codes per Second</div>
     <img class="chart-img" src="data:image/png;base64,{charts['codes']}" />
 </div>
-{ai_box('codesPerSecond', 'Analisis - Response Codes', '#f97316')}
+{ai_box('codesPerSecond', 'Analisis - Response Codes', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#10b981">Transactions per Second</div>
+    <div class="chart-title" style="border-left-color:#4CAF50">Transactions per Second</div>
     <img class="chart-img" src="data:image/png;base64,{charts['tps']}" />
 </div>
-{ai_box('tps', 'Analisis - Transactions per Second', '#f97316')}
+{ai_box('tps', 'Analisis - Transactions per Second', '#4f46e5')}
 
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#6366f1">Active Threads Over Time</div>
+    <div class="chart-title" style="border-left-color:#2196F3">Active Threads Over Time</div>
     <img class="chart-img" src="data:image/png;base64,{charts['threads']}" />
 </div>
-{ai_box('activeThreads', 'Analisis - Active Threads', '#f97316')}
+{ai_box('activeThreads', 'Analisis - Active Threads', '#4f46e5')}
 
 <!-- ===== DISTRIBUCION DE CODIGOS ===== -->
 <div class="chart-section">
-    <div class="chart-title" style="border-left-color:#f59e0b">Distribucion de Response Codes</div>
+    <div class="chart-title" style="border-left-color:#ff9800">Distribucion de Response Codes</div>
     <div style="text-align:center">
         <img style="max-width:100mm;max-height:80mm" src="data:image/png;base64,{charts['pie']}" />
     </div>
 </div>
-{ai_box('errors', 'Analisis de Errores', '#f97316')}
+{ai_box('errors', 'Analisis de Errores', '#4f46e5')}
 
 <!-- ===== CONCLUSIONES Y RECOMENDACIONES ===== -->
-{ai_box('conclusions', 'Conclusiones', '#6366f1', allow_break=True)}
-{ai_box('recommendations', 'Recomendaciones', '#10b981', allow_break=True)}
+{ai_box('conclusions', 'Conclusiones', '#4f46e5', allow_break=True)}
+{ai_box('recommendations', 'Recomendaciones', '#4f46e5', allow_break=True)}
 
 <!-- ===== FOOTER ===== -->
 <div class="report-footer">
     <strong>sqa &mdash; Software Quality Assurance</strong><br>
     Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-    <span style="font-size:7pt">Powered by FastAPI + React + PostgreSQL + Gemini AI | JMeter Analyzer Pro v2.0 | Generado: {now_str}</span>
+    <span style="font-size:7pt">Generado: {now_str}</span>
 </div>
 
 </body>
@@ -868,7 +843,7 @@ def build_standalone_html(
     """
     duration_min = int(meta['duration'] // 60)
     duration_sec = int(meta['duration'] % 60)
-    now_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    now_str = datetime.now(ZoneInfo("America/Bogota")).strftime('%d/%m/%Y %H:%M:%S')
     files_list = ', '.join(meta.get('filenames', [meta['filename']]))
 
     er = meta['errorRate']
@@ -991,7 +966,7 @@ def build_standalone_html(
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Reporte Performance - {meta['name']}</title>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
+*{{margin:0;padding:0;box-sizing:border-box;text-decoration:none}}
 :root{{--navy:#0a1628;--blue:#3E5AA9;--bg:#f0f4f8;--card:#fff;--border:#e2e8f0;--success:#10b981;--warn:#f59e0b;--error:#ef4444}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:#1e293b;line-height:1.6;font-size:14px}}
 .header{{background:linear-gradient(135deg,#0a1628 0%,#1e293b 50%,#1e40af 100%);color:#fff;padding:2rem;position:relative}}
@@ -1163,8 +1138,8 @@ Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fi
 
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
-Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-<span style="font-size:.75rem">Powered by FastAPI + React + PostgreSQL + Gemini AI | JMeter Analyzer Pro v2.0 | Generado: {now_str}</span>
+sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
+<span style="font-size:.75rem">Generado: {now_str}</span>
 </div>
 
 </div>

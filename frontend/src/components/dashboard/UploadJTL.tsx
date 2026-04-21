@@ -58,6 +58,14 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   const [responseTime, setResponseTime] = useState('2000');
   const [availability, setAvailability] = useState('99.5');
 
+  // KNX-08: Unidad de medida para análisis AI
+  const [metricUnit, setMetricUnit] = useState<'TPS' | 'UVC'>('TPS');
+
+  // HF2: Criterios por transaccion (labels detectados del JTL)
+  const [transactionCriteria, setTransactionCriteria] = useState<Record<string, Record<string, string>>>({});
+  const [detectedLabels, setDetectedLabels] = useState<string[]>([]);
+  const [extractingLabels, setExtractingLabels] = useState(false);
+
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -82,17 +90,30 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
     }
   }, []);
 
+  const extractLabelsFromFile = useCallback(async (file: File) => {
+    try {
+      setExtractingLabels(true);
+      const response = await testAPI.extractJTLLabels(file);
+      setDetectedLabels(response.labels || []);
+    } catch (err) {
+      console.error('Error extracting labels:', err);
+      setDetectedLabels([]);
+    } finally {
+      setExtractingLabels(false);
+    }
+  }, []);
+
   const addFiles = useCallback((newFiles: FileList | File[]) => {
     const validFiles: File[] = [];
     for (let i = 0; i < newFiles.length; i++) {
       const f = newFiles[i];
-      if (f.name.endsWith('.jtl') || f.name.endsWith('.csv')) {
+      if (f.name.endsWith('.jtl') || f.name.endsWith('.csv') || f.name.endsWith('.xml')) {
         validFiles.push(f);
       }
     }
 
     if (validFiles.length === 0) {
-      setError('Solo se permiten archivos .jtl o .csv');
+      setError('Solo se permiten archivos .jtl, .csv o .xml');
       return;
     }
 
@@ -103,9 +124,13 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
         return prev;
       }
       setError('');
+      // Extraer labels del primer archivo
+      if (prev.length === 0 && validFiles.length > 0) {
+        extractLabelsFromFile(validFiles[0]);
+      }
       return combined;
     });
-  }, []);
+  }, [extractLabelsFromFile]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -128,7 +153,14 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   };
 
   const removeFile = (index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
+    setFiles((prev) => {
+      const updated = prev.filter((_, i) => i !== index);
+      if (updated.length === 0) {
+        setDetectedLabels([]);
+        setTransactionCriteria({});
+      }
+      return updated;
+    });
     setError('');
   };
 
@@ -193,10 +225,25 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
     setShowValidationModal(false);
 
     try {
+      // Build per_transaction from detected labels criteria (error_rate fijo 0.5%)
+      const perTransaction: Record<string, Record<string, number>> = {};
+      Object.entries(transactionCriteria).forEach(([label, vals]) => {
+        const hasValues = vals.concurrency || vals.response_time || vals.availability;
+        if (hasValues) {
+          perTransaction[label] = {
+            concurrency: Number(vals.concurrency) || parseInt(concurrency) || 100,
+            response_time: Number(vals.response_time) || parseInt(responseTime) || 2000,
+            availability: Number(vals.availability) || parseFloat(availability) || 99.5,
+            error_rate: 0.5,
+          };
+        }
+      });
+
       const acceptanceCriteria = JSON.stringify({
         concurrency: parseInt(concurrency) || 100,
         response_time: parseInt(responseTime) || 2000,
         availability: parseFloat(availability) || 99.5,
+        ...(Object.keys(perTransaction).length > 0 ? { per_transaction: perTransaction } : {}),
       });
 
       const result = await testAPI.uploadJTL(
@@ -207,7 +254,8 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
         clientName,
         project,
         acceptanceCriteria,
-        clientId
+        clientId,
+        metricUnit,
       );
       // Store AI status for toast notification on Dashboard
       if (result.ai_status) {
@@ -343,14 +391,14 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
               <input
                 type="file"
                 className="hidden"
-                accept=".jtl,.csv"
+                accept=".jtl,.csv,.xml"
                 multiple
                 onChange={handleFileChange}
               />
             </label>
 
             <p className="text-xl text-gray-500 mt-4">
-              Arrastra archivos o haz clic para seleccionar. Formatos: .jtl, .csv
+              Arrastra archivos o haz clic para seleccionar. Formatos: .jtl, .csv (Locust), .xml (WAPT)
             </p>
           </div>
 
@@ -432,6 +480,114 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
               />
             </div>
           </div>
+
+          {/* KNX-08: Selector de unidad de medida para análisis AI */}
+          <div className="mt-5">
+            <label className="text-xl font-medium text-gray-600 mb-2 block">
+              Unidad de medida en el analisis AI
+            </label>
+            <div className="flex gap-6">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="metric_unit"
+                  value="TPS"
+                  checked={metricUnit === 'TPS'}
+                  onChange={() => setMetricUnit('TPS')}
+                  className="w-5 h-5 text-[#f5a623] focus:ring-[#f5a623]"
+                />
+                <span className="text-lg text-gray-700">TPS (Transacciones por segundo)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="metric_unit"
+                  value="UVC"
+                  checked={metricUnit === 'UVC'}
+                  onChange={() => setMetricUnit('UVC')}
+                  className="w-5 h-5 text-[#f5a623] focus:ring-[#f5a623]"
+                />
+                <span className="text-lg text-gray-700">UVC (Usuarios virtuales concurrentes)</span>
+              </label>
+            </div>
+          </div>
+
+          {/* HF2: Criterios por Transaccion — labels detectados del JTL */}
+          {extractingLabels && (
+            <p className="mt-4 text-lg text-gray-400 animate-pulse">
+              Detectando transacciones del archivo...
+            </p>
+          )}
+
+          {detectedLabels.length > 0 && (
+            <details className="mt-5">
+              <summary className="cursor-pointer text-lg font-medium text-gray-600 hover:text-gray-800">
+                Criterios por Transaccion ({detectedLabels.length} transacciones detectadas)
+              </summary>
+              <div className="mt-3 space-y-3 pl-4 border-l-2 border-[#f5a623] max-h-96 overflow-y-auto">
+                {detectedLabels.map(label => (
+                  <div key={label} className="bg-white rounded-xl p-3 border border-gray-200">
+                    <h4 className="text-base font-semibold text-gray-700 mb-2">{label}</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-sm text-gray-500 block mb-1">Concurrencia Esperada</label>
+                        <input type="number" value={transactionCriteria[label]?.concurrency || ''} placeholder={`ej: ${concurrency}`}
+                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], concurrency: e.target.value } }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                      </div>
+                      <div>
+                        <label className="text-sm text-gray-500 block mb-1">Response Time (ms)</label>
+                        <input type="number" value={transactionCriteria[label]?.response_time || ''} placeholder={`ej: ${responseTime}`}
+                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], response_time: e.target.value } }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                      </div>
+                      <div>
+                        <label className="text-sm text-gray-500 block mb-1">Disponibilidad (%)</label>
+                        <input type="number" step="0.1" value={transactionCriteria[label]?.availability || ''} placeholder={`ej: ${availability}`}
+                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], availability: e.target.value } }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Boton para aplicar mismo criterio a todas */}
+                <div className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
+                  <p className="text-sm text-gray-600 mb-2">Aplicar mismo criterio a todas las transacciones:</p>
+                  <div className="grid grid-cols-4 gap-3">
+                    <input type="number" placeholder="Concurrencia" id="bulk-conc"
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                    <input type="number" placeholder="RT (ms)" id="bulk-rt"
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                    <input type="number" step="0.1" placeholder="Disp. %" id="bulk-avail"
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const concVal = (document.getElementById('bulk-conc') as HTMLInputElement)?.value || '';
+                        const rtVal = (document.getElementById('bulk-rt') as HTMLInputElement)?.value || '';
+                        const availVal = (document.getElementById('bulk-avail') as HTMLInputElement)?.value || '';
+                        const bulk: Record<string, Record<string, string>> = {};
+                        detectedLabels.forEach(label => {
+                          bulk[label] = {
+                            ...(transactionCriteria[label] || {}),
+                            ...(concVal ? { concurrency: concVal } : {}),
+                            ...(rtVal ? { response_time: rtVal } : {}),
+                            ...(availVal ? { availability: availVal } : {}),
+                          };
+                        });
+                        setTransactionCriteria(prev => ({ ...prev, ...bulk }));
+                      }}
+                      className="px-4 py-2 rounded-lg text-white text-base font-semibold"
+                      style={{ backgroundColor: '#f5a623' }}
+                    >
+                      Aplicar a todas
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          )}
         </div>
 
         {/* Error */}
