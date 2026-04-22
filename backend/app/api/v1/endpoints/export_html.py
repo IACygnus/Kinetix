@@ -23,6 +23,7 @@ from app.db.models.client import Client, UserClient
 from app.db.models.user import User
 from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
+from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
@@ -248,8 +249,12 @@ async def export_html(
         tl_timestamps = _ts_iso_list(tl)
 
         # Chart 1: Response Times por Transaccion (multi-series)
+        rt_by_label_filtered, _rt_suffix = apply_top_n_aggregation(
+            charts_data.get('response_times_by_label', []),
+            summary_df,
+        )
         rt_by_label_traces = []
-        for i, sub_df in enumerate(charts_data.get('response_times_by_label', [])):
+        for i, sub_df in enumerate(rt_by_label_filtered):
             if len(sub_df) == 0:
                 continue
             lbl = sub_df['label'].iloc[0]

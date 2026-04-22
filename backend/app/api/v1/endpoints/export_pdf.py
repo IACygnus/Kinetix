@@ -27,6 +27,7 @@ from app.config.chart_config import TEST_TYPE_LABELS
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html,
 )
+from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 
 try:
     from weasyprint import HTML
@@ -149,7 +150,13 @@ async def export_pdf(
 
         charts_b64 = {
             'rt_label': chart_multiline(
-                _build_series(charts_data.get('response_times_by_label', []), 'label'),
+                _build_series(
+                    apply_top_n_aggregation(
+                        charts_data.get('response_times_by_label', []),
+                        summary_df,
+                    )[0],
+                    'label',
+                ),
                 'Response Time (ms)',
             ),
             'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),

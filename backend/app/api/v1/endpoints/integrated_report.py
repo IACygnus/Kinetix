@@ -27,6 +27,7 @@ from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html,
 )
+from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 import pandas as pd
 import json as _json_hf10h
@@ -107,7 +108,16 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession) -> str:
         tl_timestamps = _ts_list(tl)
 
         charts_b64 = {
-            'rt_label': chart_multiline(_build_series(charts_data.get('response_times_by_label', []), 'label'), 'Response Time (ms)'),
+            'rt_label': chart_multiline(
+                _build_series(
+                    apply_top_n_aggregation(
+                        charts_data.get('response_times_by_label', []),
+                        summary_df,
+                    )[0],
+                    'label',
+                ),
+                'Response Time (ms)',
+            ),
             'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),
             'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
             'latency': chart_area(tl_timestamps, [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else [], '#8b5cf6', 'Latencia (ms)'),
@@ -839,8 +849,12 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
         # Build Plotly traces
         tl_timestamps = _ts_iso_list(tl)
 
+        _rt_integrated_filtered, _rt_int_suffix = apply_top_n_aggregation(
+            charts_data.get('response_times_by_label', []),
+            summary_df,
+        )
         rt_by_label_traces = []
-        for i, sub_df in enumerate(charts_data.get('response_times_by_label', [])):
+        for i, sub_df in enumerate(_rt_integrated_filtered):
             if len(sub_df) == 0:
                 continue
             lbl = sub_df['label'].iloc[0]
