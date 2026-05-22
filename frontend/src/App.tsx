@@ -19,6 +19,7 @@ import AssignmentsPage from './components/clients/AssignmentsPage';
 import AIConfigPage from './components/admin/AIConfigPage';
 import Profile from './components/profile/Profile';
 import ScriptDesigner from './pages/ScriptDesigner';
+import AIScriptDesigner from './pages/AIScriptDesigner';
 import ExecutionDashboard from './pages/ExecutionDashboard';
 import ReportView from './pages/ReportView';
 import MonitoringPage from './pages/MonitoringPage';
@@ -147,6 +148,16 @@ function App() {
               element={
                 <ProtectedRoute roles={['admin', 'analyst']}>
                   <ScriptDesigner />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* AI Script Designer */}
+            <Route
+              path="/ai-script-designer"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AIScriptDesigner />
                 </ProtectedRoute>
               }
             />

@@ -26,6 +26,7 @@ import {
   Monitor,
   Search,
   GitCompare,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -69,6 +70,12 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Editor',
           path: '/script-designer',
           icon: <PenTool className="w-6 h-6" />,
+        },
+        {
+          label: 'Diseñador IA',
+          path: '/ai-script-designer',
+          icon: <Sparkles className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
         },
         {
           label: 'Guardados',
@@ -176,7 +183,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     const performanceActive = location.pathname.startsWith('/performance');
     const monitoringActive = location.pathname.startsWith('/monitoring');
     const adminActive = location.pathname.startsWith('/admin') || location.pathname.startsWith('/users');
-    const designActive = location.pathname.startsWith('/script-designer');
+    const designActive =
+      location.pathname.startsWith('/script-designer') ||
+      location.pathname.startsWith('/ai-script-designer');
     setExpandedMenus((prev) => ({
       ...prev,
       ...(performanceActive ? { 'Análisis': true } : {}),

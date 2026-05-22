@@ -43,8 +43,12 @@ OPENAI_MAX_TOKENS = {
     "gpt-4-turbo": 4096,
     "gpt-4o": 16384,
     "gpt-4o-mini": 16384,
-    "gpt-4.1": 16384,
+    "gpt-4.1": 32768,
     "gpt-4.1-mini": 16384,
+    "gpt-4.1-nano": 8192,
+    "gpt-5-mini": 16384,
+    "gpt-5-nano": 8192,
+    "o4-mini": 16384,
 }
 OPENAI_DEFAULT_MAX_TOKENS = 4096
 

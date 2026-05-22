@@ -25,6 +25,7 @@ from app.api.v1.endpoints import attachments
 from app.api.v1.endpoints import compare
 from app.api.v1.endpoints import analysis_ai
 from app.api.v1.endpoints import integrated_report
+from app.api.v1.endpoints.script_ai import router as script_ai_router
 
 api_router = APIRouter()
 
@@ -83,3 +84,6 @@ api_router.include_router(analysis_ai.router, prefix="/executions", tags=["AI An
 
 # Sprint R3-B — Integrated report with drag-and-drop
 api_router.include_router(integrated_report.router, prefix="/reports", tags=["Reports"])
+
+# AI Script Designer — JMX generation via OpenAI/Gemini (conversational)
+api_router.include_router(script_ai_router, prefix="/script-designer/ai", tags=["Script Designer AI"])
