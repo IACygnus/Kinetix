@@ -27,6 +27,7 @@ import {
   Search,
   GitCompare,
   Sparkles,
+  Code,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -78,6 +79,18 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           roles: ['admin', 'analyst'],
         },
         {
+          label: 'Mis Diseños IA',
+          path: '/ai-script-designer/history',
+          icon: <ClipboardList className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
+          label: 'Editor IA',
+          path: '/ai-script-editor',
+          icon: <Code className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
           label: 'Guardados',
           path: '/script-designer/history',
           icon: <ClipboardList className="w-6 h-6" />,
@@ -118,6 +131,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Informe Integrado',
           path: '/performance/integrated',
           icon: <GitCompare className="w-6 h-6" />,
+        },
+        {
+          label: 'Historial Integrado',
+          path: '/performance/integrated/history',
+          icon: <ClipboardList className="w-6 h-6" />,
         },
         {
           label: 'Historial',

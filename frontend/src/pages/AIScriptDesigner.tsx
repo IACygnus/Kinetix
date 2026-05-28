@@ -4,6 +4,8 @@
  * Right panel: live JMX preview + validation + download.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
 import {
   Sparkles,
@@ -19,7 +21,19 @@ import {
   Paperclip,
   FileText,
   X,
+  Save,
+  Users,
+  AlertCircle,
+  MessageSquare,
+  Code,
 } from 'lucide-react';
+import {
+  aiScriptDesignsAPI,
+  clientsAPI,
+  AIConversationMessage,
+  AIDesignReferenceFileType,
+  AIScriptDesignDetail,
+} from '../services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
@@ -65,7 +79,7 @@ interface AIResponse {
   file_name?: string | null;
 }
 
-const MAX_UPLOAD_BYTES = 500 * 1024; // matches backend MAX_FILE_BYTES
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB — matches backend MAX_FILE_BYTES (Sprint 2.4-HF3)
 const ACCEPT_UPLOAD = '.json,.yaml,.yml,.txt,.postman_collection,application/json,text/yaml,text/plain';
 
 const EXAMPLE_PROMPT =
@@ -85,6 +99,44 @@ export default function AIScriptDesigner() {
   // Persisted file context — sent on /refine so the AI keeps the reference
   const [refFileName, setRefFileName] = useState<string | null>(null);
   const [refFileContent, setRefFileContent] = useState<string | null>(null);
+  const [refFileType, setRefFileType] = useState<AIDesignReferenceFileType | null>(null);
+
+  // === Persistencia de diseño ===
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const designIdFromUrl = searchParams.get('designId');
+  const fromEditor = searchParams.get('fromEditor') === 'true';
+
+  // session_id estable durante toda la vida del componente
+  const sessionIdRef = useRef<string>(uuidv4());
+
+  const [designId, setDesignId] = useState<string | null>(designIdFromUrl);
+  const [designName, setDesignName] = useState<string | null>(null);
+  const [isDraft, setIsDraft] = useState<boolean>(true);
+
+  // Cliente seleccionado (obligatorio para entrar al diseñador)
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [clientsList, setClientsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [showClientModal, setShowClientModal] = useState<boolean>(false);
+
+  // Sprint 1.5 — Modal "Continuar?" + cambio de cliente
+  const [showContinueModal, setShowContinueModal] = useState<boolean>(false);
+  const [pendingDraft, setPendingDraft] = useState<AIScriptDesignDetail | null>(null);
+  const [, setCheckingLastDraft] = useState<boolean>(false);
+  const [showChangeClientModal, setShowChangeClientModal] = useState<boolean>(false);
+
+  // Auto-save state
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Save-as modal
+  const [showSaveAsModal, setShowSaveAsModal] = useState<boolean>(false);
+  const [saveAsName, setSaveAsName] = useState<string>('');
+  const [isSavingAs, setIsSavingAs] = useState<boolean>(false);
+
+  // Indicador "hace X segundos"
+  const [savedAgoLabel, setSavedAgoLabel] = useState<string>('');
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +145,137 @@ export default function AIScriptDesigner() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
+  // Cargar lista de clientes asignados al usuario actual
+  useEffect(() => {
+    const loadClients = async () => {
+      try {
+        const data = await clientsAPI.getMyClients();
+        setClientsList(data.map((c) => ({ id: c.id, name: c.name })));
+      } catch (e) {
+        console.error('Error cargando clientes', e);
+      }
+    };
+    loadClients();
+  }, []);
+
+  // Sprint 1.5 — Al entrar sin designId, chequear si hay borrador previo.
+  // Si sí → modal "Continuar?". Si no → modal Cliente.
+  useEffect(() => {
+    if (designIdFromUrl) return;       // hidratación toma el control
+    if (selectedClientId) return;      // ya seleccionado en runtime
+    let cancelled = false;
+
+    const checkDraft = async () => {
+      setCheckingLastDraft(true);
+      try {
+        const draft = await aiScriptDesignsAPI.getLastDraft();
+        if (cancelled) return;
+        if (draft && draft.id) {
+          setPendingDraft(draft);
+          setShowContinueModal(true);
+        } else {
+          setShowClientModal(true);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.error('Error chequeando último borrador', e);
+        setShowClientModal(true);
+      } finally {
+        if (!cancelled) setCheckingLastDraft(false);
+      }
+    };
+    checkDraft();
+    return () => {
+      cancelled = true;
+    };
+  }, [designIdFromUrl, selectedClientId]);
+
+  // Hidratar desde ?designId=xxx si viene en la URL
+  useEffect(() => {
+    if (!designIdFromUrl) return;
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const detail = await aiScriptDesignsAPI.getById(designIdFromUrl);
+        if (cancelled) return;
+
+        sessionIdRef.current = detail.session_id;
+        setDesignId(detail.id);
+        setDesignName(detail.name);
+        setIsDraft(detail.is_draft);
+        setSelectedClientId(detail.client_id);
+
+        if (detail.conversation && Array.isArray(detail.conversation)) {
+          // Filtrar a la forma esperada por ChatMessage local
+          const restored: ChatMessage[] = detail.conversation
+            .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+          setMessages(restored);
+        }
+
+        if (detail.current_jmx) {
+          setCurrentJmx(detail.current_jmx);
+          // Validar el JMX hidratado en background
+          try {
+            const v = await aiApi.post<{
+              is_valid: boolean;
+              components: ComponentInfo[];
+              errors: string[];
+            }>('/validate', { jmx_content: detail.current_jmx });
+            if (!cancelled) {
+              setIsValid(v.data.is_valid);
+              setComponents(v.data.components || []);
+            }
+          } catch {
+            /* validación silenciosa */
+          }
+        }
+
+        if (detail.reference_file_name) {
+          setRefFileName(detail.reference_file_name);
+          setRefFileContent(detail.reference_file_content);
+          setRefFileType(detail.reference_file_type);
+        }
+
+        setLastSavedAt(new Date(detail.updated_at));
+
+        // Sprint 2.4-HF4: si viene del Editor IA, pre-poblar el input.
+        if (fromEditor && !cancelled) {
+          setInput('Vengo del Editor IA. Quiero que ajustes lo siguiente del JMX: ');
+        }
+      } catch (e) {
+        const detailMsg =
+          (axios.isAxiosError(e) && (e.response?.data?.detail || e.message)) ||
+          (e instanceof Error ? e.message : 'Error desconocido');
+        console.error('Error hidratando diseño', e);
+        setSaveError('No se pudo cargar el diseño: ' + String(detailMsg));
+      }
+    };
+    hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [designIdFromUrl]);
+
+  // Indicador "Guardado hace Xs" — refresca cada 10s
+  useEffect(() => {
+    const update = () => {
+      if (!lastSavedAt) {
+        setSavedAgoLabel('');
+        return;
+      }
+      const diff = Math.floor((Date.now() - lastSavedAt.getTime()) / 1000);
+      if (diff < 5) setSavedAgoLabel('Guardado hace un momento');
+      else if (diff < 60) setSavedAgoLabel(`Guardado hace ${diff}s`);
+      else if (diff < 3600) setSavedAgoLabel(`Guardado hace ${Math.floor(diff / 60)}min`);
+      else setSavedAgoLabel(`Guardado hace ${Math.floor(diff / 3600)}h`);
+    };
+    update();
+    const interval = setInterval(update, 10000);
+    return () => clearInterval(interval);
+  }, [lastSavedAt]);
+
   const applyAIResponse = (data: AIResponse) => {
     if (data.jmx_content) setCurrentJmx(data.jmx_content);
     setIsValid(data.is_valid);
@@ -100,6 +283,145 @@ export default function AIScriptDesigner() {
     setError(data.error);
     if (data.file_content) setRefFileContent(data.file_content);
     if (data.file_name) setRefFileName(data.file_name);
+    if (data.file_kind) setRefFileType(data.file_kind as AIDesignReferenceFileType);
+  };
+
+  // === Auto-save / Save As ===
+
+  const performAutoSave = async (overrides?: {
+    conversation?: AIConversationMessage[];
+    current_jmx?: string | null;
+    reference_file_name?: string | null;
+    reference_file_content?: string | null;
+    reference_file_type?: AIDesignReferenceFileType | null;
+  }) => {
+    if (!selectedClientId) return; // sin cliente no hay auto-save
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const convPayload: AIConversationMessage[] =
+        overrides?.conversation ??
+        messages.map((m) => ({ role: m.role, content: m.content }));
+
+      const payload = {
+        session_id: sessionIdRef.current,
+        client_id: selectedClientId,
+        conversation: convPayload,
+        current_jmx: overrides?.current_jmx ?? (currentJmx || null),
+        reference_file_name: overrides?.reference_file_name ?? refFileName,
+        reference_file_content: overrides?.reference_file_content ?? refFileContent,
+        reference_file_type: overrides?.reference_file_type ?? refFileType,
+      };
+
+      const saved = await aiScriptDesignsAPI.upsert(payload);
+      setDesignId(saved.id);
+      setIsDraft(saved.is_draft);
+      if (saved.name) setDesignName(saved.name);
+      setLastSavedAt(new Date());
+    } catch (e) {
+      const detailMsg =
+        (axios.isAxiosError(e) && (e.response?.data?.detail || e.message)) ||
+        (e instanceof Error ? e.message : 'Error al auto-guardar');
+      setSaveError(String(detailMsg));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveAs = async () => {
+    if (!designId) {
+      setSaveError('Debes generar al menos un mensaje antes de guardar.');
+      return;
+    }
+    const trimmed = saveAsName.trim();
+    if (!trimmed) {
+      setSaveError('El nombre no puede estar vacío.');
+      return;
+    }
+    setIsSavingAs(true);
+    setSaveError(null);
+    try {
+      const saved = await aiScriptDesignsAPI.saveAs(designId, { name: trimmed });
+      setDesignName(saved.name);
+      setIsDraft(saved.is_draft);
+      setLastSavedAt(new Date());
+      setShowSaveAsModal(false);
+      setSaveAsName('');
+    } catch (e) {
+      const detailMsg =
+        (axios.isAxiosError(e) && (e.response?.data?.detail || e.message)) ||
+        (e instanceof Error ? e.message : 'Error al guardar el diseño');
+      setSaveError(String(detailMsg));
+    } finally {
+      setIsSavingAs(false);
+    }
+  };
+
+  // Sprint 1.5 — Continuar borrador previo / Empezar nuevo
+
+  const handleContinueDraft = () => {
+    if (!pendingDraft) return;
+
+    // Hidratar el state como si viniera de ?designId=
+    sessionIdRef.current = pendingDraft.session_id;
+    setDesignId(pendingDraft.id);
+    setDesignName(pendingDraft.name);
+    setIsDraft(pendingDraft.is_draft);
+    setSelectedClientId(pendingDraft.client_id);
+
+    if (Array.isArray(pendingDraft.conversation)) {
+      const restored: ChatMessage[] = pendingDraft.conversation
+        .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
+        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+      setMessages(restored);
+    }
+
+    if (pendingDraft.current_jmx) {
+      setCurrentJmx(pendingDraft.current_jmx);
+      // Validar en background para reconstruir is_valid + components
+      void (async () => {
+        try {
+          const v = await aiApi.post<{
+            is_valid: boolean;
+            components: ComponentInfo[];
+            errors: string[];
+          }>('/validate', { jmx_content: pendingDraft.current_jmx });
+          setIsValid(v.data.is_valid);
+          setComponents(v.data.components || []);
+        } catch {
+          /* validación silenciosa */
+        }
+      })();
+    }
+
+    if (pendingDraft.reference_file_name) {
+      setRefFileName(pendingDraft.reference_file_name);
+      setRefFileContent(pendingDraft.reference_file_content);
+      setRefFileType(pendingDraft.reference_file_type);
+    }
+
+    setLastSavedAt(new Date(pendingDraft.updated_at));
+    setShowContinueModal(false);
+    setPendingDraft(null);
+  };
+
+  const handleStartNew = () => {
+    setShowContinueModal(false);
+    setPendingDraft(null);
+    setShowClientModal(true);
+  };
+
+  const handleChangeClient = (newClientId: string) => {
+    if (!newClientId || newClientId === selectedClientId) {
+      setShowChangeClientModal(false);
+      return;
+    }
+    setSelectedClientId(newClientId);
+    setShowChangeClientModal(false);
+    // Si ya hay un diseño en curso, forzar guardado con el nuevo cliente
+    if (designId) {
+      void performAutoSave();
+    }
   };
 
   const handlePickFile = () => {
@@ -127,6 +449,7 @@ export default function AIScriptDesigner() {
   const removeReferenceFile = () => {
     setRefFileName(null);
     setRefFileContent(null);
+    setRefFileType(null);
   };
 
   const sendPrompt = async () => {
@@ -173,7 +496,7 @@ export default function AIScriptDesigner() {
       }
 
       applyAIResponse(data);
-      setMessages([
+      const finalMessages: ChatMessage[] = [
         ...nextHistory,
         {
           role: 'assistant',
@@ -181,7 +504,17 @@ export default function AIScriptDesigner() {
             data.explanation ||
             (data.jmx_content ? 'JMX generado correctamente.' : 'Sin respuesta del modelo.'),
         },
-      ]);
+      ];
+      setMessages(finalMessages);
+
+      // Auto-save tras turno exitoso (incluye estado fresco del JMX y archivo)
+      void performAutoSave({
+        conversation: finalMessages.map((m) => ({ role: m.role, content: m.content })),
+        current_jmx: data.jmx_content || currentJmx || null,
+        reference_file_name: data.file_name ?? refFileName,
+        reference_file_content: data.file_content ?? refFileContent,
+        reference_file_type: (data.file_kind as AIDesignReferenceFileType | null | undefined) ?? refFileType,
+      });
     } catch (err) {
       const detail =
         (axios.isAxiosError(err) && (err.response?.data?.detail || err.message)) ||
@@ -207,6 +540,16 @@ export default function AIScriptDesigner() {
     setPendingFile(null);
     setRefFileName(null);
     setRefFileContent(null);
+    setRefFileType(null);
+
+    // Resetear estado de persistencia: nuevo session_id, sin designId
+    sessionIdRef.current = uuidv4();
+    setDesignId(null);
+    setDesignName(null);
+    setIsDraft(true);
+    setLastSavedAt(null);
+    setSavedAgoLabel('');
+    setSaveError(null);
   };
 
   const handleDownload = async () => {
@@ -263,15 +606,85 @@ export default function AIScriptDesigner() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleNewConversation}
-          disabled={isLoading || (messages.length === 0 && !currentJmx)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RefreshCcw className="w-4 h-4" />
-          Nueva conversación
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Badge de cliente clickeable */}
+          {selectedClientId && (
+            <button
+              type="button"
+              onClick={() => setShowChangeClientModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-md hover:bg-indigo-100 border border-indigo-200 transition"
+              title="Cambiar cliente"
+            >
+              <Users className="w-4 h-4" />
+              {clientsList.find((c) => c.id === selectedClientId)?.name || 'Cliente'}
+            </button>
+          )}
+
+          {/* Indicador de auto-save */}
+          <div className="flex items-center gap-2 text-sm">
+            {isSaving ? (
+              <span className="flex items-center gap-1 text-gray-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Guardando...
+              </span>
+            ) : saveError ? (
+              <span className="flex items-center gap-1 text-red-600" title={saveError}>
+                <AlertCircle className="w-4 h-4" />
+                Error al guardar
+              </span>
+            ) : savedAgoLabel ? (
+              <span className="flex items-center gap-1 text-green-600">
+                <CheckCircle2 className="w-4 h-4" />
+                {savedAgoLabel}
+              </span>
+            ) : null}
+          </div>
+
+          {/* Badge "Borrador" o nombre del diseño */}
+          {designName ? (
+            <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-sm rounded-md font-medium">
+              {designName}
+            </span>
+          ) : isDraft && designId ? (
+            <span className="px-3 py-1 bg-gray-100 text-gray-600 text-sm rounded-md">
+              Borrador
+            </span>
+          ) : null}
+
+          {/* Botón Abrir en Editor IA */}
+          <button
+            type="button"
+            onClick={() => designId && navigate(`/ai-script-designer/editor/${designId}`)}
+            disabled={!designId || !currentJmx}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={!designId ? 'Guarda el diseño primero' : !currentJmx ? 'Genera un JMX primero' : 'Abrir en Editor IA'}
+          >
+            <Code className="w-4 h-4" />
+            Abrir en Editor IA
+          </button>
+
+          {/* Botón Guardar como */}
+          <button
+            type="button"
+            onClick={() => setShowSaveAsModal(true)}
+            disabled={!designId}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={!designId ? 'Genera al menos un mensaje antes de guardar' : 'Guardar diseño con nombre'}
+          >
+            <Save className="w-4 h-4" />
+            Guardar como…
+          </button>
+
+          <button
+            type="button"
+            onClick={handleNewConversation}
+            disabled={isLoading || (messages.length === 0 && !currentJmx)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCcw className="w-4 h-4" />
+            Nueva conversación
+          </button>
+        </div>
       </div>
 
       {/* Two-pane layout */}
@@ -279,6 +692,11 @@ export default function AIScriptDesigner() {
         {/* Left — Chat (40%) */}
         <div className="w-2/5 flex flex-col border-r border-gray-200 bg-white">
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {fromEditor && (
+              <div className="p-2 bg-indigo-50 border border-indigo-200 rounded text-xs text-indigo-700">
+                <strong>Desde Editor IA:</strong> el chat ya tiene cargado el JMX actual. Describe qué ajuste necesitas.
+              </div>
+            )}
             {messages.length === 0 && (
               <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-gray-500">
                 <Bot className="w-10 h-10 mx-auto mb-2 text-indigo-500" />
@@ -414,6 +832,8 @@ export default function AIScriptDesigner() {
                   <Paperclip className="w-4 h-4" />
                   Adjuntar archivo
                 </button>
+                <span className="text-xs text-gray-400">Máx. 5 MB</span>
+                <span className="text-xs text-gray-400">·</span>
                 <span className="text-xs text-gray-400">Ctrl+Enter para enviar</span>
               </div>
               <button
@@ -527,6 +947,201 @@ export default function AIScriptDesigner() {
           </div>
         </div>
       </div>
+
+      {/* Modal de selección de cliente (bloqueante) */}
+      {showClientModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Selecciona un cliente</h3>
+                <p className="text-sm text-gray-600">
+                  Todo diseño debe asociarse a un cliente antes de comenzar.
+                </p>
+              </div>
+            </div>
+
+            <select
+              value={selectedClientId || ''}
+              onChange={(e) => setSelectedClientId(e.target.value || null)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-4 focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">-- Selecciona un cliente --</option>
+              {clientsList.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedClientId) setShowClientModal(false);
+                }}
+                disabled={!selectedClientId}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal "Guardar como..." */}
+      {showSaveAsModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Save className="w-6 h-6 text-indigo-600" />
+              <h3 className="text-lg font-semibold text-gray-900">Guardar diseño</h3>
+            </div>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nombre del diseño
+            </label>
+            <input
+              type="text"
+              value={saveAsName}
+              onChange={(e) => setSaveAsName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveAs();
+              }}
+              autoFocus
+              placeholder="Ej. Login API – carga 50 usuarios"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-4 focus:ring-2 focus:ring-indigo-500"
+            />
+
+            {saveError && (
+              <p className="text-sm text-red-600 mb-3">{saveError}</p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSaveAsModal(false);
+                  setSaveAsName('');
+                  setSaveError(null);
+                }}
+                disabled={isSavingAs}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAs}
+                disabled={isSavingAs || !saveAsName.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {isSavingAs && <Loader2 className="w-4 h-4 animate-spin" />}
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sprint 1.5 — Modal "¿Continuar diseño anterior?" */}
+      {showContinueModal && pendingDraft && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Continuar diseño anterior?</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Tienes un borrador en curso. ¿Quieres retomarlo o empezar uno nuevo?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-4 text-sm">
+              <div className="flex items-center gap-2 text-gray-700 mb-1">
+                <MessageSquare className="w-4 h-4 text-gray-500" />
+                <span>
+                  {Array.isArray(pendingDraft.conversation) ? pendingDraft.conversation.length : 0} mensaje(s)
+                </span>
+              </div>
+              {pendingDraft.current_jmx && (
+                <div className="flex items-center gap-2 text-gray-700 mb-1">
+                  <FileCode className="w-4 h-4 text-gray-500" />
+                  <span>JMX en curso</span>
+                </div>
+              )}
+              {pendingDraft.reference_file_name && (
+                <div className="flex items-center gap-2 text-gray-700">
+                  <FileText className="w-4 h-4 text-gray-500" />
+                  <span className="truncate">{pendingDraft.reference_file_name}</span>
+                </div>
+              )}
+              <div className="text-xs text-gray-500 mt-2">
+                Última actividad: {new Date(pendingDraft.updated_at).toLocaleString('es-CO')}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleStartNew}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Empezar nuevo
+              </button>
+              <button
+                type="button"
+                onClick={handleContinueDraft}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sprint 1.5 — Modal de cambio de cliente */}
+      {showChangeClientModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Users className="w-6 h-6 text-indigo-600" />
+              <h3 className="text-lg font-semibold text-gray-900">Cambiar cliente</h3>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-3">
+              Cambiar el cliente NO descarta tu conversación. El diseño actual queda asociado al
+              nuevo cliente en el próximo guardado.
+            </p>
+
+            <select
+              value={selectedClientId || ''}
+              onChange={(e) => handleChangeClient(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-4 focus:ring-2 focus:ring-indigo-500"
+            >
+              {clientsList.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowChangeClientModal(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

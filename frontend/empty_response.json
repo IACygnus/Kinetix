@@ -1,0 +1,1 @@
+{"detail":[{"type":"string_too_short","loc":["body","jmx_text"],"msg":"String should have at least 10 characters","input":"","ctx":{"min_length":10},"url":"https://errors.pydantic.dev/2.5/v/string_too_short"}]}

@@ -26,6 +26,7 @@ from app.api.v1.endpoints import compare
 from app.api.v1.endpoints import analysis_ai
 from app.api.v1.endpoints import integrated_report
 from app.api.v1.endpoints.script_ai import router as script_ai_router
+from app.api.v1.endpoints import ai_design_data_files
 
 api_router = APIRouter()
 
@@ -87,3 +88,10 @@ api_router.include_router(integrated_report.router, prefix="/reports", tags=["Re
 
 # AI Script Designer — JMX generation via OpenAI/Gemini (conversational)
 api_router.include_router(script_ai_router, prefix="/script-designer/ai", tags=["Script Designer AI"])
+
+# Sprint 2.4-HF2 — Data Files asociados a disenos AI
+api_router.include_router(
+    ai_design_data_files.router,
+    prefix="/script-designer/ai",
+    tags=["AI Design Data Files"],
+)

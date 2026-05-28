@@ -19,20 +19,32 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from typing import List, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_role
+from app.db.models.ai_script_design import AIScriptDesign
 from app.db.models.user import User
 from app.db.session import get_db
+from app.schemas.ai_script_design import (
+    AIScriptDesignDetail,
+    AIScriptDesignSaveAs,
+    AIScriptDesignSummary,
+    AIScriptDesignUpsert,
+)
+from app.schemas.ai_script_structure import AIScriptStructure
 from app.services.ai.gemini import load_ai_config_from_db
+from app.services.engine.jmx_to_structure import parse_jmx_to_structure
+from app.services.engine.structure_to_jmx import regenerate_jmx_from_structure
 
 # Max bytes of an uploaded reference file (Postman / Swagger / text).
 # Anything bigger gets truncated to keep OpenAI token usage bounded.
-MAX_FILE_BYTES = 500 * 1024  # 500 KB
+MAX_FILE_BYTES = 5 * 1024 * 1024  # 5 MB (subido desde 500 KB en Sprint 2.4-HF3)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,6 +58,129 @@ experiencia disenando pruebas de carga empresariales.
 
 Tu tarea es generar scripts JMeter (JMX) COMPLETOS y PROFESIONALES
 listos para ejecucion.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLA DE ORO #1 — BODY DE PETICIONES POST/PUT (CRITICA)
+═══════════════════════════════════════════════════════════════════════════════
+
+CUANDO un HTTPSamplerProxy tenga body JSON/XML/raw:
+
+CORRECTO: el body va DENTRO del <HTTPSamplerProxy> con postBodyRaw=true:
+```xml
+<HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="..." enabled="true">
+  <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+    <collectionProp name="Arguments.arguments">
+      <elementProp name="" elementType="HTTPArgument">
+        <boolProp name="HTTPArgument.always_encode">false</boolProp>
+        <stringProp name="Argument.value">{"key":"value"}</stringProp>
+        <stringProp name="Argument.metadata">=</stringProp>
+      </elementProp>
+    </collectionProp>
+  </elementProp>
+  <stringProp name="HTTPSampler.domain">${host}</stringProp>
+  <stringProp name="HTTPSampler.path">/api/resource</stringProp>
+  <stringProp name="HTTPSampler.method">POST</stringProp>
+  <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+</HTTPSamplerProxy>
+<hashTree>
+  <HeaderManager>...</HeaderManager>
+  <hashTree/>
+  <ResponseAssertion>...</ResponseAssertion>
+  <hashTree/>
+</hashTree>
+```
+
+PROHIBIDO: NUNCA pongas el body como `<stringProp name="HTTPSampler.postBodyRaw">` o `<elementProp name="HTTPsampler.Arguments">` SUELTOS en el hashTree fuera del sampler. Eso produce JMX malformado que el editor visual y el motor de JMeter no pueden procesar correctamente.
+
+Si necesitas body raw (JSON, XML, texto):
+- Pon postBodyRaw=true DENTRO del sampler.
+- Pon el JSON real DENTRO de la collectionProp Arguments.arguments del MISMO sampler.
+- El hashTree post-sampler SOLO debe tener: HeaderManager, ResponseAssertion, Extractors, Timers. Nunca props del sampler ni args.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLA DE ORO #2 — TODA VARIABLE REFERENCIADA DEBE ESTAR DEFINIDA (CRITICA)
+═══════════════════════════════════════════════════════════════════════════════
+
+SI tu Test Plan referencia ${variable_nombre} en cualquier campo (URL, header, body, path, etc.), DEBE estar definida en uno de estos lugares:
+
+- `<Arguments testname="User Defined Variables">` SEPARADO como elemento HERMANO del TestPlan dentro del hashTree principal (NO uses el slot inline `TestPlan.user_defined_variables` — debe ser un bloque Arguments propio), O
+- `<CSVDataSet>` que lea esa variable de un archivo .csv, O
+- Un Extractor (RegexExtractor, JSONPostProcessor) que la genere de una respuesta previa.
+
+EJEMPLO CORRECTO de UDV hermano del TestPlan:
+```xml
+<TestPlan ...>
+  <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+    <collectionProp name="Arguments.arguments"/>
+  </elementProp>
+  ...
+</TestPlan>
+<hashTree>
+  <Arguments guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+    <collectionProp name="Arguments.arguments">
+      <elementProp name="host" elementType="Argument">
+        <stringProp name="Argument.name">host</stringProp>
+        <stringProp name="Argument.value">api.example.com</stringProp>
+        <stringProp name="Argument.metadata">=</stringProp>
+      </elementProp>
+      <elementProp name="scheme" elementType="Argument">
+        <stringProp name="Argument.name">scheme</stringProp>
+        <stringProp name="Argument.value">https</stringProp>
+        <stringProp name="Argument.metadata">=</stringProp>
+      </elementProp>
+    </collectionProp>
+  </Arguments>
+  <hashTree/>
+  <!-- siguen HTTP Defaults, Cookie/Cache Manager, CSV, ThreadGroup -->
+```
+
+NOTA CRITICA: el `TestPlan.user_defined_variables` inline DEBE quedar VACIO (collectionProp sin elementProps). Las variables van SIEMPRE en el bloque `<Arguments>` hermano siguiente.
+
+EJEMPLOS de variables que SIEMPRE debes definir si las usas:
+- ${host}, ${port}, ${scheme} -> UDV con valores reales (ej. host=restful-booker.herokuapp.com, scheme=https, port=443).
+- ${token} -> Extractor del response de Auth (RegexExtractor con regex "token":"([^"]+)").
+- ${bookingid}, ${userid} -> Extractor del response de Create.
+- ${firstname}, ${lastname}, ${totalprice} -> CSVDataSet con variableNames="firstname,lastname,totalprice" Y filename que apunte a un .csv.
+
+NUNCA dejes variables huerfanas como ${host}, ${port}, ${firstname}, ${totalprice} sin estar definidas en algun lado. El editor las marca como "Variables sin definir" y el script falla en runtime.
+
+═══════════════════════════════════════════════════════════════════════════════
+FUNCIONES JMETER HELPER (USALAS PARA DATOS DINAMICOS)
+═══════════════════════════════════════════════════════════════════════════════
+
+Cuando el usuario pida datos dinamicos (timestamps, IDs unicos, valores aleatorios), PREFIERE estas funciones nativas en lugar de hard-codear:
+
+ALEATORIOS:
+- ${__Random(min,max)}              -> entero aleatorio entre min y max
+- ${__RandomString(length,chars)}   -> string aleatorio
+- ${__UUID()}                       -> UUID v4
+
+FECHAS:
+- ${__time(yyyy-MM-dd)}             -> fecha actual
+- ${__time(yyyy-MM-dd HH:mm:ss)}    -> timestamp completo
+- ${__timeShift(yyyy-MM-dd,,P1D,)}  -> fecha + 1 dia
+- ${__timeShift(yyyy-MM-dd,,-P7D,)} -> fecha - 7 dias
+- ${__RandomDate(yyyy-MM-dd,,2030-12-31,)} -> fecha aleatoria entre hoy y limite
+- ${__dateTimeConvert(${var},yyyy-MM-dd,dd/MM/yyyy)} -> convertir formato
+
+CONTADORES:
+- ${__counter(FALSE,)}              -> contador global
+- ${__counter(TRUE,)}               -> contador por usuario
+- ${__intSum(${a},${b})}            -> suma entera
+
+HILOS Y ENTORNO:
+- ${__threadNum}                    -> numero de hilo virtual
+- ${__machineName()}                -> host de la maquina
+- ${__machineIP()}                  -> IP de la maquina
+- ${__P(prop_name,default_value)}   -> propiedad JMeter desde linea de comando
+
+VARIABLES Y URL:
+- ${__V(var_${num})}                -> interpolar variable con nombre dinamico
+- ${__urlencode(${text})}           -> URL-encode
+
+USA estas funciones en vez de poner valores fijos cuando aplica. Por ejemplo, en lugar de "checkin": "2024-12-11" usa "checkin": "${__time(yyyy-MM-dd)}", o un UUID en vez de un ID fijo.
+
+═══════════════════════════════════════════════════════════════════════════════
 
 ## ESTRUCTURA OBLIGATORIA DEL JMX
 
@@ -864,3 +999,289 @@ async def download_jmx(
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# =========================================================================
+# AI Script Design — Persistencia de sesiones
+# =========================================================================
+
+
+def _is_admin(user: User) -> bool:
+    return str(getattr(user, "role", "")).lower() == "admin"
+
+
+def _to_summary(design: AIScriptDesign) -> dict:
+    """Convierte un AIScriptDesign a dict resumen (sin conversacion ni JMX completos)."""
+    conv = design.conversation or []
+    return {
+        "id": design.id,
+        "session_id": design.session_id,
+        "name": design.name,
+        "client_id": design.client_id,
+        "user_id": design.user_id,
+        "is_draft": design.is_draft,
+        "message_count": len(conv) if isinstance(conv, list) else 0,
+        "has_jmx": bool(design.current_jmx),
+        "reference_file_name": design.reference_file_name,
+        "reference_file_type": design.reference_file_type,
+        "created_at": design.created_at,
+        "updated_at": design.updated_at,
+    }
+
+
+@router.get("/designs", response_model=List[AIScriptDesignSummary])
+async def list_ai_designs(
+    client_id: Optional[UUID] = Query(None),
+    include_drafts: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """List AI designs for the current user.
+
+    Admin sees every design; analyst only their own. Filter by ``client_id``
+    if provided. Drafts are excluded by default (``include_drafts=true`` to
+    include them).
+    """
+    stmt = select(AIScriptDesign)
+
+    if not _is_admin(current_user):
+        stmt = stmt.where(AIScriptDesign.user_id == current_user.id)
+
+    if client_id is not None:
+        stmt = stmt.where(AIScriptDesign.client_id == client_id)
+
+    if not include_drafts:
+        stmt = stmt.where(AIScriptDesign.is_draft == False)  # noqa: E712
+
+    stmt = stmt.order_by(AIScriptDesign.updated_at.desc())
+
+    result = await db.execute(stmt)
+    designs = result.scalars().all()
+    return [_to_summary(d) for d in designs]
+
+
+@router.get("/designs/last-draft", response_model=Optional[AIScriptDesignDetail])
+async def get_last_draft(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Devuelve el borrador mas reciente del usuario actual (is_draft=True),
+    o null si no tiene ninguno. Sirve para el modal "Continuar?" al entrar
+    al disenador sin un designId especifico.
+
+    IMPORTANTE: esta ruta debe declararse ANTES de /designs/{design_id}
+    para que "last-draft" no sea interpretado como design_id.
+    """
+    stmt = (
+        select(AIScriptDesign)
+        .where(AIScriptDesign.user_id == current_user.id)
+        .where(AIScriptDesign.is_draft == True)  # noqa: E712
+        .order_by(AIScriptDesign.updated_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+    return design
+
+
+@router.get("/designs/{design_id}", response_model=AIScriptDesignDetail)
+async def get_ai_design(
+    design_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Detalle completo: conversacion + JMX + archivo de referencia."""
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    if design is None:
+        raise HTTPException(status_code=404, detail="Diseno AI no encontrado")
+
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+
+    return design
+
+
+@router.post("/designs/upsert", response_model=AIScriptDesignDetail)
+async def upsert_ai_design(
+    payload: AIScriptDesignUpsert,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Auto-save: UPSERT por session_id.
+
+    - Si no existe: crea como borrador (``is_draft=True``, ``name=None``).
+    - Si existe: actualiza conversacion, JMX y archivo de referencia. No
+      resetea ``name``/``is_draft`` si ya estaban definidos por Save As.
+    - Solo el creador (o admin) puede modificar una sesion existente.
+    """
+    stmt = select(AIScriptDesign).where(AIScriptDesign.session_id == payload.session_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    # Pydantic → lista de dicts para JSONB
+    conv_payload = [
+        m.model_dump() if hasattr(m, "model_dump") else dict(m)
+        for m in payload.conversation
+    ]
+
+    if design is None:
+        design = AIScriptDesign(
+            session_id=payload.session_id,
+            client_id=payload.client_id,
+            user_id=current_user.id,
+            is_draft=True,
+            name=None,
+            conversation=conv_payload,
+            current_jmx=payload.current_jmx,
+            reference_file_name=payload.reference_file_name,
+            reference_file_content=payload.reference_file_content,
+            reference_file_type=payload.reference_file_type,
+        )
+        db.add(design)
+    else:
+        if not _is_admin(current_user) and design.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+
+        design.client_id = payload.client_id
+        design.conversation = conv_payload
+        design.current_jmx = payload.current_jmx
+        design.reference_file_name = payload.reference_file_name
+        design.reference_file_content = payload.reference_file_content
+        design.reference_file_type = payload.reference_file_type
+
+    await db.commit()
+    await db.refresh(design)
+    return design
+
+
+@router.patch("/designs/{design_id}/save-as", response_model=AIScriptDesignDetail)
+async def save_ai_design_as(
+    design_id: UUID,
+    payload: AIScriptDesignSaveAs,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Promueve un borrador a diseno guardado formalmente.
+
+    - Asigna ``name`` definitivo (trim aplicado).
+    - Marca ``is_draft=False``.
+    - Opcionalmente cambia ``client_id``.
+    """
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    if design is None:
+        raise HTTPException(status_code=404, detail="Diseno AI no encontrado")
+
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+
+    design.name = payload.name.strip()
+    design.is_draft = False
+    if payload.client_id is not None:
+        design.client_id = payload.client_id
+
+    await db.commit()
+    await db.refresh(design)
+    return design
+
+
+@router.delete("/designs/{design_id}", status_code=204)
+async def delete_ai_design(
+    design_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Elimina un diseno AI. Solo el creador o admin."""
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    if design is None:
+        raise HTTPException(status_code=404, detail="Diseno AI no encontrado")
+
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+
+    await db.delete(design)
+    await db.commit()
+    return None
+
+
+# =========================================================================
+# AI Script Structure — Parse JMX a estructura editable
+# =========================================================================
+
+
+class ParseJmxRequest(BaseModel):
+    """Payload para parsear un JMX a AIScriptStructure."""
+    jmx_text: str = Field(..., min_length=10, description="Contenido raw del JMX a parsear")
+
+
+@router.post("/parse-jmx", response_model=AIScriptStructure)
+async def parse_jmx_endpoint(
+    payload: ParseJmxRequest,
+    _current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """
+    Recibe un JMX como string y lo parsea a AIScriptStructure.
+    No persiste nada: la estructura se deriva on-demand del JMX original.
+
+    Errores:
+    - 422: jmx_text vacio o demasiado corto (validacion Pydantic).
+    - 400: JMX malformado o no parseable.
+    """
+    try:
+        structure = parse_jmx_to_structure(payload.jmx_text)
+        return structure
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"JMX invalido: {str(e)}")
+    except Exception as e:
+        logger.exception("Error inesperado en parse-jmx")
+        raise HTTPException(status_code=500, detail=f"Error interno parseando JMX: {str(e)}")
+
+
+# =========================================================================
+# AI Script Structure — Regenerar JMX desde estructura editable
+# =========================================================================
+
+
+class RegenerateJmxResponse(BaseModel):
+    """Respuesta del endpoint regenerate-jmx."""
+    jmx_text: str = Field(..., description="JMX completo regenerado desde la estructura")
+    size_chars: int = Field(..., description="Tamano del JMX en caracteres")
+
+
+@router.post("/regenerate-jmx", response_model=RegenerateJmxResponse)
+async def regenerate_jmx_endpoint(
+    structure: AIScriptStructure,
+    _current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """
+    Recibe AIScriptStructure (con flags is_dirty marcando ediciones) y devuelve
+    el JMX regenerado.
+
+    Estrategia edit-preserving:
+    - Elementos con is_dirty=False reusan raw_xml original.
+    - Elementos con is_dirty=True se re-construyen desde campos.
+
+    Errores:
+    - 422: payload Pydantic-invalido.
+    - 400: ValueError del regenerador (estructura semanticamente invalida).
+    - 500: error inesperado del regenerador.
+    """
+    try:
+        jmx_text = regenerate_jmx_from_structure(structure)
+        return RegenerateJmxResponse(
+            jmx_text=jmx_text,
+            size_chars=len(jmx_text),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Estructura invalida: {str(e)}")
+    except Exception as e:
+        logger.exception("Error inesperado regenerando JMX")
+        raise HTTPException(status_code=500, detail=f"Error interno regenerando JMX: {str(e)}")

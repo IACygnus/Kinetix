@@ -20,11 +20,15 @@ import AIConfigPage from './components/admin/AIConfigPage';
 import Profile from './components/profile/Profile';
 import ScriptDesigner from './pages/ScriptDesigner';
 import AIScriptDesigner from './pages/AIScriptDesigner';
+import AIDesignerHistory from './pages/AIDesignerHistory';
+import AIScriptEditor from './pages/AIScriptEditor';
+import AIScriptEditorList from './pages/AIScriptEditorList';
 import ExecutionDashboard from './pages/ExecutionDashboard';
 import ReportView from './pages/ReportView';
 import MonitoringPage from './pages/MonitoringPage';
 import EvidencePage from './pages/EvidencePage';
 import IntegratedReportPage from './pages/IntegratedReportPage';
+import IntegratedReportsHistory from './pages/IntegratedReportsHistory';
 import ScriptHistory from './pages/ScriptHistory';
 
 function App() {
@@ -60,6 +64,14 @@ function App() {
             <Route path="/performance/monitoring" element={<MonitoringPage />} />
             <Route path="/performance/evidence" element={<EvidencePage />} />
             <Route path="/performance/integrated" element={<IntegratedReportPage />} />
+            <Route
+              path="/performance/integrated/history"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <IntegratedReportsHistory />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/performance/integrated/:reportId" element={<IntegratedReportPage />} />
             <Route path="/performance/history" element={<History />} />
 
@@ -153,6 +165,30 @@ function App() {
             />
 
             {/* AI Script Designer */}
+            <Route
+              path="/ai-script-designer/history"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AIDesignerHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/ai-script-designer/editor/:designId"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AIScriptEditor />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/ai-script-editor"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AIScriptEditorList />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/ai-script-designer"
               element={

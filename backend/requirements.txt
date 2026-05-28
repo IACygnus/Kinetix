@@ -49,3 +49,6 @@ PyYAML==6.0.1
 
 # Motor de Performance Testing (Sprint 0) — mitmproxy se instala en Sprint 1
 # mitmproxy==10.3.1
+
+# Dev/test (anadido en Sprint 2.2 para persistir instalacion del Sprint 2.1)
+pytest>=9.0

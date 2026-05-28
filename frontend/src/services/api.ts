@@ -323,4 +323,245 @@ export const monitoringAPI = {
   },
 };
 
+// =========================================================================
+// Integrated Reports API
+// =========================================================================
+export interface IntegratedReportSummary {
+  id: string;
+  name: string;
+  section_count: number;
+  has_consolidated: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
+}
+
+export interface IntegratedReportDetail extends IntegratedReportSummary {
+  sections: any[];
+  consolidated_analysis: Record<string, any>;
+}
+
+export const integratedReportsAPI = {
+  list: async (): Promise<IntegratedReportSummary[]> => {
+    const response = await api.get('/reports/integrated-reports');
+    return response.data;
+  },
+
+  getById: async (id: string): Promise<IntegratedReportDetail> => {
+    const response = await api.get(`/reports/integrated-reports/${id}`);
+    return response.data;
+  },
+
+  update: async (
+    id: string,
+    payload: Partial<Pick<IntegratedReportDetail, 'name' | 'sections' | 'consolidated_analysis'>>
+  ): Promise<IntegratedReportDetail> => {
+    const response = await api.patch(`/reports/integrated-reports/${id}`, payload);
+    return response.data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/reports/integrated-reports/${id}`);
+  },
+};
+
+// =========================================================================
+// AI Script Designs API — Persistencia de sesiones del Diseñador IA
+// =========================================================================
+
+export type AIDesignReferenceFileType = 'postman' | 'openapi' | 'swagger' | 'har' | 'jmx' | 'text';
+
+export interface AIConversationMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp?: string | null;
+}
+
+export interface AIScriptDesignSummary {
+  id: string;
+  session_id: string;
+  name: string | null;
+  client_id: string;
+  user_id: string | null;
+  is_draft: boolean;
+  message_count: number;
+  has_jmx: boolean;
+  reference_file_name: string | null;
+  reference_file_type: AIDesignReferenceFileType | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIScriptDesignDetail {
+  id: string;
+  session_id: string;
+  name: string | null;
+  client_id: string;
+  user_id: string | null;
+  is_draft: boolean;
+  conversation: AIConversationMessage[];
+  current_jmx: string | null;
+  reference_file_name: string | null;
+  reference_file_content: string | null;
+  reference_file_type: AIDesignReferenceFileType | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIScriptDesignUpsertPayload {
+  session_id: string;
+  client_id: string;
+  conversation: AIConversationMessage[];
+  current_jmx?: string | null;
+  reference_file_name?: string | null;
+  reference_file_content?: string | null;
+  reference_file_type?: AIDesignReferenceFileType | null;
+}
+
+export interface AIScriptDesignSaveAsPayload {
+  name: string;
+  client_id?: string;
+}
+
+export const aiScriptDesignsAPI = {
+  list: async (params?: {
+    client_id?: string;
+    include_drafts?: boolean;
+  }): Promise<AIScriptDesignSummary[]> => {
+    const response = await api.get('/script-designer/ai/designs', {
+      params: {
+        client_id: params?.client_id,
+        include_drafts: params?.include_drafts ?? false,
+      },
+    });
+    return response.data;
+  },
+
+  getById: async (id: string): Promise<AIScriptDesignDetail> => {
+    const response = await api.get(`/script-designer/ai/designs/${id}`);
+    return response.data;
+  },
+
+  getLastDraft: async (): Promise<AIScriptDesignDetail | null> => {
+    const response = await api.get('/script-designer/ai/designs/last-draft');
+    return response.data;
+  },
+
+  upsert: async (payload: AIScriptDesignUpsertPayload): Promise<AIScriptDesignDetail> => {
+    const response = await api.post('/script-designer/ai/designs/upsert', payload);
+    return response.data;
+  },
+
+  saveAs: async (
+    id: string,
+    payload: AIScriptDesignSaveAsPayload
+  ): Promise<AIScriptDesignDetail> => {
+    const response = await api.patch(`/script-designer/ai/designs/${id}/save-as`, payload);
+    return response.data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/script-designer/ai/designs/${id}`);
+  },
+};
+
+
+// =========================================================================
+// AI Script Structure API — Parse/Regenerate JMX (Sprint 2.x)
+// =========================================================================
+import type { AIScriptStructure } from '../types/aiScriptStructure';
+
+export interface RegenerateJmxResponse {
+  jmx_text: string;
+  size_chars: number;
+}
+
+export const aiScriptStructureAPI = {
+  parseJmx: async (jmx_text: string): Promise<AIScriptStructure> => {
+    const response = await api.post('/script-designer/ai/parse-jmx', { jmx_text });
+    return response.data;
+  },
+
+  regenerateJmx: async (structure: AIScriptStructure): Promise<RegenerateJmxResponse> => {
+    const response = await api.post('/script-designer/ai/regenerate-jmx', structure);
+    return response.data;
+  },
+};
+
+
+// =========================================================================
+// AI Design Data Files API (Sprint 2.4-HF2)
+// =========================================================================
+
+export interface AIDesignDataFile {
+  id: string;
+  design_id: string;
+  original_filename: string;
+  file_size: number;
+  delimiter: string;
+  encoding: string;
+  columns: string[];
+  row_count: number;
+  variable_mapping: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIDesignDataFilePreview {
+  columns: string[];
+  rows: string[][];
+  row_count_total: number;
+  delimiter_detected: string;
+  encoding_detected: string;
+}
+
+export const aiDesignDataFilesAPI = {
+  list: async (designId: string): Promise<AIDesignDataFile[]> => {
+    const r = await api.get(`/script-designer/ai/designs/${designId}/data-files`);
+    return r.data;
+  },
+
+  upload: async (
+    designId: string,
+    file: File,
+    delimiter: string = ',',
+    has_header: string = 'true',
+    encoding: string = 'UTF-8',
+  ): Promise<AIDesignDataFile> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('delimiter', delimiter);
+    form.append('has_header', has_header);
+    form.append('encoding', encoding);
+    const r = await api.post(
+      `/script-designer/ai/designs/${designId}/data-files`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return r.data;
+  },
+
+  preview: async (designId: string, fileId: string): Promise<AIDesignDataFilePreview> => {
+    const r = await api.get(`/script-designer/ai/designs/${designId}/data-files/${fileId}/preview`);
+    return r.data;
+  },
+
+  updateMapping: async (
+    designId: string,
+    fileId: string,
+    mapping: Record<string, string>,
+  ): Promise<AIDesignDataFile> => {
+    const r = await api.patch(
+      `/script-designer/ai/designs/${designId}/data-files/${fileId}`,
+      { variable_mapping: mapping },
+    );
+    return r.data;
+  },
+
+  remove: async (designId: string, fileId: string): Promise<void> => {
+    await api.delete(`/script-designer/ai/designs/${designId}/data-files/${fileId}`);
+  },
+};
+
+
 export default api;
