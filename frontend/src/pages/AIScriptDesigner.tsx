@@ -30,6 +30,7 @@ import {
 import {
   aiScriptDesignsAPI,
   clientsAPI,
+  refineSurgicalAPI,
   AIConversationMessage,
   AIDesignReferenceFileType,
   AIScriptDesignDetail,
@@ -39,7 +40,9 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001
 
 const aiApi = axios.create({
   baseURL: `${API_BASE_URL}/script-designer/ai`,
-  timeout: 180000,
+  // HF5: refine con JMX grande puede tardar más de 3 min — subido a 5 min.
+  // HF6: subido a 10 min para upload + compresión + análisis IA de HARs ≤ 50 MB.
+  timeout: 600000,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
@@ -68,6 +71,16 @@ interface ComponentInfo {
   props: Record<string, string>;
 }
 
+interface CompressionStats {
+  original_size: number;
+  compressed_size: number;
+  reduction_ratio: number;
+  entries_original: number;
+  entries_unique: number;
+  entries_static_filtered: number;
+  entries_tracking_filtered: number;
+}
+
 interface AIResponse {
   jmx_content: string;
   explanation: string;
@@ -77,9 +90,10 @@ interface AIResponse {
   file_kind?: string | null;
   file_content?: string | null;
   file_name?: string | null;
+  compression_stats?: CompressionStats | null;
 }
 
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB — matches backend MAX_FILE_BYTES (Sprint 2.4-HF3)
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB — matches backend MAX_FILE_BYTES (Sprint 2.4-HF6)
 const ACCEPT_UPLOAD = '.json,.yaml,.yml,.txt,.postman_collection,application/json,text/yaml,text/plain';
 
 const EXAMPLE_PROMPT =
@@ -435,7 +449,7 @@ export default function AIScriptDesigner() {
     if (!file) return;
     if (file.size > MAX_UPLOAD_BYTES) {
       setError(
-        `El archivo "${file.name}" supera el limite de ${Math.round(MAX_UPLOAD_BYTES / 1024)} KB. ` +
+        `El archivo "${file.name}" supera el limite de ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB. ` +
           `Se truncara para el analisis con IA.`
       );
     }
@@ -466,7 +480,13 @@ export default function AIScriptDesigner() {
     setError(null);
 
     try {
-      let data: AIResponse;
+      let data: AIResponse = {
+        jmx_content: '',
+        explanation: '',
+        is_valid: false,
+        error: null,
+        components: null,
+      };
 
       if (pendingFile) {
         // multipart upload — backend parses Postman / Swagger / text
@@ -479,31 +499,84 @@ export default function AIScriptDesigner() {
         });
         data = response.data;
         setPendingFile(null);
+      } else if (currentJmx) {
+        // Sprint 2.4-HF5.1 — refine híbrido: primero intenta el quirúrgico,
+        // si la IA pide fallback (o falla) cae al refine clásico del HF5.
+        let surgicalSucceeded = false;
+        try {
+          const surgical = await refineSurgicalAPI.refine(
+            currentJmx,
+            prompt,
+            messages.map((m) => ({ role: m.role, content: m.content })),
+            refFileContent || undefined,
+          );
+
+          if (!surgical.fallback_used && !surgical.error) {
+            data = {
+              jmx_content: surgical.jmx_content,
+              explanation:
+                surgical.explanation ||
+                (surgical.operations_applied > 0
+                  ? `Cambio aplicado quirúrgicamente (${surgical.operations_applied} op).`
+                  : 'Sin cambios.'),
+              is_valid: surgical.is_valid,
+              error: null,
+              components: null,
+            };
+            surgicalSucceeded = true;
+          } else {
+            console.log(
+              '[refine] quirúrgico solicitó fallback al clásico:',
+              surgical.fallback_reason || surgical.error,
+            );
+          }
+        } catch (e) {
+          console.warn('[refine] error en quirúrgico, cae al clásico:', e);
+        }
+
+        if (!surgicalSucceeded) {
+          const payload: Record<string, unknown> = {
+            prompt,
+            conversation_history: messages,
+            current_jmx: currentJmx,
+          };
+          if (refFileContent) {
+            payload.file_content = refFileContent;
+            payload.file_name = refFileName;
+          }
+          const response = await aiApi.post<AIResponse>('/refine', payload);
+          data = response.data;
+        }
       } else {
-        const endpoint = currentJmx ? '/refine' : '/generate';
-        const payload: Record<string, unknown> = {
+        // Primera generación
+        const response = await aiApi.post<AIResponse>('/generate', {
           prompt,
           conversation_history: messages,
-        };
-        if (currentJmx) payload.current_jmx = currentJmx;
-        // Persist reference file across refinements
-        if (currentJmx && refFileContent) {
-          payload.file_content = refFileContent;
-          payload.file_name = refFileName;
-        }
-        const response = await aiApi.post<AIResponse>(endpoint, payload);
+        });
         data = response.data;
       }
 
       applyAIResponse(data);
+
+      // HF6: si el backend comprimió un HAR, anteponer un resumen al mensaje
+      // del assistant para que el usuario vea cuánto se redujo.
+      let assistantContent =
+        data.explanation ||
+        (data.jmx_content ? 'JMX generado correctamente.' : 'Sin respuesta del modelo.');
+      if (data.compression_stats) {
+        const s = data.compression_stats;
+        const origMB = (s.original_size / 1024 / 1024).toFixed(1);
+        const compMB = (s.compressed_size / 1024 / 1024).toFixed(2);
+        const banner =
+          `📊 HAR comprimido: ${origMB} MB → ${compMB} MB (${s.reduction_ratio}% reducción)\n` +
+          `${s.entries_original} requests → ${s.entries_unique} únicos · ` +
+          `filtrados ${s.entries_static_filtered} assets, ${s.entries_tracking_filtered} tracking\n\n`;
+        assistantContent = banner + assistantContent;
+      }
+
       const finalMessages: ChatMessage[] = [
         ...nextHistory,
-        {
-          role: 'assistant',
-          content:
-            data.explanation ||
-            (data.jmx_content ? 'JMX generado correctamente.' : 'Sin respuesta del modelo.'),
-        },
+        { role: 'assistant', content: assistantContent },
       ];
       setMessages(finalMessages);
 
@@ -832,7 +905,7 @@ export default function AIScriptDesigner() {
                   <Paperclip className="w-4 h-4" />
                   Adjuntar archivo
                 </button>
-                <span className="text-xs text-gray-400">Máx. 5 MB</span>
+                <span className="text-xs text-gray-400">Máx. 50 MB · HAR comprimido automáticamente</span>
                 <span className="text-xs text-gray-400">·</span>
                 <span className="text-xs text-gray-400">Ctrl+Enter para enviar</span>
               </div>

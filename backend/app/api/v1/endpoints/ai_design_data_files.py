@@ -5,6 +5,7 @@ Rutas montadas bajo /script-designer/ai/designs/{design_id}/data-files
 """
 import csv
 import io
+import logging
 import os
 import uuid as uuid_pkg
 from pathlib import Path
@@ -24,6 +25,11 @@ from app.schemas.ai_design_data_file import (
     DataFilePreview,
     DataFileSummary,
 )
+from app.schemas.ai_script_structure import CSVDataSetModel, UserDefinedVariable
+from app.services.engine.jmx_to_structure import parse_jmx_to_structure
+from app.services.engine.structure_to_jmx import regenerate_jmx_from_structure
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -72,11 +78,20 @@ async def upload_data_file(
     delimiter: str = Form(","),
     has_header: str = Form("true"),
     encoding: str = Form("UTF-8"),
+    variable_names: str = Form(
+        "", description="Variables JMeter separadas por coma. Ej: 'firstname,lastname'"
+    ),
     current_user: User = Depends(require_role(["admin", "analyst"])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Sube un CSV y lo asocia al diseno."""
-    await _verify_design_access(design_id, current_user, db)
+    """Sube un CSV y lo asocia al diseno.
+
+    Sprint 2.5c.1 (HF2.1): si se declaran ``variable_names``, ademas de guardar
+    el archivo se autocrea un CSV Data Set en la estructura del diseno apuntando
+    a ``${Data}/<filename>`` (portable) y se asegura la UDV ``Data`` resoluble en
+    runtime.
+    """
+    design = await _verify_design_access(design_id, current_user, db)
 
     contents = await file.read()
     if len(contents) > MAX_CSV_SIZE:
@@ -120,6 +135,8 @@ async def upload_data_file(
     with open(file_path, "wb") as f:
         f.write(contents)
 
+    declared_vars = [v.strip() for v in variable_names.split(",") if v.strip()]
+
     record = AIDesignDataFile(
         design_id=design_id,
         user_id=current_user.id,
@@ -133,11 +150,91 @@ async def upload_data_file(
         columns=columns,
         row_count=row_count,
         variable_mapping={},
+        variable_names_declared=declared_vars,
     )
     db.add(record)
+
+    # HF2.1 — si hay variables declaradas, autocrear el CSV Data Set en la
+    # estructura del diseno (best-effort: no romper el upload si falla).
+    if declared_vars:
+        try:
+            _autocreate_csv_dataset_in_structure(
+                design=design,
+                data_file=record,
+                declared_vars=declared_vars,
+                delimiter=delimiter,
+                encoding=encoding,
+                has_header=has_header.lower() == "true",
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort, no abortar el upload
+            logger.warning(
+                "[data-files] no se pudo autocrear CSV Data Set para design=%s: %s",
+                design_id, e,
+            )
+
     await db.commit()
     await db.refresh(record)
     return record
+
+
+def _autocreate_csv_dataset_in_structure(
+    design: AIScriptDesign,
+    data_file: AIDesignDataFile,
+    declared_vars: List[str],
+    delimiter: str,
+    encoding: str,
+    has_header: bool,
+) -> None:
+    """Autocrea un CSV Data Set en la estructura del diseno (HF2.1).
+
+    1. Parsea el current_jmx del diseno.
+    2. Si no existe UDV 'Data', la crea apuntando al directorio del design.
+    3. Crea un CSVDataSet con filename=${Data}/<original_filename> (portable).
+    4. Regenera el JMX y lo guarda en design.current_jmx.
+    5. Vincula data_file.linked_csv_dataset_id al id del nuevo CSVDataSet.
+
+    No persiste por si mismo (el caller hace commit). Si el diseno no tiene JMX
+    todavia, no hace nada (no hay arbol donde inyectar).
+    """
+    if not design.current_jmx or len(design.current_jmx) < 50:
+        return
+
+    structure = parse_jmx_to_structure(design.current_jmx)
+
+    # 1. Asegurar UDV 'Data' apuntando al folder del design en el container.
+    if not any(u.name == "Data" for u in structure.user_defined_variables):
+        container_data_path = f"/app/uploads/ai_data_files/{design.id}"
+        structure.user_defined_variables.append(
+            UserDefinedVariable(
+                name="Data",
+                value=container_data_path,
+                metadata="=",
+                is_dirty=True,
+            )
+        )
+
+    # 2. Crear el CSVDataSet portable.
+    new_csv = CSVDataSetModel(
+        testname=f"Data {data_file.original_filename}",
+        enabled=True,
+        filename=f"${{Data}}/{data_file.original_filename}",
+        file_encoding=encoding if encoding and encoding != "UTF-8" else None,
+        variable_names=declared_vars,
+        delimiter=delimiter,
+        quoted_data=False,
+        recycle=True,
+        stop_thread=False,
+        share_mode="shareMode.all",
+        ignore_first_line=has_header,
+        is_dirty=True,
+    )
+    structure.csv_data_sets.append(new_csv)
+
+    # 3. Regenerar el JMX y persistir en el diseno.
+    design.current_jmx = regenerate_jmx_from_structure(structure)
+
+    # 4. Vincular el data file al CSV Data Set creado (trazabilidad).
+    data_file.linked_csv_dataset_id = str(new_csv.id)
 
 
 @router.get(

@@ -8,7 +8,10 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 300000, // 5 minutes for long uploads with Gemini analysis
+  // 10 min — HF6 raises the ceiling so uploads of HARs up to 50 MB
+  // (with server-side compression + AI call afterwards) don't time out.
+  // Light requests still complete in <1s so this max ceiling is harmless.
+  timeout: 600000,
   withCredentials: true, // Send cookies automatically
   headers: {
     'Content-Type': 'application/json',
@@ -423,6 +426,28 @@ export interface AIScriptDesignSaveAsPayload {
   client_id?: string;
 }
 
+// Helper interno: dispara la descarga de un JMX en el browser via blob.
+// Reusa el endpoint POST /script-designer/ai/download (acepta jmx_content).
+const triggerJmxBlobDownload = async (
+  jmxContent: string,
+  filename: string,
+): Promise<void> => {
+  const response = await api.post(
+    '/script-designer/ai/download',
+    { jmx_content: jmxContent, filename },
+    { responseType: 'blob' },
+  );
+  const blob = new Blob([response.data], { type: 'application/xml' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
 export const aiScriptDesignsAPI = {
   list: async (params?: {
     client_id?: string;
@@ -462,6 +487,19 @@ export const aiScriptDesignsAPI = {
 
   remove: async (id: string): Promise<void> => {
     await api.delete(`/script-designer/ai/designs/${id}`);
+  },
+
+  // Descarga el JMX dado su contenido (el editor ya lo tiene en memoria).
+  downloadJmx: async (jmxContent: string, filename?: string): Promise<void> => {
+    await triggerJmxBlobDownload(jmxContent, filename || 'ai_generated_test.jmx');
+  },
+
+  // Descarga el JMX de un diseño por id (lista): 2 calls — detalle -> download.
+  downloadById: async (id: string, filename?: string): Promise<void> => {
+    const detail = await api.get(`/script-designer/ai/designs/${id}`);
+    const jmx: string | null | undefined = detail.data?.current_jmx;
+    if (!jmx) throw new Error('Este diseño no tiene JMX generado');
+    await triggerJmxBlobDownload(jmx, filename || 'ai_generated_test.jmx');
   },
 };
 
@@ -527,12 +565,16 @@ export const aiDesignDataFilesAPI = {
     delimiter: string = ',',
     has_header: string = 'true',
     encoding: string = 'UTF-8',
+    variableNames: string = '',
   ): Promise<AIDesignDataFile> => {
     const form = new FormData();
     form.append('file', file);
     form.append('delimiter', delimiter);
     form.append('has_header', has_header);
     form.append('encoding', encoding);
+    // Sprint 2.5c.1 (HF2.1): si se declaran variables, el backend autocrea un
+    // CSV Data Set en la estructura del diseño apuntando a este archivo.
+    form.append('variable_names', variableNames);
     const r = await api.post(
       `/script-designer/ai/designs/${designId}/data-files`,
       form,
@@ -560,6 +602,227 @@ export const aiDesignDataFilesAPI = {
 
   remove: async (designId: string, fileId: string): Promise<void> => {
     await api.delete(`/script-designer/ai/designs/${designId}/data-files/${fileId}`);
+  },
+};
+
+
+// ============================================================================
+// Refine Surgical API (Sprint 2.4-HF5.1)
+// ============================================================================
+
+export interface RefineSurgicalResponse {
+  jmx_content: string;
+  is_valid: boolean;
+  explanation: string;
+  operations_applied: number;
+  fallback_used: boolean;
+  fallback_reason?: string | null;
+  error?: string | null;
+}
+
+export const refineSurgicalAPI = {
+  refine: async (
+    current_jmx: string,
+    prompt: string,
+    conversation_history: Array<{ role: string; content: string }> = [],
+    file_content?: string,
+  ): Promise<RefineSurgicalResponse> => {
+    const r = await api.post('/script-designer/ai/refine-surgical', {
+      current_jmx,
+      prompt,
+      conversation_history,
+      file_content: file_content || null,
+    });
+    return r.data;
+  },
+};
+
+
+// ============================================================================
+// Smoke Test API (Sprint 2.5b/2.5c)
+// ============================================================================
+
+export interface SmokeSamplerResult {
+  label: string;
+  success: boolean;
+  response_code: string;
+  response_message: string;
+  elapsed_ms: number;
+  failure_message?: string | null;
+}
+
+export interface SmokeTestResult {
+  status: 'success' | 'partial' | 'failed' | 'error';
+  duration_sec: number;
+  total_samples: number;
+  successful_samples: number;
+  failed_samples: number;
+  samplers: SmokeSamplerResult[];
+  jmeter_log_tail?: string | null;
+  error_message?: string | null;
+}
+
+export const smokeTestAPI = {
+  /**
+   * Ejecuta el smoke test sobre el JMX del diseño.
+   * Sprint 2.5c.1: configurable num_threads (1-20) y loops (1-5).
+   * Backend espera ~5-15 s típicos; el timeout del axios = timeout_sec + 30 s
+   * de margen para arranque del subprocess JMeter.
+   */
+  run: async (
+    designId: string,
+    options: { numThreads?: number; loops?: number; timeoutSec?: number } = {},
+  ): Promise<SmokeTestResult> => {
+    const { numThreads = 1, loops = 1, timeoutSec = 60 } = options;
+    const r = await api.post(
+      `/script-designer/ai/designs/${designId}/smoke-test`,
+      null,
+      {
+        params: { num_threads: numThreads, loops, timeout_sec: timeoutSec },
+        timeout: (timeoutSec + 30) * 1000,
+      },
+    );
+    return r.data;
+  },
+};
+
+
+// ============================================================================
+// Full Execution API (Sprint 2.5e.1)
+// ============================================================================
+
+export interface ExecutionStartResponse {
+  execution_id: number;
+  status: string;
+  design_id: string;
+  execution_dir: string;
+}
+
+export interface ExecutionLiveMetrics {
+  execution_id: number;
+  status: 'starting' | 'running' | 'stopping' | 'completed' | 'cancelled' | 'error';
+  elapsed_sec: number;
+  metrics: {
+    total_samples?: number;
+    successful_samples?: number;
+    failed_samples?: number;
+    throughput_per_sec?: number;
+    avg_response_ms?: number;
+    error_rate_pct?: number;
+  };
+}
+
+export interface DesignExecutionHistoryItem {
+  id: number;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  summary_metrics: {
+    total_samples?: number;
+    successful_samples?: number;
+    failed_samples?: number;
+    throughput_per_sec?: number;
+    avg_response_ms?: number;
+    error_rate_pct?: number;
+  } | null;
+  error_message: string | null;
+}
+
+export interface AnalyzeWithAIResponse {
+  test_execution_id: string;
+  performance_execution_id: number;
+  dashboard_url: string;
+  status: string;
+}
+
+// Tipos del estado en vivo de listeners (Sprint 2.6a backend)
+export interface SamplerStats {
+  count: number;
+  errors: number;
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  std_dev: number;
+  throughput_per_sec: number;
+  kb_received_per_sec: number;
+  kb_sent_per_sec: number;
+  error_pct: number;
+}
+
+export interface TimeBucket {
+  bucket_start_sec: number;
+  bucket_end_sec: number;
+  per_sampler: Record<string, { count: number; avg_response_ms: number; throughput: number }>;
+  totals: {
+    count: number;
+    avg_response_ms: number;
+    throughput: number;
+    active_threads_max: number;
+    codes: Record<string, number>;
+  };
+}
+
+export interface ListenersState {
+  execution_id: number;
+  status: string;
+  elapsed_sec: number;
+  total_samples_parsed: number;
+  bucket_size_sec: number;
+  samples_tail: Array<Record<string, string>>; // samples crudos del JTL
+  per_sampler_stats: Record<string, SamplerStats>;
+  time_buckets: TimeBucket[];
+}
+
+export const executionAPI = {
+  start: async (designId: string, timeoutSec: number = 3600): Promise<ExecutionStartResponse> => {
+    const r = await api.post(
+      `/script-designer/ai/designs/${designId}/execute`,
+      null,
+      { params: { timeout_sec: timeoutSec } },
+    );
+    return r.data;
+  },
+
+  getLiveMetrics: async (executionId: number): Promise<ExecutionLiveMetrics> => {
+    const r = await api.get(`/performance-executions/${executionId}/live-metrics`);
+    return r.data;
+  },
+
+  stop: async (executionId: number) => {
+    const r = await api.post(`/performance-executions/${executionId}/stop`);
+    return r.data;
+  },
+
+  history: async (designId: string, limit: number = 20): Promise<DesignExecutionHistoryItem[]> => {
+    const r = await api.get(`/script-designer/ai/designs/${designId}/executions`, {
+      params: { limit },
+    });
+    return r.data;
+  },
+
+  analyzeWithAI: async (executionId: number): Promise<AnalyzeWithAIResponse> => {
+    const r = await api.post(
+      `/performance-executions/${executionId}/analyze-with-ai`,
+      null,
+      { timeout: 120000 }, // 2 min; el pipeline IA tarda ~50-60s
+    );
+    return r.data;
+  },
+
+  // Sprint 2.6a: estado en vivo de los listeners (polling cada 2s del frontend).
+  getListenersState: async (executionId: number): Promise<ListenersState> => {
+    const r = await api.get(`/performance-executions/${executionId}/listeners-state`);
+    return r.data;
+  },
+
+  // Sprint 2.6a: libera el cache de listeners (al cerrar el drawer — Opción R).
+  clearListenersCache: async (executionId: number) => {
+    const r = await api.delete(`/performance-executions/${executionId}/listeners-state-cache`);
+    return r.data;
   },
 };
 

@@ -23,6 +23,7 @@ from app.db.models.user import User
 from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser, validate_jtl_compatibility
 from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict
+from app.services.ai.analysis_pipeline import run_ai_and_verdict
 from app.schemas.test import (
     TestExecutionResponse,
     ChartData,
@@ -306,329 +307,32 @@ async def upload_jtl(
                 # Formato texto legacy - convertir a dict
                 acceptance_criteria_dict = {"raw_text": acceptance_criteria}
 
-        # ===== AI STATUS TRACKING =====
-        ai_status = {"provider": "fallback", "model": None, "success": False, "error": None}
-
-        # ===== DEFAULTS — AI fields start empty =====
-        ai_analysis_summary = ""
-        ai_analysis_errors = ""
-        ai_analysis_response_times = ""
-        ai_analysis_response_time_over_time = ""
-        ai_analysis_throughput = ""
-        ai_analysis_latency = ""
-        ai_analysis_error_rate = ""
-        ai_analysis_codes_per_second = ""
-        ai_analysis_transactions_per_second = ""
-        ai_analysis_active_threads = ""
-        ai_analysis_redirects = ""
-        ai_conclusions = ""
-        ai_recommendations = ""
-
-        # ===== ANALISIS IA (non-fatal) =====
-        # If anything here crashes, we still save the execution with empty AI fields.
-        try:
-            # Load AI config from DB (provider, model, api_key)
-            ai_conf = await load_ai_config_from_db(db)
-            if ai_conf.get("limit_reached"):
-                ai_status["error"] = f"AI {ai_conf['limit_reached']} limit reached"
-                logger.warning(f"AI {ai_conf['limit_reached']} limit reached, skipping AI analysis")
-                raise RuntimeError(f"AI {ai_conf['limit_reached']} limit reached")
-            gemini = get_gemini_analyzer(
-                provider=ai_conf.get("provider", ""),
-                model_name=ai_conf.get("model_name", ""),
-                api_key=ai_conf.get("api_key", ""),
-            )
-            ai_status["provider"] = ai_conf.get("provider", "gemini")
-            ai_status["model"] = ai_conf.get("model_name", "gemini-2.5-flash")
-            fallback = FallbackAnalyzer()
-
-            # Extract test date for executive headers
-            test_date = metrics.get('start_time').strftime('%d/%m/%Y') if metrics.get('start_time') else 'N/A'
-
-            # Pre-compute summary data
-            summary_df = parser.get_summary_table_data()
-            insights = prepare_insights_for_prompt(summary_df)
-            logger.info(f"Insights: {insights['total_transactions']} transacciones clasificadas en tiers")
-
-            # Build stats_summary for fallback
-            stats_summary = {
-                "avg_rt": float(metrics.get('avg_response_time', 0)),
-                "min_rt": float(metrics.get('min_response_time', 0)),
-                "max_rt": float(metrics.get('max_response_time', 0)),
-                "p95": float(metrics.get('p95_response_time', 0)),
-                "p99": float(metrics.get('p99_response_time', 0)),
-                "throughput": float(metrics.get('throughput', 0)),
-                "total_requests": int(metrics.get('total_requests', 0)),
-                "total_errors": int(metrics.get('total_errors', 0)),
-                "error_rate": float(metrics.get('error_rate', 0)),
-                "duration": float(metrics.get('duration_seconds', 0)),
-                "avg_latency": float(metrics.get('avg_latency', 0)),
-                "kb_received": float(metrics.get('kb_per_sec_received', 0)),
-                "kb_sent": float(metrics.get('kb_per_sec_sent', 0)),
-                "num_transactions": len(summary_df),
-            }
-
-            # 1. Tabla resumen
-            logger.info("[1/12] Analizando tabla resumen...")
-            ai_analysis_summary = gemini.analyze_summary_table(
-                summary_df, metrics, test_type=test_type,
-                acceptance_criteria=acceptance_criteria_dict, insights=insights,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_summary is None:
-                logger.info("Using FALLBACK for summary_table")
-                ai_analysis_summary = fallback.analyze_summary_table(summary_df, insights)
-            else:
-                ai_status["success"] = True  # Gemini responded for the primary analysis
-            time.sleep(1)
-
-            # 2. Errores
-            logger.info("[2/12] Analizando errores...")
-            errors_for_analysis: List[dict] = []
-            error_codes_df = parser.df[~parser.df['success']].copy() if parser.df is not None else None
-            if error_codes_df is not None and len(error_codes_df) > 0:
-                error_grouped = error_codes_df.groupby(['label', 'responseCode']).size().reset_index(name='count')
-                for _, row in error_grouped.iterrows():
-                    errors_for_analysis.append({
-                        'label': row['label'],
-                        'count': int(row['count']),
-                        'code': str(row['responseCode']),
-                        'message': '',
-                    })
-
-            ai_analysis_errors = gemini.analyze_errors(
-                errors_for_analysis, metrics['total_requests'], test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_errors is None:
-                logger.info("Using FALLBACK for errors")
-                ai_analysis_errors = fallback.analyze_errors(errors_for_analysis, metrics['total_requests'])
-            time.sleep(1)
-
-            # 3-10. Graficos individuales
-            logger.info("[3-10/12] Analizando 8 graficos...")
-
-            # Response Times por Transaccion
-            rt_lines = []
-            for _, row in summary_df.iterrows():
-                rt_lines.append(
-                    f"- {row['label']}: promedio {row['promedio']:.0f}ms, "
-                    f"P90 {row['p90']:.0f}ms, P95 {row['p95']:.0f}ms, "
-                    f"P99 {row['p99']:.0f}ms, min {row['min']:.0f}ms, max {row['max']:.0f}ms"
-                )
-            logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
-            ai_analysis_response_times = gemini.analyze_chart(
-                'response_times', "\n".join(rt_lines), test_type=test_type, insights=insights,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_response_times is None:
-                logger.info("Using FALLBACK for response_times")
-                ai_analysis_response_times = fallback.analyze_chart("response_times", stats_summary)
-            time.sleep(1)
-
-            # Response Time Over Time
-            charts_data = parser.get_all_charts_data(interval_seconds=10)
-            timeline_df = charts_data['timeline']
-            rt_over_time_summary = (
-                f"Tiempo promedio: {metrics['avg_response_time']:.0f}ms, "
-                f"Rango: {metrics['min_response_time']:.0f}ms - {metrics['max_response_time']:.0f}ms, "
-                f"P95: {metrics['p95_response_time']:.0f}ms, "
-                f"Duracion: {metrics['duration_seconds']:.0f}s, "
-                f"Puntos de datos: {len(timeline_df)}"
-            )
-            ai_analysis_response_time_over_time = gemini.analyze_chart(
-                'response_time_over_time', rt_over_time_summary, test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_response_time_over_time is None:
-                logger.info("Using FALLBACK for response_time_over_time")
-                ai_analysis_response_time_over_time = fallback.analyze_chart("response_time_over_time", stats_summary)
-            time.sleep(1)
-
-            # Throughput
-            ai_analysis_throughput = gemini.analyze_chart(
-                'throughput',
-                f"Throughput promedio: {metrics['throughput']:.2f} req/s, "
-                f"Duracion: {metrics['duration_seconds']:.0f}s, "
-                f"Total requests: {metrics['total_requests']:,}",
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_throughput is None:
-                logger.info("Using FALLBACK for throughput")
-                ai_analysis_throughput = fallback.analyze_chart("throughput", stats_summary)
-            time.sleep(1)
-
-            # Latency
-            ai_analysis_latency = gemini.analyze_chart(
-                'latency',
-                f"Latencia promedio: {metrics.get('avg_latency', 0):.2f}ms, "
-                f"KB/s recibidos: {metrics.get('kb_per_sec_received', 0):.2f}, "
-                f"KB/s enviados: {metrics.get('kb_per_sec_sent', 0):.2f}",
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_latency is None:
-                logger.info("Using FALLBACK for latency")
-                ai_analysis_latency = fallback.analyze_chart("latency", stats_summary)
-            time.sleep(1)
-
-            # Error Rate
-            ai_analysis_error_rate = gemini.analyze_chart(
-                'error_rate',
-                f"Tasa de error: {metrics['error_rate']:.2f}% "
-                f"({metrics['total_errors']:,} de {metrics['total_requests']:,} requests)",
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_error_rate is None:
-                logger.info("Using FALLBACK for error_rate")
-                ai_analysis_error_rate = fallback.analyze_chart("error_rate", stats_summary)
-            time.sleep(1)
-
-            # Codes per Second
-            code_dist = parser.get_response_code_distribution()
-            codes_summary = ", ".join(
-                f"HTTP {row['responseCode']}: {int(row['count']):,}"
-                for _, row in code_dist.iterrows()
-            )
-            ai_analysis_codes_per_second = gemini.analyze_chart(
-                'codes_per_second',
-                f"Codigos HTTP: {codes_summary}",
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_codes_per_second is None:
-                logger.info("Using FALLBACK for codes_per_second")
-                ai_analysis_codes_per_second = fallback.analyze_chart("codes_per_second", stats_summary)
-            time.sleep(1)
-
-            # TPS
-            tps_lines = []
-            for _, row in summary_df.iterrows():
-                tps_lines.append(f"- {row['label']}: {row['rendimiento']:.2f} req/s")
-            logger.info(f"TPS: enviando {len(tps_lines)} transacciones a Gemini")
-            ai_analysis_transactions_per_second = gemini.analyze_chart(
-                'transactions_per_second',
-                f"TPS total: {metrics['throughput']:.2f} req/s en {len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_transactions_per_second is None:
-                logger.info("Using FALLBACK for transactions_per_second")
-                ai_analysis_transactions_per_second = fallback.analyze_chart("transactions_per_second", stats_summary)
-            time.sleep(1)
-
-            # Active Threads
-            ai_analysis_active_threads = gemini.analyze_chart(
-                'active_threads',
-                f"Concurrencia durante {metrics['duration_seconds']:.0f}s de prueba",
-                test_type=test_type,
-                test_date=test_date, metric_unit=metric_unit,
-            )
-            if ai_analysis_active_threads is None:
-                logger.info("Using FALLBACK for active_threads")
-                ai_analysis_active_threads = fallback.analyze_chart("active_threads", stats_summary)
-            time.sleep(1)
-
-            logger.info("Analisis individuales completados")
-
-            # 11. Redirecciones (si existen)
-            redirect_summary = parser.get_redirect_summary_data()
-            if redirect_summary is not None and len(redirect_summary) > 0:
-                logger.info("[11/12] Analizando redirecciones...")
-                ai_analysis_redirects = gemini.analyze_redirects(
-                    redirect_summary, metrics, test_type=test_type,
-                    test_date=test_date, metric_unit=metric_unit,
-                )
-                if ai_analysis_redirects is None:
-                    logger.info("Using FALLBACK for redirects")
-                    ai_analysis_redirects = fallback.analyze_redirects(
-                        int(metrics.get('total_redirects', 0)),
-                        int(metrics.get('total_main_samples', metrics['total_requests'])),
-                    )
-                time.sleep(1)
-
-            # 12. Sintesis: Conclusiones + Recomendaciones
-            logger.info("[11-12/12] Sintetizando conclusiones y recomendaciones...")
-
-            ai_conclusions = gemini.generate_conclusions(
-                metrics=metrics,
-                ai_analysis_summary=ai_analysis_summary,
-                ai_analysis_errors=ai_analysis_errors,
-                ai_analysis_response_times=ai_analysis_response_times,
-                ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
-                ai_analysis_throughput=ai_analysis_throughput,
-                ai_analysis_latency=ai_analysis_latency,
-                ai_analysis_error_rate=ai_analysis_error_rate,
-                ai_analysis_codes_per_second=ai_analysis_codes_per_second,
-                ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
-                ai_analysis_active_threads=ai_analysis_active_threads,
-                ai_analysis_redirects=ai_analysis_redirects,
-                test_type=test_type,
-                insights=insights,
-                test_date=test_date,
-                acceptance_criteria=acceptance_criteria_dict,
-                metric_unit=metric_unit,
-            )
-            if ai_conclusions is None:
-                logger.info("Using FALLBACK for conclusions")
-                ai_conclusions = fallback.generate_conclusions(stats_summary, acceptance_criteria=acceptance_criteria_dict)
-            time.sleep(1)
-
-            ai_recommendations = gemini.generate_recommendations(
-                metrics=metrics,
-                ai_analysis_summary=ai_analysis_summary,
-                ai_analysis_errors=ai_analysis_errors,
-                ai_analysis_response_times=ai_analysis_response_times,
-                ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
-                ai_analysis_throughput=ai_analysis_throughput,
-                ai_analysis_latency=ai_analysis_latency,
-                ai_analysis_error_rate=ai_analysis_error_rate,
-                ai_analysis_codes_per_second=ai_analysis_codes_per_second,
-                ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
-                ai_analysis_active_threads=ai_analysis_active_threads,
-                ai_analysis_redirects=ai_analysis_redirects,
-                test_type=test_type,
-                insights=insights,
-                test_date=test_date,
-                acceptance_criteria=acceptance_criteria_dict,
-                metric_unit=metric_unit,
-            )
-            if ai_recommendations is None:
-                logger.info("Using FALLBACK for recommendations")
-                ai_recommendations = fallback.generate_recommendations(stats_summary, acceptance_criteria=acceptance_criteria_dict)
-
-            logger.info("Sintesis completada")
-
-        except Exception as ai_err:
-            logger.exception(f"AI analysis failed (non-fatal, execution will be saved without AI): {ai_err}")
-            if not ai_status.get("error"):
-                ai_status["error"] = str(ai_err)[:200]
-
-        # ===== COMPUTE VERDICT =====
-        if acceptance_criteria_dict and not acceptance_criteria_dict.get('raw_text'):
-            # P4: If per_scenario criteria exist for this test_type, merge into effective criteria
-            per_scenario = acceptance_criteria_dict.get('per_scenario', {})
-            effective_criteria = dict(acceptance_criteria_dict)
-            # Normalize: match test_type case-insensitively against per_scenario keys
-            test_type_lower = (test_type or '').lower().strip()
-            for sc_key, sc_vals in per_scenario.items():
-                if sc_key.lower().strip() == test_type_lower and isinstance(sc_vals, dict):
-                    for k, v in sc_vals.items():
-                        if v is not None and v != '':
-                            effective_criteria[k] = v
-                    break
-            verdict = compute_verdict(metrics, effective_criteria)
-            acceptance_criteria_dict['verdict'] = verdict
-            # KNX-09: Per-transaction verdicts
-            from app.services.ai.gemini import compute_per_transaction_verdicts
-            per_txn_result = compute_per_transaction_verdicts(summary_df, acceptance_criteria_dict)
-            if per_txn_result:
-                acceptance_criteria_dict['verdicts_per_transaction'] = per_txn_result.get('verdicts_per_transaction', {})
-                # Override global verdict if per-txn is stricter
-                acceptance_criteria_dict['verdict'] = per_txn_result.get('verdict', verdict)
-            logger.info(f"Verdict computed: {acceptance_criteria_dict['verdict']}")
+        # ===== ANALISIS IA + VERDICT (Sprint 2.5d.2) =====
+        # Logica movida VERBATIM a app.services.ai.analysis_pipeline.run_ai_and_verdict.
+        # /upload conserva intactos su parsing (formato/multi-archivo) y la construccion
+        # de TestExecution; aqui solo delega el bloque AI + verdict.
+        ai_result = await run_ai_and_verdict(
+            parser=parser,
+            metrics=metrics,
+            test_type=test_type,
+            acceptance_criteria_dict=acceptance_criteria_dict,
+            metric_unit=metric_unit,
+            db=db,
+        )
+        ai_status = ai_result.ai_status
+        ai_analysis_summary = ai_result.ai_analysis_summary
+        ai_analysis_errors = ai_result.ai_analysis_errors
+        ai_analysis_response_times = ai_result.ai_analysis_response_times
+        ai_analysis_response_time_over_time = ai_result.ai_analysis_response_time_over_time
+        ai_analysis_throughput = ai_result.ai_analysis_throughput
+        ai_analysis_latency = ai_result.ai_analysis_latency
+        ai_analysis_error_rate = ai_result.ai_analysis_error_rate
+        ai_analysis_codes_per_second = ai_result.ai_analysis_codes_per_second
+        ai_analysis_transactions_per_second = ai_result.ai_analysis_transactions_per_second
+        ai_analysis_active_threads = ai_result.ai_analysis_active_threads
+        ai_analysis_redirects = ai_result.ai_analysis_redirects
+        ai_conclusions = ai_result.ai_conclusions
+        ai_recommendations = ai_result.ai_recommendations
 
         # ===== CREAR REGISTRO EN BD =====
         execution = TestExecution(

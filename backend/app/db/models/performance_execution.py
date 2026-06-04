@@ -16,8 +16,19 @@ class PerformanceExecution(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=False)
+    # Sprint 2.5d.1 — nullable: las ejecuciones nacidas del Editor IA no tienen
+    # un Scenario asociado (se ejecutan directo desde el diseno AI).
+    scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    # Sprint 2.5d.1 — si la ejecucion nacio del Editor IA apunta al diseno AI.
+    # Null si vino del Script Designer original (scenario_id seteado) o de upload.
+    ai_design_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("ai_script_designs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Estado de la ejecucion
     status = Column(String(50), nullable=False, default="pending")

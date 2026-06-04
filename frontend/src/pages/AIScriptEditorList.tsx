@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Code,
@@ -6,6 +6,7 @@ import {
   AlertCircle,
   Search as SearchIcon,
   FileCode,
+  Download,
 } from 'lucide-react';
 import { aiScriptDesignsAPI, clientsAPI } from '../services/api';
 import type { AIScriptDesignSummary } from '../services/api';
@@ -19,6 +20,22 @@ export default function AIScriptEditorList() {
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [search, setSearch] = useState('');
   const [clientFilter, setClientFilter] = useState<string>('all');
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const handleDownloadDesign = useCallback(
+    async (designId: string, designName: string) => {
+      setDownloadingId(designId);
+      try {
+        const safeName = (designName || 'diseno').replace(/[^\w\-]/g, '_');
+        await aiScriptDesignsAPI.downloadById(designId, `${safeName}.jmx`);
+      } catch (e: any) {
+        alert(e?.response?.data?.detail || e?.message || 'Error al descargar');
+      } finally {
+        setDownloadingId(null);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -144,13 +161,30 @@ export default function AIScriptEditorList() {
                     {new Date(d.updated_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => navigate(`/ai-script-designer/editor/${d.id}`)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-xs font-medium rounded hover:bg-indigo-700"
-                    >
-                      <Code className="w-3.5 h-3.5" />
-                      Editar
-                    </button>
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadDesign(d.id, d.name || '');
+                        }}
+                        disabled={downloadingId === d.id}
+                        className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Descargar JMX"
+                      >
+                        {downloadingId === d.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => navigate(`/ai-script-designer/editor/${d.id}`)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 text-white text-xs font-medium rounded hover:bg-indigo-700"
+                      >
+                        <Code className="w-3.5 h-3.5" />
+                        Editar
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

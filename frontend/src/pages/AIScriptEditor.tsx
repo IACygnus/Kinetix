@@ -24,13 +24,31 @@ import {
   Headphones,
   Clock,
   Sparkles,
+  Plus,
+  Trash2,
+  Play,
+  XCircle,
+  Zap,
+  History,
+  ExternalLink,
+  Download,
 } from 'lucide-react';
-import { aiScriptDesignsAPI, aiScriptStructureAPI, aiDesignDataFilesAPI } from '../services/api';
+import {
+  LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, Legend, CartesianGrid,
+} from 'recharts';
+import { aiScriptDesignsAPI, aiScriptStructureAPI, aiDesignDataFilesAPI, smokeTestAPI, executionAPI } from '../services/api';
 import type {
   AIConversationMessage,
   AIDesignReferenceFileType,
   AIDesignDataFile,
   AIDesignDataFilePreview,
+  SmokeTestResult,
+  ExecutionLiveMetrics,
+  DesignExecutionHistoryItem,
+  ListenersState,
+  SamplerStats,
+  TimeBucket,
 } from '../services/api';
 import type {
   AIScriptStructure,
@@ -86,6 +104,44 @@ interface ExpandedState {
 }
 
 // ============================================================================
+// HF7.A — Acciones estructurales para el árbol (add/delete/toggle)
+// ============================================================================
+
+type AddElementType = 'sampler' | 'sampler_child' | 'udv' | 'csv_dataset' | 'listener';
+
+type DeletableKind =
+  | 'thread_group'
+  | 'sampler'
+  | 'sampler_child'
+  | 'csv_data_set'
+  | 'listener'
+  | 'udv';
+
+type ToggleableKind =
+  | 'thread_group'
+  | 'sampler'
+  | 'sampler_child'
+  | 'csv_data_set'
+  | 'listener'
+  | 'cookie_manager'
+  | 'cache_manager';
+
+interface TreeActions {
+  openAdd: (type: AddElementType, contextId?: string) => void;
+  onDelete: (
+    kind: DeletableKind,
+    id: string,
+    opts?: { sampler_id?: string; udv_name?: string },
+  ) => void;
+  onToggle: (
+    kind: ToggleableKind,
+    id: string,
+    nextEnabled: boolean,
+    opts?: { sampler_id?: string },
+  ) => void;
+}
+
+// ============================================================================
 // Componente principal
 // ============================================================================
 
@@ -103,6 +159,7 @@ export default function AIScriptEditor() {
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [searchFilter, setSearchFilter] = useState('');
   const [showXmlModal, setShowXmlModal] = useState(false);
+  const [downloadingJmx, setDownloadingJmx] = useState(false);
 
   // ==========================================================================
   // Auto-save state (Sprint 2.4b)
@@ -113,6 +170,50 @@ export default function AIScriptEditor() {
   const [, setTick] = useState(0); // forzar re-render del indicador "hace Xs"
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDirtyRef = useRef(false);
+
+  // ==========================================================================
+  // HF7.A — Modal de agregar elemento + handlers de mutación estructural
+  // ==========================================================================
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addModalType, setAddModalType] = useState<AddElementType>('sampler');
+  const [addModalContext, setAddModalContext] = useState<string | undefined>(undefined);
+
+  // ==========================================================================
+  // Sprint 2.5c — Smoke Test modal + runner
+  // ==========================================================================
+  const [smokeModalOpen, setSmokeModalOpen] = useState(false);
+  const [smokeRunning, setSmokeRunning] = useState(false);
+  const [smokeResult, setSmokeResult] = useState<SmokeTestResult | null>(null);
+  const [smokeError, setSmokeError] = useState<string | null>(null);
+  const [smokeShowLog, setSmokeShowLog] = useState(false);
+  // Sprint 2.5c.1 — smoke configurable (1-20 usuarios, 1-5 loops)
+  const [smokeConfig, setSmokeConfig] = useState({ numThreads: 1, loops: 1 });
+
+  // ==========================================================================
+  // Sprint 2.5e.1 — Ejecución FULL (modal + drawer live + polling)
+  // ==========================================================================
+  const [executeModalOpen, setExecuteModalOpen] = useState(false);
+  const [executionLiveOpen, setExecutionLiveOpen] = useState(false);
+  const [currentExecution, setCurrentExecution] = useState<ExecutionLiveMetrics | null>(null);
+  // Sprint 2.6b: estado en vivo de los listeners (polling cada 2s mientras se ve un listener).
+  const [listenersState, setListenersState] = useState<ListenersState | null>(null);
+  const [listenersPollLoading, setListenersPollLoading] = useState(false);
+  const listenersPollIntervalRef = useRef<number | null>(null);
+  const [executionStarting, setExecutionStarting] = useState(false);
+  const [stopRequesting, setStopRequesting] = useState(false);
+  const pollIntervalRef = useRef<number | null>(null);
+  // HF13: historial de métricas para el mini-chart (response time avg vs tiempo)
+  const [metricsHistory, setMetricsHistory] = useState<Array<{ time: number; avg_response_ms: number }>>([]);
+
+  // ==========================================================================
+  // Sprint 2.5e.2 — Análisis IA + Historial
+  // ==========================================================================
+  const [analyzingAI, setAnalyzingAI] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<{ test_execution_id: string; dashboard_url: string } | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [executionHistory, setExecutionHistory] = useState<DesignExecutionHistoryItem[]>([]);
 
   // Snapshot del design para reusar en upsert (campos no editables desde el editor)
   const [designSessionId, setDesignSessionId] = useState<string>('');
@@ -139,6 +240,22 @@ export default function AIScriptEditor() {
       console.error('Error cargando data files:', e);
     } finally {
       setDataFilesLoading(false);
+    }
+  }, [designId]);
+
+  // Sprint 2.5c.1 (HF2.1): re-parsea el JMX del diseño para refrescar el árbol
+  // tras autocrearse un CSV Data Set al subir un Data File con variables.
+  const reloadStructure = useCallback(async () => {
+    if (!designId) return;
+    try {
+      const design = await aiScriptDesignsAPI.getById(designId);
+      if (design.current_jmx) {
+        const parsed = await aiScriptStructureAPI.parseJmx(design.current_jmx);
+        setOriginalJmx(design.current_jmx);
+        setStructure(parsed);
+      }
+    } catch (e) {
+      console.error('Error recargando estructura:', e);
     }
   }, [designId]);
 
@@ -280,6 +397,20 @@ export default function AIScriptEditor() {
   // Suppress unused-var warning for snapshot (será usado cuando upsert acepte 'name')
   void designNameSnapshot;
 
+  // Descarga el JMX actual del diseño (originalJmx se mantiene en sync con cada edición).
+  const handleDownloadJmx = useCallback(async () => {
+    if (!originalJmx) return;
+    setDownloadingJmx(true);
+    try {
+      const safeName = (designName || 'diseno').replace(/[^\w\-]/g, '_');
+      await aiScriptDesignsAPI.downloadJmx(originalJmx, `${safeName}.jmx`);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Error al descargar JMX');
+    } finally {
+      setDownloadingJmx(false);
+    }
+  }, [originalJmx, designName]);
+
   // ==========================================================================
   // Helpers de árbol
   // ==========================================================================
@@ -292,6 +423,654 @@ export default function AIScriptEditor() {
     if (!searchFilter.trim()) return true;
     return text.toLowerCase().includes(searchFilter.toLowerCase());
   };
+
+  // ==========================================================================
+  // HF7.A — Handlers de mutación estructural del árbol
+  // ==========================================================================
+
+  const openAddModal = useCallback(
+    (type: AddElementType, contextId?: string) => {
+      setAddModalType(type);
+      setAddModalContext(contextId);
+      setAddModalOpen(true);
+    },
+    [],
+  );
+
+  const newLocalId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'id-' + Math.random().toString(36).slice(2, 14);
+  };
+
+  const handleAddElement = useCallback(
+    (data: any) => {
+      if (!structure) return;
+      const next: AIScriptStructure = JSON.parse(JSON.stringify(structure));
+
+      if (addModalType === 'sampler' && addModalContext) {
+        const tg = next.thread_groups.find((t) => t.id === addModalContext);
+        if (!tg) return;
+        const newSampler: any = {
+          id: newLocalId(),
+          type: 'sampler',
+          name: data.name || 'Nuevo Sampler',
+          enabled: true,
+          method: data.method || 'GET',
+          domain: data.domain || null,
+          port: null,
+          protocol: null,
+          path: data.path || '/',
+          follow_redirects: true,
+          auto_redirects: false,
+          use_keepalive: true,
+          content_encoding: 'UTF-8',
+          body: { mode: 'none', raw_text: null, form_args: [], body_type: 'auto' },
+          children: [],
+          raw_xml: '',
+          is_dirty: true,
+        };
+        tg.children.push({
+          type: 'sampler',
+          order: tg.children.length,
+          sampler: newSampler,
+          controller: null,
+          unsupported: null,
+        } as any);
+        tg.is_dirty = true;
+      } else if (addModalType === 'sampler_child' && addModalContext) {
+        const childKind: string = data.child_kind;
+        const childData = data.data || {};
+
+        let sampler: any = null;
+        for (const tg of next.thread_groups) {
+          const found = tg.children.find(
+            (ch) => ch.type === 'sampler' && ch.sampler?.id === addModalContext,
+          );
+          if (found && found.sampler) {
+            sampler = found.sampler;
+            tg.is_dirty = true;
+            break;
+          }
+        }
+        if (!sampler) return;
+
+        let newChildData: any = null;
+        if (childKind === 'header_manager') {
+          newChildData = {
+            id: newLocalId(),
+            enabled: true,
+            headers: [],
+            is_dirty: true,
+          };
+        } else if (childKind === 'response_assertion') {
+          newChildData = {
+            id: newLocalId(),
+            enabled: true,
+            name: childData.name || 'Response Assertion',
+            test_field: 'Assertion.response_code',
+            test_type: 2,
+            test_strings: ['200'],
+            custom_message: null,
+            assume_success: false,
+            negate: false,
+            pattern_match: 'contains',
+            is_dirty: true,
+          };
+        } else if (childKind === 'regex_extractor') {
+          newChildData = {
+            id: newLocalId(),
+            enabled: true,
+            name: childData.name || 'Regex Extractor',
+            refname: childData.refname || 'var',
+            regex: childData.regex || '',
+            template: '$1$',
+            match_number: '1',
+            default: 'NOT_FOUND',
+            default_empty_value: false,
+            use_headers: 'false',
+            scope: null,
+            extract_from: 'body',
+            is_dirty: true,
+          };
+        } else if (childKind === 'json_extractor') {
+          newChildData = {
+            id: newLocalId(),
+            enabled: true,
+            name: childData.name || 'JSON Extractor',
+            refname: childData.refname || 'var',
+            json_path: childData.json_path || '$.id',
+            match_number: '1',
+            default: 'NOT_FOUND',
+            is_dirty: true,
+          };
+        } else if (childKind === 'constant_timer') {
+          newChildData = {
+            id: newLocalId(),
+            enabled: true,
+            name: childData.name || 'Constant Timer',
+            delay_ms: 1000,
+            is_dirty: true,
+          };
+        }
+        if (!newChildData) return;
+
+        sampler.children.push({
+          type: childKind,
+          order: sampler.children.length,
+          data: newChildData,
+        });
+        sampler.is_dirty = true;
+      } else if (addModalType === 'udv') {
+        if (!data.name) return;
+        if (next.user_defined_variables.some((u) => u.name === data.name)) {
+          alert(`Ya existe una variable con nombre '${data.name}'`);
+          return;
+        }
+        next.user_defined_variables.push({
+          name: data.name,
+          value: data.value || '',
+          metadata: '=',
+          description: null,
+          is_dirty: true,
+        } as any);
+      } else if (addModalType === 'csv_dataset') {
+        next.csv_data_sets.push({
+          id: newLocalId(),
+          testname: data.testname || 'CSV Data Set',
+          enabled: true,
+          filename: data.filename || '',
+          file_encoding: null,
+          variable_names: Array.isArray(data.variable_names) ? data.variable_names : [],
+          delimiter: ',',
+          quoted_data: false,
+          recycle: true,
+          stop_thread: false,
+          share_mode: 'shareMode.all',
+          ignore_first_line: false,
+          is_dirty: true,
+        } as any);
+      } else if (addModalType === 'listener') {
+        // HF7.B — los listeners van con raw_xml inicial para que el regenerator
+        // del backend (passthrough total) los respete tal cual. Replica el
+        // mismo esquema del applier Python en backend/.../refine_operations_applier.py.
+        const listenerKind: string = data.listener_kind || 'view_results_tree';
+        // HF7.B.1 — 11 tipos (replica LISTENER_KIND_DEFAULTS del applier Python).
+        type ListenerDef = {
+          guiclass: string;
+          testclass: string;
+          nameDefault: string;
+          schemaKind: string;
+          interval?: number;          // solo jpgc → interval_grouping
+          filenamePattern?: string;   // solo *_with_csv → filename default
+        };
+        const defaults: Record<string, ListenerDef> = {
+          view_results_tree:           { guiclass: 'ViewResultsFullVisualizer', testclass: 'ResultCollector',  nameDefault: 'View Results Tree',    schemaKind: 'view_results_tree' },
+          view_results_tree_with_csv:  { guiclass: 'ViewResultsFullVisualizer', testclass: 'ResultCollector',  nameDefault: 'View Results Tree (errors + CSV)', schemaKind: 'view_results_tree', filenamePattern: 'resultados_log_${__time(d-MMM-yyyy)}-${__time(HHmmss)}.csv' },
+          summary_report:              { guiclass: 'SummaryReport',             testclass: 'ResultCollector',  nameDefault: 'Summary Report',       schemaKind: 'summary_report' },
+          aggregate_report:            { guiclass: 'StatVisualizer',            testclass: 'ResultCollector',  nameDefault: 'Informe Agregado',     schemaKind: 'aggregate_report' },
+          aggregate_report_with_csv:   { guiclass: 'StatVisualizer',            testclass: 'ResultCollector',  nameDefault: 'Informe Agregado (con CSV)', schemaKind: 'aggregate_report', filenamePattern: 'resultados_general_${__time(d-MMM-yyyy)}-${__time(HHmmss)}.jtl' },
+          response_time_graph:         { guiclass: 'RespTimeGraphVisualizer',   testclass: 'ResultCollector',  nameDefault: 'Response Time Graph',  schemaKind: 'other' },
+          jpgc_response_times_over_time:  { guiclass: 'kg.apc.jmeter.vizualizers.ResponseTimesOverTimeGui',  testclass: 'kg.apc.jmeter.vizualizers.CorrectedResultCollector', nameDefault: 'jp@gc - Response Times Over Time',  schemaKind: 'kg_apc_response_times_over_time',  interval: 500 },
+          jpgc_response_codes_per_second: { guiclass: 'kg.apc.jmeter.vizualizers.ResponseCodesPerSecondGui', testclass: 'kg.apc.jmeter.vizualizers.CorrectedResultCollector', nameDefault: 'jp@gc - Response Codes per Second', schemaKind: 'kg_apc_response_codes_per_second', interval: 1000 },
+          jpgc_transactions_per_second:   { guiclass: 'kg.apc.jmeter.vizualizers.TransactionsPerSecondGui',  testclass: 'kg.apc.jmeter.vizualizers.CorrectedResultCollector', nameDefault: 'jp@gc - Transactions per Second',  schemaKind: 'kg_apc_transactions_per_second',  interval: 1000 },
+          jpgc_active_threads_over_time:  { guiclass: 'kg.apc.jmeter.vizualizers.ThreadsStateOverTimeGui',   testclass: 'kg.apc.jmeter.vizualizers.CorrectedResultCollector', nameDefault: 'jp@gc - Active Threads Over Time',  schemaKind: 'kg_apc_active_threads_over_time',  interval: 1000 },
+          backend_listener:            { guiclass: 'BackendListenerGui',        testclass: 'BackendListener',  nameDefault: 'Backend Listener (InfluxDB)', schemaKind: 'other' },
+        };
+        const def = defaults[listenerKind] || defaults.view_results_tree;
+        const listenerName = (data.name || def.nameDefault).trim() || def.nameDefault;
+        const xmlEscape = (s: string) =>
+          String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+        let rawXml = '';
+        if (listenerKind === 'backend_listener') {
+          const influxArgs = [
+            { name: 'influxdbMetricsSender', value: 'org.apache.jmeter.visualizers.backend.influxdb.HttpMetricsSender' },
+            { name: 'influxdbUrl', value: 'http://influxdb:8086/api/v2/write?org=performance&bucket=jmeter&precision=ms' },
+            { name: 'application', value: '${__P(application,Kinetix Test)}' },
+            { name: 'measurement', value: 'jmeter' },
+            { name: 'summaryOnly', value: 'false' },
+            { name: 'samplersRegex', value: '.*' },
+            { name: 'percentiles', value: '90;95;99' },
+            { name: 'testTitle', value: 'Test name' },
+            { name: 'eventTags', value: '' },
+            { name: 'TOKEN', value: 'jmeter-token-2024-super-secret' },
+          ];
+          const argsXml = influxArgs
+            .map(
+              (a) =>
+                `          <elementProp name="${xmlEscape(a.name)}" elementType="Argument">\n` +
+                `            <stringProp name="Argument.name">${xmlEscape(a.name)}</stringProp>\n` +
+                `            <stringProp name="Argument.value">${xmlEscape(a.value)}</stringProp>\n` +
+                `            <stringProp name="Argument.metadata">=</stringProp>\n` +
+                `          </elementProp>`,
+            )
+            .join('\n');
+          rawXml =
+            `<BackendListener guiclass="BackendListenerGui" testclass="BackendListener" testname="${xmlEscape(listenerName)}" enabled="true">\n` +
+            `  <elementProp name="arguments" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">\n` +
+            `    <collectionProp name="Arguments.arguments">\n` +
+            `${argsXml}\n` +
+            `    </collectionProp>\n` +
+            `  </elementProp>\n` +
+            `  <stringProp name="classname">org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient</stringProp>\n` +
+            `</BackendListener>`;
+        } else {
+          // saveConfig estándar compartido por ResultCollector y CorrectedResultCollector
+          const saveConfig =
+            `  <objProp>\n` +
+            `    <name>saveConfig</name>\n` +
+            `    <value class="SampleSaveConfiguration">\n` +
+            `      <time>true</time>\n      <latency>true</latency>\n      <timestamp>true</timestamp>\n      <success>true</success>\n      <label>true</label>\n      <code>true</code>\n      <message>true</message>\n      <threadName>true</threadName>\n      <dataType>true</dataType>\n      <encoding>false</encoding>\n      <assertions>true</assertions>\n      <subresults>true</subresults>\n      <responseData>false</responseData>\n      <samplerData>false</samplerData>\n      <xml>false</xml>\n      <fieldNames>true</fieldNames>\n      <responseHeaders>false</responseHeaders>\n      <requestHeaders>false</requestHeaders>\n      <responseDataOnError>false</responseDataOnError>\n      <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>\n      <assertionsResultsToSave>0</assertionsResultsToSave>\n      <bytes>true</bytes>\n      <sentBytes>true</sentBytes>\n      <url>true</url>\n      <threadCounts>true</threadCounts>\n      <idleTime>true</idleTime>\n      <connectTime>true</connectTime>\n` +
+            `    </value>\n` +
+            `  </objProp>\n`;
+          const fileName = def.filenamePattern || '';
+
+          if (listenerKind.startsWith('jpgc_')) {
+            // Gráficas jp@gc → CorrectedResultCollector
+            const tag = 'kg.apc.jmeter.vizualizers.CorrectedResultCollector';
+            rawXml =
+              `<${tag} guiclass="${def.guiclass}" testclass="${tag}" testname="${xmlEscape(listenerName)}" enabled="true">\n` +
+              `  <boolProp name="ResultCollector.error_logging">false</boolProp>\n` +
+              saveConfig +
+              `  <stringProp name="filename">${xmlEscape(fileName)}</stringProp>\n` +
+              `  <longProp name="interval_grouping">${def.interval ?? 1000}</longProp>\n` +
+              `  <boolProp name="graph_aggregated">false</boolProp>\n` +
+              `  <stringProp name="include_sample_labels"></stringProp>\n` +
+              `  <stringProp name="exclude_sample_labels"></stringProp>\n` +
+              `  <stringProp name="start_offset"></stringProp>\n` +
+              `  <stringProp name="end_offset"></stringProp>\n` +
+              `  <boolProp name="include_checkbox_state">false</boolProp>\n` +
+              `  <boolProp name="exclude_checkbox_state">false</boolProp>\n` +
+              `</${tag}>`;
+          } else {
+            rawXml =
+              `<ResultCollector guiclass="${def.guiclass}" testclass="ResultCollector" testname="${xmlEscape(listenerName)}" enabled="true">\n` +
+              `  <boolProp name="ResultCollector.error_logging">false</boolProp>\n` +
+              saveConfig +
+              `  <stringProp name="filename">${xmlEscape(fileName)}</stringProp>\n` +
+              `</ResultCollector>`;
+          }
+        }
+
+        next.listeners.push({
+          id: newLocalId(),
+          kind: def.schemaKind,
+          guiclass: def.guiclass,
+          name: listenerName,
+          enabled: true,
+          filename: def.filenamePattern || null,
+          raw_xml: rawXml,
+          is_dirty: false, // raw_xml válido — el regenerator lo respeta tal cual
+        } as any);
+      }
+
+      setStructure(next);
+    },
+    [addModalType, addModalContext, structure],
+  );
+
+  const handleDeleteElement = useCallback(
+    (
+      kind: DeletableKind,
+      id: string,
+      opts: { sampler_id?: string; udv_name?: string } = {},
+    ) => {
+      if (!structure) return;
+      if (!window.confirm('¿Eliminar este elemento?')) return;
+      const next: AIScriptStructure = JSON.parse(JSON.stringify(structure));
+
+      if (kind === 'thread_group') {
+        next.thread_groups = next.thread_groups.filter((t) => t.id !== id);
+      } else if (kind === 'sampler') {
+        for (const tg of next.thread_groups) {
+          const idx = tg.children.findIndex(
+            (ch) => ch.type === 'sampler' && ch.sampler?.id === id,
+          );
+          if (idx !== -1) {
+            tg.children.splice(idx, 1);
+            tg.is_dirty = true;
+            break;
+          }
+        }
+      } else if (kind === 'sampler_child' && opts.sampler_id) {
+        for (const tg of next.thread_groups) {
+          for (const ch of tg.children) {
+            if (ch.type === 'sampler' && ch.sampler?.id === opts.sampler_id) {
+              const idx = ch.sampler.children.findIndex(
+                (sc) => (sc.data as any).id === id,
+              );
+              if (idx !== -1) {
+                ch.sampler.children.splice(idx, 1);
+                ch.sampler.is_dirty = true;
+                tg.is_dirty = true;
+                break;
+              }
+            }
+          }
+        }
+      } else if (kind === 'csv_data_set') {
+        next.csv_data_sets = next.csv_data_sets.filter((d) => d.id !== id);
+      } else if (kind === 'listener') {
+        next.listeners = next.listeners.filter((l) => l.id !== id);
+      } else if (kind === 'udv' && opts.udv_name) {
+        next.user_defined_variables = next.user_defined_variables.filter(
+          (u) => u.name !== opts.udv_name,
+        );
+      }
+
+      // Si el elemento borrado era el seleccionado, limpiar selección
+      setSelected({ kind: 'overview' });
+      setStructure(next);
+    },
+    [structure],
+  );
+
+  const handleToggleEnabled = useCallback(
+    (
+      kind: ToggleableKind,
+      id: string,
+      nextEnabled: boolean,
+      opts: { sampler_id?: string } = {},
+    ) => {
+      if (!structure) return;
+      const next: AIScriptStructure = JSON.parse(JSON.stringify(structure));
+
+      if (kind === 'thread_group') {
+        const tg = next.thread_groups.find((t) => t.id === id);
+        if (tg) {
+          tg.enabled = nextEnabled;
+          tg.is_dirty = true;
+        }
+      } else if (kind === 'sampler') {
+        for (const tg of next.thread_groups) {
+          const ch = tg.children.find(
+            (c) => c.type === 'sampler' && c.sampler?.id === id,
+          );
+          if (ch?.sampler) {
+            ch.sampler.enabled = nextEnabled;
+            ch.sampler.is_dirty = true;
+            break;
+          }
+        }
+      } else if (kind === 'sampler_child' && opts.sampler_id) {
+        for (const tg of next.thread_groups) {
+          for (const ch of tg.children) {
+            if (ch.type === 'sampler' && ch.sampler?.id === opts.sampler_id) {
+              const sc = ch.sampler.children.find(
+                (s) => (s.data as any).id === id,
+              );
+              if (sc) {
+                (sc.data as any).enabled = nextEnabled;
+                (sc.data as any).is_dirty = true;
+                ch.sampler.is_dirty = true;
+              }
+            }
+          }
+        }
+      } else if (kind === 'csv_data_set') {
+        const ds = next.csv_data_sets.find((d) => d.id === id);
+        if (ds) {
+          ds.enabled = nextEnabled;
+          ds.is_dirty = true;
+        }
+      } else if (kind === 'listener') {
+        const l = next.listeners.find((x) => x.id === id);
+        if (l) {
+          l.enabled = nextEnabled;
+          l.is_dirty = true;
+        }
+      } else if (kind === 'cookie_manager' && next.cookie_manager) {
+        next.cookie_manager.enabled = nextEnabled;
+        next.cookie_manager.is_dirty = true;
+      } else if (kind === 'cache_manager' && next.cache_manager) {
+        next.cache_manager.enabled = nextEnabled;
+        next.cache_manager.is_dirty = true;
+      }
+
+      setStructure(next);
+    },
+    [structure],
+  );
+
+  const treeActions: TreeActions = useMemo(
+    () => ({
+      openAdd: openAddModal,
+      onDelete: handleDeleteElement,
+      onToggle: handleToggleEnabled,
+    }),
+    [openAddModal, handleDeleteElement, handleToggleEnabled],
+  );
+
+  // ==========================================================================
+  // Sprint 2.5c — Runner del smoke test
+  // ==========================================================================
+  const runSmokeTest = useCallback(
+    async (config: { numThreads: number; loops: number } = { numThreads: 1, loops: 1 }) => {
+      if (!designId) return;
+      setSmokeRunning(true);
+      setSmokeResult(null);
+      setSmokeError(null);
+      setSmokeShowLog(false);
+      try {
+        const r = await smokeTestAPI.run(designId, {
+          numThreads: config.numThreads,
+          loops: config.loops,
+          timeoutSec: 60,
+        });
+        setSmokeResult(r);
+      } catch (e: any) {
+        const msg = e?.response?.data?.detail || e?.message || 'Error desconocido';
+        setSmokeError(String(msg));
+      } finally {
+        setSmokeRunning(false);
+      }
+    },
+    [designId],
+  );
+
+  // ==========================================================================
+  // Sprint 2.5e.1 — Handlers de ejecución FULL
+  // ==========================================================================
+  const handleStartExecution = useCallback(async () => {
+    if (!designId) return;
+    setExecutionStarting(true);
+    setMetricsHistory([]); // HF13: reset del mini-chart
+    try {
+      const resp = await executionAPI.start(designId);
+      setExecuteModalOpen(false);
+      setExecutionLiveOpen(true);
+      setCurrentExecution({
+        execution_id: resp.execution_id,
+        status: 'starting',
+        elapsed_sec: 0,
+        metrics: {},
+      });
+      // Polling cada 2s al endpoint /live-metrics
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = window.setInterval(async () => {
+        try {
+          const metrics = await executionAPI.getLiveMetrics(resp.execution_id);
+          setCurrentExecution(metrics);
+          // HF13: acumular punto para el mini-chart (máximo 60 puntos = ~2 min)
+          setMetricsHistory((prev) => {
+            const newPoint = {
+              time: Math.round(metrics.elapsed_sec),
+              avg_response_ms: metrics.metrics.avg_response_ms ?? 0,
+            };
+            return [...prev, newPoint].slice(-60);
+          });
+          if (['completed', 'cancelled', 'error'].includes(metrics.status)) {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+          }
+        } catch (e) {
+          // Errores transitorios de polling, ignorar
+          console.warn('Poll error:', e);
+        }
+      }, 2000);
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e?.message || 'Error iniciando ejecución';
+      alert(msg);
+    } finally {
+      setExecutionStarting(false);
+    }
+  }, [designId]);
+
+  const handleStopExecution = useCallback(async () => {
+    if (!currentExecution) return;
+    if (!confirm('¿Detener la ejecución en curso? La ejecución quedará en estado cancelled.')) return;
+    setStopRequesting(true);
+    try {
+      await executionAPI.stop(currentExecution.execution_id);
+      // El polling actualizará el estado automáticamente
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Error deteniendo');
+    } finally {
+      setStopRequesting(false);
+    }
+  }, [currentExecution]);
+
+  const handleCloseExecutionPanel = useCallback(() => {
+    // Sprint 2.6b: cleanup del cache backend de listeners (Opción R híbrida).
+    if (currentExecution) {
+      executionAPI.clearListenersCache(currentExecution.execution_id).catch((e) => {
+        console.warn('Error clearing listeners cache:', e);
+      });
+    }
+
+    setExecutionLiveOpen(false);
+
+    // Si terminó, limpiar para la próxima ejecución
+    if (currentExecution && ['completed', 'cancelled', 'error'].includes(currentExecution.status)) {
+      setCurrentExecution(null);
+      // Sprint 2.5e.2: limpiar también el resultado de análisis IA
+      setAnalysisResult(null);
+      setAnalysisError(null);
+    }
+
+    // Sprint 2.6b: salir del modo viewer de listeners siempre al cerrar el drawer.
+    setListenersState(null);
+  }, [currentExecution]);
+
+  // ==========================================================================
+  // Sprint 2.6b — Modo ejecución: routing del panel central a ListenerLiveViewer
+  // ==========================================================================
+  // Modo ejecución: drawer derecho abierto Y hay una ejecución activa/reciente.
+  const isInExecutionMode = useMemo(
+    () => executionLiveOpen && currentExecution !== null,
+    [executionLiveOpen, currentExecution],
+  );
+
+  // Listener actualmente seleccionado en el árbol (derivado de `selected`).
+  const activeListener = useMemo(() => {
+    if (selected.kind !== 'listener') return null;
+    return structure?.listeners.find((l) => l.id === selected.id) || null;
+  }, [selected, structure]);
+
+  // ¿El panel central debe mostrar el viewer en vivo en vez del editor estructural?
+  const isViewingLiveListener = isInExecutionMode && activeListener !== null;
+
+  // Polling de /listeners-state cada 2s mientras se está viendo un listener en vivo.
+  const currentExecutionId = currentExecution?.execution_id;
+  const currentExecutionStatus = currentExecution?.status;
+  useEffect(() => {
+    if (!isViewingLiveListener || !currentExecutionId) {
+      if (listenersPollIntervalRef.current) {
+        clearInterval(listenersPollIntervalRef.current);
+        listenersPollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const fetchState = async () => {
+      setListenersPollLoading(true);
+      try {
+        const state = await executionAPI.getListenersState(currentExecutionId);
+        if (!cancelled) setListenersState(state);
+      } catch (e) {
+        console.warn('Error fetching listeners state:', e);
+      } finally {
+        if (!cancelled) setListenersPollLoading(false);
+      }
+    };
+
+    // Fetch inicial inmediato.
+    void fetchState();
+
+    // Si la ejecución sigue corriendo → poll cada 2s. Si ya terminó, un solo fetch basta.
+    if (currentExecutionStatus === 'running' || currentExecutionStatus === 'starting') {
+      listenersPollIntervalRef.current = window.setInterval(() => {
+        void fetchState();
+      }, 2000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (listenersPollIntervalRef.current) {
+        clearInterval(listenersPollIntervalRef.current);
+        listenersPollIntervalRef.current = null;
+      }
+    };
+  }, [isViewingLiveListener, currentExecutionId, currentExecutionStatus]);
+
+  // ==========================================================================
+  // Sprint 2.5e.2 — Handlers de análisis IA + historial
+  // ==========================================================================
+  const handleAnalyzeAI = useCallback(async () => {
+    if (!currentExecution) return;
+    setAnalyzingAI(true);
+    setAnalysisError(null);
+    setAnalysisResult(null);
+    try {
+      const resp = await executionAPI.analyzeWithAI(currentExecution.execution_id);
+      setAnalysisResult({
+        test_execution_id: resp.test_execution_id,
+        dashboard_url: resp.dashboard_url,
+      });
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e?.message || 'Error en pipeline IA';
+      setAnalysisError(String(msg));
+    } finally {
+      setAnalyzingAI(false);
+    }
+  }, [currentExecution]);
+
+  const handleOpenDashboard = useCallback(() => {
+    if (!analysisResult) return;
+    window.open(analysisResult.dashboard_url, '_blank', 'noopener,noreferrer');
+  }, [analysisResult]);
+
+  const handleOpenHistory = useCallback(async () => {
+    if (!designId) return;
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const items = await executionAPI.history(designId, 20);
+      setExecutionHistory(items);
+    } catch (e: any) {
+      console.error('Error cargando historial:', e);
+      setExecutionHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [designId]);
+
+  // Cleanup del polling al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, []);
+  // Sprint 2.5c.1: ya NO se auto-ejecuta al abrir; el usuario configura
+  // usuarios/iteraciones y pulsa "Ejecutar smoke test" dentro del modal.
 
   // ==========================================================================
   // Render
@@ -351,6 +1130,24 @@ export default function AIScriptEditor() {
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setExecuteModalOpen(true)}
+            disabled={!designId || executionStarting || currentExecution?.status === 'running'}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Ejecución completa con la configuración del Thread Group"
+          >
+            <Zap className="w-4 h-4" />
+            Ejecutar
+          </button>
+          <button
+            onClick={() => setSmokeModalOpen(true)}
+            disabled={!designId || smokeRunning}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Ejecutar smoke test (1 usuario, 1 iteración) con JMeter real"
+          >
+            <Play className="w-4 h-4" />
+            Probar (Smoke)
+          </button>
+          <button
             onClick={() => {
               if (!designId) return;
               navigate(`/ai-script-designer?designId=${designId}&fromEditor=true`);
@@ -361,6 +1158,33 @@ export default function AIScriptEditor() {
           >
             <Sparkles className="w-4 h-4" />
             Pedir a IA
+          </button>
+          <button
+            onClick={handleOpenHistory}
+            disabled={!designId}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Historial de ejecuciones de este diseño"
+          >
+            <History className="w-4 h-4" />
+            Historial
+          </button>
+          <button
+            onClick={handleDownloadJmx}
+            disabled={!originalJmx || downloadingJmx}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Descargar el JMX actual del diseño para abrir en JMeter desktop"
+          >
+            {downloadingJmx ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Descargando…
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Descargar .jmx
+              </>
+            )}
           </button>
           <button
             onClick={() => setShowXmlModal(true)}
@@ -421,28 +1245,442 @@ export default function AIScriptEditor() {
               onToggleExpand={toggleExpand}
               matchesFilter={matchesFilter}
               dataFiles={dataFiles}
+              treeActions={treeActions}
             />
           </div>
         </div>
 
         {/* Panel derecho: detalle */}
         <div className="flex-1 overflow-y-auto">
-          <DetailPanel
-            structure={structure}
-            selected={selected}
-            onUpdateStructure={updateStructure}
-            designId={designId || ''}
-            dataFiles={dataFiles}
-            dataFilesLoading={dataFilesLoading}
-            reloadDataFiles={reloadDataFiles}
-            onDataFileSelect={setSelected}
-          />
+          {/* Sprint 2.6b: en modo ejecución, un listener seleccionado muestra el
+              viewer en vivo en vez del editor estructural. */}
+          {isViewingLiveListener && activeListener ? (
+            <ListenerLiveViewer
+              listenerKind={activeListener.kind}
+              listenerName={activeListener.name}
+              state={listenersState}
+              loading={listenersPollLoading}
+              executionStatus={currentExecution?.status || 'unknown'}
+            />
+          ) : (
+            <DetailPanel
+              structure={structure}
+              selected={selected}
+              onUpdateStructure={updateStructure}
+              designId={designId || ''}
+              dataFiles={dataFiles}
+              dataFilesLoading={dataFilesLoading}
+              reloadDataFiles={reloadDataFiles}
+              reloadStructure={reloadStructure}
+              onDataFileSelect={setSelected}
+            />
+          )}
         </div>
       </div>
 
       {/* Modal XML raw */}
       {showXmlModal && (
         <XmlRawModal jmx={originalJmx} onClose={() => setShowXmlModal(false)} />
+      )}
+
+      {/* HF7.A — Modal de agregar elemento */}
+      <AddElementModal
+        open={addModalOpen}
+        elementType={addModalType}
+        onClose={() => setAddModalOpen(false)}
+        onConfirm={handleAddElement}
+      />
+
+      {/* Sprint 2.5c — Modal de Smoke Test */}
+      <SmokeTestModal
+        open={smokeModalOpen}
+        running={smokeRunning}
+        result={smokeResult}
+        error={smokeError}
+        showLog={smokeShowLog}
+        config={smokeConfig}
+        onConfigChange={setSmokeConfig}
+        onRun={() => void runSmokeTest(smokeConfig)}
+        onClose={() => {
+          setSmokeModalOpen(false);
+          // Limpiar estado tras cerrar para que la próxima vez vuelva a la config
+          setTimeout(() => {
+            setSmokeResult(null);
+            setSmokeError(null);
+            setSmokeShowLog(false);
+          }, 200);
+        }}
+        onRetry={() => {
+          setSmokeResult(null);
+          setSmokeError(null);
+          void runSmokeTest(smokeConfig);
+        }}
+        onToggleLog={() => setSmokeShowLog((v) => !v)}
+      />
+
+      {/* Sprint 2.5e.1: Modal pre-ejecución FULL */}
+      {executeModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-[500px] max-w-full">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-purple-600" />
+              <h3 className="text-lg font-semibold">Ejecución completa</h3>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm space-y-2">
+                    <p className="font-medium text-amber-900">Esto NO es un smoke test.</p>
+                    <p className="text-amber-800">
+                      JMeter ejecutará el JMX con la configuración del Thread Group
+                      (usuarios, ramp-up, duración) tal como está definida en el diseño.
+                    </p>
+                    <p className="text-amber-800">
+                      Las métricas se enviarán a <strong>InfluxDB</strong> y se podrán visualizar
+                      en Grafana en tiempo real.
+                    </p>
+                    <p className="text-amber-800">
+                      Duración estimada: <strong>varios minutos</strong> según tu Thread Group.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-sm text-gray-700">
+                ¿Iniciar ejecución del diseño?
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setExecuteModalOpen(false)}
+                disabled={executionStarting}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-white disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleStartExecution}
+                disabled={executionStarting}
+                className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {executionStarting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Iniciando…
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    Ejecutar ahora
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sprint 2.5e.1: Drawer de ejecución live */}
+      {executionLiveOpen && currentExecution && (
+        <div className="fixed inset-y-0 right-0 w-[400px] bg-white shadow-2xl z-40 flex flex-col border-l border-gray-200">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-purple-50 to-indigo-50">
+            <div className="flex items-center gap-2">
+              <Zap className={`w-5 h-5 ${currentExecution.status === 'running' ? 'text-purple-600 animate-pulse' : 'text-gray-500'}`} />
+              <h3 className="font-semibold">Ejecución #{currentExecution.execution_id}</h3>
+            </div>
+            <button onClick={handleCloseExecutionPanel} className="text-gray-400 hover:text-gray-600">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {/* Status badge */}
+            <div className={`rounded-lg p-3 ${
+              currentExecution.status === 'running' ? 'bg-purple-50 border border-purple-200' :
+              currentExecution.status === 'starting' ? 'bg-blue-50 border border-blue-200' :
+              currentExecution.status === 'completed' ? 'bg-emerald-50 border border-emerald-200' :
+              currentExecution.status === 'error' ? 'bg-red-50 border border-red-200' :
+              currentExecution.status === 'cancelled' ? 'bg-gray-100 border border-gray-300' :
+              'bg-gray-50 border border-gray-200'
+            }`}>
+              <div className="text-xs text-gray-600 mb-1">Estado</div>
+              <div className="text-lg font-semibold capitalize flex items-center gap-2">
+                {currentExecution.status === 'running' && <Loader2 className="w-4 h-4 animate-spin" />}
+                {currentExecution.status === 'completed' && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                {currentExecution.status === 'error' && <XCircle className="w-4 h-4 text-red-600" />}
+                {currentExecution.status === 'cancelled' && <X className="w-4 h-4 text-gray-500" />}
+                {currentExecution.status}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Tiempo transcurrido: {Math.floor(currentExecution.elapsed_sec / 60)}m {Math.floor(currentExecution.elapsed_sec % 60)}s
+              </div>
+            </div>
+
+            {/* Métricas tiempo real */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-gray-50 rounded p-3">
+                <div className="text-xs text-gray-600">Samples totales</div>
+                <div className="text-2xl font-semibold">{currentExecution.metrics.total_samples ?? 0}</div>
+              </div>
+              <div className="bg-gray-50 rounded p-3">
+                <div className="text-xs text-gray-600">Throughput</div>
+                <div className="text-2xl font-semibold">
+                  {currentExecution.metrics.throughput_per_sec?.toFixed(1) ?? '0.0'}
+                  <span className="text-sm text-gray-500"> /s</span>
+                </div>
+              </div>
+              <div className="bg-emerald-50 rounded p-3">
+                <div className="text-xs text-emerald-700">Éxitos</div>
+                <div className="text-2xl font-semibold text-emerald-900">
+                  {currentExecution.metrics.successful_samples ?? 0}
+                </div>
+              </div>
+              <div className="bg-red-50 rounded p-3">
+                <div className="text-xs text-red-700">Errores</div>
+                <div className="text-2xl font-semibold text-red-900">
+                  {currentExecution.metrics.failed_samples ?? 0}
+                </div>
+              </div>
+              <div className="bg-blue-50 rounded p-3 col-span-2">
+                <div className="text-xs text-blue-700">Response time promedio</div>
+                <div className="text-2xl font-semibold text-blue-900">
+                  {currentExecution.metrics.avg_response_ms ?? 0}<span className="text-sm font-normal text-blue-700"> ms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Tasa de error */}
+            {(currentExecution.metrics.error_rate_pct ?? 0) > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded p-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>Tasa de errores: <strong>{currentExecution.metrics.error_rate_pct?.toFixed(2)}%</strong></span>
+                </div>
+              </div>
+            )}
+
+            {/* HF13: Mini-chart de response time (placeholder hasta Sprint 2.6) */}
+            {metricsHistory.length > 1 && (
+              <div className="bg-white border border-gray-200 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-medium text-gray-700">Response time avg (ms)</h4>
+                  <span className="text-xs text-gray-400">últimos {metricsHistory.length} puntos</span>
+                </div>
+                <div style={{ width: '100%', height: 140 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={metricsHistory} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 10 }}
+                        label={{ value: 'seg', position: 'insideBottomRight', offset: -5, style: { fontSize: 10 } }}
+                      />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        contentStyle={{ fontSize: 11, padding: '4px 8px' }}
+                        formatter={(value: number) => [`${value} ms`, 'Avg']}
+                        labelFormatter={(label) => `${label}s`}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avg_response_ms"
+                        stroke="#4f46e5"
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-xs text-gray-400 mt-1 italic">
+                  Vista simplificada — listeners en vivo vendrán en Sprint 2.6
+                </p>
+              </div>
+            )}
+
+            {/* Sprint 2.5e.2: Generar análisis IA */}
+            {currentExecution.status === 'completed' && !analysisResult && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                <p className="text-sm text-indigo-900 mb-2 font-medium">
+                  Ejecución completada
+                </p>
+                <p className="text-xs text-indigo-700 mb-3">
+                  Genera el análisis IA del JTL (12 secciones + verdict + conclusiones).
+                  Tarda aproximadamente 1 minuto.
+                </p>
+                {analysisError && (
+                  <div className="bg-red-50 border border-red-200 rounded p-2 mb-2 text-xs text-red-700">
+                    {analysisError}
+                  </div>
+                )}
+                <button
+                  onClick={handleAnalyzeAI}
+                  disabled={analyzingAI}
+                  className="w-full px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {analyzingAI ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generando análisis IA (~1 min)…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generar análisis IA del JTL
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {analysisResult && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <p className="text-sm font-medium text-emerald-900">Análisis IA generado</p>
+                </div>
+                <p className="text-xs text-emerald-700 mb-3">
+                  El dashboard contiene: resumen ejecutivo, análisis por sección, verdict
+                  vs criterios de aceptación, recomendaciones y conclusiones.
+                </p>
+                <button
+                  onClick={handleOpenDashboard}
+                  className="w-full px-3 py-2 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center justify-center gap-2"
+                >
+                  Abrir Dashboard completo
+                  <ExternalLink className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Footer: botón Detener */}
+          {currentExecution.status === 'running' && (
+            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={handleStopExecution}
+                disabled={stopRequesting}
+                className="w-full px-3 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {stopRequesting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deteniendo…
+                  </>
+                ) : (
+                  <>
+                    <X className="w-4 h-4" />
+                    Detener ejecución
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sprint 2.5e.2: Drawer del historial de ejecuciones */}
+      {historyOpen && (
+        <div className="fixed inset-y-0 right-0 w-[480px] bg-white shadow-2xl z-40 flex flex-col border-l border-gray-200">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-gray-50 to-slate-50">
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-gray-600" />
+              <h3 className="font-semibold">Historial de ejecuciones</h3>
+            </div>
+            <button
+              onClick={() => setHistoryOpen(false)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+              </div>
+            ) : executionHistory.length === 0 ? (
+              <div className="text-center py-12">
+                <History className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">
+                  No hay ejecuciones aún para este diseño.
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Click en "Ejecutar" para iniciar tu primera ejecución.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {executionHistory.map((ex) => (
+                  <div
+                    key={ex.id}
+                    className="border border-gray-200 rounded-lg p-3 hover:border-gray-300 hover:shadow-sm transition-all"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">#</span>
+                        <span className="font-semibold text-sm">{ex.id}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                          ex.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                          ex.status === 'running' ? 'bg-purple-100 text-purple-700' :
+                          ex.status === 'error' ? 'bg-red-100 text-red-700' :
+                          ex.status === 'cancelled' ? 'bg-gray-100 text-gray-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>
+                          {ex.status}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-500">
+                        {ex.started_at ? new Date(ex.started_at).toLocaleString('es-CO', {
+                          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                        }) : '—'}
+                      </span>
+                    </div>
+
+                    {ex.summary_metrics && Object.keys(ex.summary_metrics).length > 0 && (
+                      <div className="grid grid-cols-3 gap-2 text-xs text-gray-600 mt-2">
+                        <div>
+                          <div className="text-gray-400">Samples</div>
+                          <div className="font-medium text-gray-900">
+                            {ex.summary_metrics.total_samples ?? 0}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-400">Errores</div>
+                          <div className={`font-medium ${(ex.summary_metrics.failed_samples ?? 0) > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                            {ex.summary_metrics.failed_samples ?? 0}
+                            {(ex.summary_metrics.error_rate_pct ?? 0) > 0 && (
+                              <span className="text-xs text-gray-500"> ({ex.summary_metrics.error_rate_pct?.toFixed(1)}%)</span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-400">Throughput</div>
+                          <div className="font-medium text-gray-900">
+                            {ex.summary_metrics.throughput_per_sec?.toFixed(1) ?? '0.0'}/s
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {ex.error_message && (
+                      <div className="mt-2 text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
+                        {ex.error_message}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-500 text-center">
+            Mostrando últimas {executionHistory.length} ejecuciones
+          </div>
+        </div>
       )}
     </div>
   );
@@ -460,9 +1698,10 @@ interface TreeViewProps {
   onToggleExpand: (key: string) => void;
   matchesFilter: (text: string) => boolean;
   dataFiles: AIDesignDataFile[];
+  treeActions?: TreeActions; // HF7.A — opcional para no romper otros call sites
 }
 
-function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, matchesFilter, dataFiles }: TreeViewProps) {
+function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, matchesFilter, dataFiles, treeActions }: TreeViewProps) {
   const isSelected = (s: SelectedNode): boolean => JSON.stringify(s) === JSON.stringify(selected);
 
   return (
@@ -491,15 +1730,15 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
         expanded={expanded}
         onToggleExpand={onToggleExpand}
       >
-        {structure.user_defined_variables.length > 0 && (
-          <TreeItem
-            label={`Variables (${structure.user_defined_variables.length})`}
-            icon={<Sliders className="w-4 h-4 text-gray-500" />}
-            selected={isSelected({ kind: 'udvs' })}
-            onClick={() => onSelect({ kind: 'udvs' })}
-            indent
-          />
-        )}
+        <TreeItem
+          label={`Variables (${structure.user_defined_variables.length})`}
+          icon={<Sliders className="w-4 h-4 text-gray-500" />}
+          selected={isSelected({ kind: 'udvs' })}
+          onClick={() => onSelect({ kind: 'udvs' })}
+          indent
+          onAdd={treeActions ? () => treeActions.openAdd('udv') : undefined}
+          addTitle="Agregar variable UDV"
+        />
         {structure.http_defaults && (
           <TreeItem
             label="HTTP Request Defaults"
@@ -516,6 +1755,8 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
             selected={isSelected({ kind: 'cookie_manager' })}
             onClick={() => onSelect({ kind: 'cookie_manager' })}
             indent
+            enabled={structure.cookie_manager.enabled}
+            onToggleEnabled={treeActions ? (v) => treeActions.onToggle('cookie_manager', '', v) : undefined}
           />
         )}
         {structure.cache_manager && (
@@ -525,6 +1766,8 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
             selected={isSelected({ kind: 'cache_manager' })}
             onClick={() => onSelect({ kind: 'cache_manager' })}
             indent
+            enabled={structure.cache_manager.enabled}
+            onToggleEnabled={treeActions ? (v) => treeActions.onToggle('cache_manager', '', v) : undefined}
           />
         )}
         {structure.csv_data_sets.map((ds) => (
@@ -536,6 +1779,10 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
             onClick={() => onSelect({ kind: 'csv_data_set', id: ds.id })}
             indent
             visible={matchesFilter(ds.testname)}
+            enabled={ds.enabled}
+            onToggleEnabled={treeActions ? (v) => treeActions.onToggle('csv_data_set', ds.id, v) : undefined}
+            onDelete={treeActions ? () => treeActions.onDelete('csv_data_set', ds.id) : undefined}
+            deleteTitle={`Eliminar CSV ${ds.testname}`}
           />
         ))}
       </TreeFolder>
@@ -557,12 +1804,14 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
             onSelect={onSelect}
             onToggleExpand={onToggleExpand}
             matchesFilter={matchesFilter}
+            treeActions={treeActions}
           />
         ))}
       </TreeFolder>
 
-      {/* Listeners */}
-      {structure.listeners.length > 0 && (
+      {/* Listeners — HF7.B: el folder se muestra siempre cuando hay treeActions
+          para que el usuario pueda agregar listeners aunque no tenga ninguno todavía. */}
+      {(structure.listeners.length > 0 || treeActions) && (
         <TreeFolder
           label={`Listeners (${structure.listeners.length})`}
           icon={<Headphones className="w-4 h-4 text-gray-700" />}
@@ -570,6 +1819,15 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
           expanded={expanded}
           onToggleExpand={onToggleExpand}
         >
+          {treeActions && (
+            <TreeItem
+              label="Agregar listener…"
+              icon={<Plus className="w-4 h-4 text-indigo-500" />}
+              selected={false}
+              onClick={() => treeActions.openAdd('listener')}
+              indent
+            />
+          )}
           {structure.listeners.map((l) => (
             <TreeItem
               key={l.id}
@@ -579,7 +1837,10 @@ function TreeView({ structure, selected, expanded, onSelect, onToggleExpand, mat
               onClick={() => onSelect({ kind: 'listener', id: l.id })}
               indent
               visible={matchesFilter(l.name)}
-              badge={!l.enabled ? 'off' : undefined}
+              enabled={l.enabled}
+              onToggleEnabled={treeActions ? (v) => treeActions.onToggle('listener', l.id, v) : undefined}
+              onDelete={treeActions ? () => treeActions.onDelete('listener', l.id) : undefined}
+              deleteTitle={`Eliminar listener ${l.name}`}
             />
           ))}
         </TreeFolder>
@@ -650,9 +1911,10 @@ interface ThreadGroupNodeProps {
   onSelect: (n: SelectedNode) => void;
   onToggleExpand: (key: string) => void;
   matchesFilter: (text: string) => boolean;
+  treeActions?: TreeActions;
 }
 
-function ThreadGroupNode({ tg, selected, expanded, onSelect, onToggleExpand, matchesFilter }: ThreadGroupNodeProps) {
+function ThreadGroupNode({ tg, selected, expanded, onSelect, onToggleExpand, matchesFilter, treeActions }: ThreadGroupNodeProps) {
   const isSelected = (s: SelectedNode): boolean => JSON.stringify(s) === JSON.stringify(selected);
   const tgExpandKey = `tg-${tg.id}`;
   const tgExpanded = expanded[tgExpandKey] !== false; // default true
@@ -661,7 +1923,7 @@ function ThreadGroupNode({ tg, selected, expanded, onSelect, onToggleExpand, mat
   return (
     <li className="ml-2">
       <div
-        className={`flex items-center gap-1 py-1 px-2 rounded cursor-pointer ${
+        className={`group flex items-center gap-1 py-1 px-2 rounded ${
           isSelected({ kind: 'thread_group', id: tg.id }) ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50'
         }`}
       >
@@ -671,14 +1933,44 @@ function ThreadGroupNode({ tg, selected, expanded, onSelect, onToggleExpand, mat
         >
           {tgExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </button>
+        {treeActions && (
+          <input
+            type="checkbox"
+            checked={tg.enabled}
+            onChange={(e) => { e.stopPropagation(); treeActions.onToggle('thread_group', tg.id, e.target.checked); }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-3 h-3 accent-indigo-600"
+            title={tg.enabled ? 'Habilitado' : 'Deshabilitado'}
+          />
+        )}
         <div
-          className="flex items-center gap-2 flex-1"
+          className="flex items-center gap-2 flex-1 cursor-pointer"
           onClick={() => onSelect({ kind: 'thread_group', id: tg.id })}
         >
           <UsersIcon className={`w-4 h-4 ${tg.kind === 'stepping' ? 'text-purple-600' : 'text-indigo-600'}`} />
           <span className={`truncate ${!tg.enabled ? 'text-gray-400 line-through' : ''}`}>{tgLabel}</span>
           {!tg.enabled && <span className="text-xs text-gray-400">(off)</span>}
         </div>
+        {treeActions && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); treeActions.openAdd('sampler', tg.id); }}
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-indigo-100 rounded text-indigo-600 transition-opacity"
+              title="Agregar HTTP Sampler"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); treeActions.onDelete('thread_group', tg.id); }}
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded text-red-500 transition-opacity"
+              title={`Eliminar Thread Group ${tg.name}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
       </div>
 
       {tgExpanded && (
@@ -697,6 +1989,7 @@ function ThreadGroupNode({ tg, selected, expanded, onSelect, onToggleExpand, mat
               onSelect={onSelect}
               onToggleExpand={onToggleExpand}
               matchesFilter={matchesFilter}
+              treeActions={treeActions}
             />
           ))}
         </ul>
@@ -717,9 +2010,10 @@ interface TGChildNodeProps {
   onSelect: (n: SelectedNode) => void;
   onToggleExpand: (key: string) => void;
   matchesFilter: (text: string) => boolean;
+  treeActions?: TreeActions;
 }
 
-function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpand, matchesFilter }: TGChildNodeProps) {
+function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpand, matchesFilter, treeActions }: TGChildNodeProps) {
   const isSelected = (s: SelectedNode): boolean => JSON.stringify(s) === JSON.stringify(selected);
 
   if (child.type === 'sampler' && child.sampler) {
@@ -732,7 +2026,7 @@ function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpan
     return (
       <li>
         <div
-          className={`flex items-center gap-1 py-1 px-2 rounded cursor-pointer ${
+          className={`group flex items-center gap-1 py-1 px-2 rounded ${
             isSelected({ kind: 'sampler', tg_id, sampler_id: sampler.id }) ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-gray-50'
           }`}
         >
@@ -746,8 +2040,18 @@ function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpan
           ) : (
             <span className="w-4" />
           )}
+          {treeActions && (
+            <input
+              type="checkbox"
+              checked={sampler.enabled}
+              onChange={(e) => { e.stopPropagation(); treeActions.onToggle('sampler', sampler.id, e.target.checked); }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-3 h-3 accent-indigo-600 flex-shrink-0"
+              title={sampler.enabled ? 'Habilitado' : 'Deshabilitado'}
+            />
+          )}
           <div
-            className="flex items-center gap-2 flex-1 min-w-0"
+            className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
             onClick={() => onSelect({ kind: 'sampler', tg_id, sampler_id: sampler.id })}
           >
             <span className={`px-1.5 py-0.5 text-xs rounded font-mono ${methodColor(sampler.method)}`}>
@@ -757,6 +2061,26 @@ function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpan
               {sampler.name}
             </span>
           </div>
+          {treeActions && (
+            <>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); treeActions.openAdd('sampler_child', sampler.id); }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-indigo-100 rounded text-indigo-600 transition-opacity flex-shrink-0"
+                title="Agregar componente (Header, Assertion, Extractor, Timer)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); treeActions.onDelete('sampler', sampler.id); }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded text-red-500 transition-opacity flex-shrink-0"
+                title={`Eliminar sampler ${sampler.name}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
 
         {sampExpanded && (
@@ -769,6 +2093,7 @@ function TGChildNode({ child, tg_id, selected, expanded, onSelect, onToggleExpan
                 sampler_id={sampler.id}
                 selected={selected}
                 onSelect={onSelect}
+                treeActions={treeActions}
               />
             ))}
           </ul>
@@ -830,12 +2155,14 @@ interface SamplerChildNodeProps {
   sampler_id: string;
   selected: SelectedNode;
   onSelect: (n: SelectedNode) => void;
+  treeActions?: TreeActions;
 }
 
-function SamplerChildNode({ sc, tg_id, sampler_id, selected, onSelect }: SamplerChildNodeProps) {
+function SamplerChildNode({ sc, tg_id, sampler_id, selected, onSelect, treeActions }: SamplerChildNodeProps) {
   const isSelected = (s: SelectedNode): boolean => JSON.stringify(s) === JSON.stringify(selected);
   const childId = (sc.data as any).id;
   const childName = (sc.data as any).name || sc.type;
+  const childEnabled = (sc.data as any).enabled !== false;
   const isUnmapped = sc.type === 'unsupported';
 
   const icon = (() => {
@@ -859,17 +2186,41 @@ function SamplerChildNode({ sc, tg_id, sampler_id, selected, onSelect }: Sampler
   return (
     <li>
       <div
-        className={`flex items-center gap-2 py-0.5 px-2 rounded cursor-pointer ${
+        className={`group flex items-center gap-2 py-0.5 px-2 rounded ${
           isSelected({ kind: 'sampler_child', tg_id, sampler_id, child_id: childId })
             ? 'bg-indigo-50 text-indigo-700'
             : 'hover:bg-gray-50'
         }`}
-        onClick={() => onSelect({ kind: 'sampler_child', tg_id, sampler_id, child_id: childId })}
       >
-        {icon}
-        <span className={`truncate text-xs ${isUnmapped ? 'text-amber-700' : 'text-gray-600'}`}>
-          {childName}
-        </span>
+        {treeActions && !isUnmapped && (
+          <input
+            type="checkbox"
+            checked={childEnabled}
+            onChange={(e) => { e.stopPropagation(); treeActions.onToggle('sampler_child', childId, e.target.checked, { sampler_id }); }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-3 h-3 accent-indigo-600 flex-shrink-0"
+            title={childEnabled ? 'Habilitado' : 'Deshabilitado'}
+          />
+        )}
+        <div
+          className={`flex items-center gap-2 flex-1 min-w-0 cursor-pointer ${!childEnabled ? 'opacity-50' : ''}`}
+          onClick={() => onSelect({ kind: 'sampler_child', tg_id, sampler_id, child_id: childId })}
+        >
+          {icon}
+          <span className={`truncate text-xs ${isUnmapped ? 'text-amber-700' : 'text-gray-600'}`}>
+            {childName}
+          </span>
+        </div>
+        {treeActions && !isUnmapped && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); treeActions.onDelete('sampler_child', childId, { sampler_id }); }}
+            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded text-red-500 transition-opacity flex-shrink-0"
+            title={`Eliminar ${childName}`}
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
       </div>
     </li>
   );
@@ -901,21 +2252,65 @@ interface TreeItemProps {
   indent?: boolean;
   visible?: boolean;
   badge?: string;
+  // HF7.A — props opcionales para botones de mutación estructural.
+  enabled?: boolean;
+  onToggleEnabled?: (next: boolean) => void;
+  onAdd?: () => void;
+  addTitle?: string;
+  onDelete?: () => void;
+  deleteTitle?: string;
 }
 
-function TreeItem({ label, icon, selected, onClick, indent, visible = true, badge }: TreeItemProps) {
+function TreeItem({
+  label, icon, selected, onClick, indent, visible = true, badge,
+  enabled, onToggleEnabled, onAdd, addTitle, onDelete, deleteTitle,
+}: TreeItemProps) {
   if (!visible) return null;
   return (
     <li className={indent ? 'ml-4' : ''}>
       <div
-        className={`flex items-center gap-2 py-1 px-2 rounded cursor-pointer text-sm ${
+        className={`group flex items-center gap-2 py-1 px-2 rounded text-sm ${
           selected ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-gray-50 text-gray-700'
         }`}
-        onClick={onClick}
       >
-        {icon}
-        <span className="truncate">{label}</span>
-        {badge && <span className="text-xs text-gray-400">({badge})</span>}
+        {onToggleEnabled !== undefined && (
+          <input
+            type="checkbox"
+            checked={enabled ?? true}
+            onChange={(e) => { e.stopPropagation(); onToggleEnabled(e.target.checked); }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-3 h-3 accent-indigo-600 flex-shrink-0"
+            title={enabled === false ? 'Deshabilitado' : 'Habilitado'}
+          />
+        )}
+        <div
+          className={`flex items-center gap-2 flex-1 min-w-0 cursor-pointer ${enabled === false ? 'opacity-50' : ''}`}
+          onClick={onClick}
+        >
+          {icon}
+          <span className="truncate">{label}</span>
+          {badge && <span className="text-xs text-gray-400">({badge})</span>}
+        </div>
+        {onAdd && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAdd(); }}
+            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-indigo-100 rounded text-indigo-600 transition-opacity flex-shrink-0"
+            title={addTitle || 'Agregar'}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded text-red-500 transition-opacity flex-shrink-0"
+            title={deleteTitle || 'Eliminar'}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
     </li>
   );
@@ -963,6 +2358,7 @@ interface DetailPanelProps {
   dataFiles: AIDesignDataFile[];
   dataFilesLoading: boolean;
   reloadDataFiles: () => void;
+  reloadStructure: () => void;
   onDataFileSelect: (n: SelectedNode) => void;
 }
 
@@ -974,6 +2370,7 @@ function DetailPanel({
   dataFiles,
   dataFilesLoading,
   reloadDataFiles,
+  reloadStructure,
   onDataFileSelect,
 }: DetailPanelProps) {
   if (selected.kind === 'overview') {
@@ -1116,6 +2513,7 @@ function DetailPanel({
         dataFiles={dataFiles}
         loading={dataFilesLoading}
         onReload={reloadDataFiles}
+        onReloadStructure={reloadStructure}
       />
     );
   }
@@ -1151,6 +2549,1385 @@ function DetailPanel({
     </div>
   );
 }
+
+// ============================================================================
+// Sprint 2.6b: Listener Live Viewer (placeholder).
+// Los renderers reales por kind vienen en 2.6c-g; aquí solo se enruta y se
+// muestra un resumen del estado capturado del polling.
+// ============================================================================
+
+interface ListenerLiveViewerProps {
+  listenerKind: string;
+  listenerName: string | null;
+  state: ListenersState | null;
+  loading: boolean;
+  executionStatus: string;
+}
+
+// Mapa kind → label visible (alineado con ListenerKind del frontend).
+const LISTENER_KIND_LABELS: Record<string, string> = {
+  view_results_tree: 'Ver Árbol de Resultados',
+  summary_report: 'Informe Resumen',
+  aggregate_report: 'Informe Agregado',
+  graph_results: 'Gráfico de Resultados',
+  kg_apc_response_times_over_time: 'jp@gc - Response Times Over Time',
+  kg_apc_response_codes_per_second: 'jp@gc - Response Codes per Second',
+  kg_apc_transactions_per_second: 'jp@gc - Transactions per Second',
+  kg_apc_active_threads_over_time: 'jp@gc - Active Threads Over Time',
+  kg_apc_hits_per_second: 'jp@gc - Hits per Second',
+  other: 'Listener (Backend / otro)',
+};
+
+function ListenerLiveViewer({
+  listenerKind,
+  listenerName,
+  state,
+  loading,
+  executionStatus,
+}: ListenerLiveViewerProps) {
+  const label = LISTENER_KIND_LABELS[listenerKind] || listenerName || 'Listener';
+  const isRunning = executionStatus === 'running' || executionStatus === 'starting';
+
+  return (
+    <div className="h-full flex flex-col bg-gray-50">
+      {/* Header del viewer */}
+      <div className="bg-white border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900">{label}</h3>
+            {listenerName && listenerName !== label && (
+              <p className="text-xs text-gray-500 mt-0.5">{listenerName}</p>
+            )}
+          </div>
+          {isRunning && (
+            <div className="flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50 px-2 py-1 rounded">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Actualizando cada 2s
+            </div>
+          )}
+          {executionStatus === 'completed' && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded">
+              <CheckCircle2 className="w-3 h-3" />
+              Datos congelados
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Body del viewer — despacha al renderer según el kind del listener */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {loading && !state && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+          </div>
+        )}
+
+        {state && (
+          <>
+            {/* Sprint 2.6c: Summary Report */}
+            {listenerKind === 'summary_report' && (
+              <SummaryReportViewer
+                perSamplerStats={state.per_sampler_stats}
+                totalSamples={state.total_samples_parsed}
+              />
+            )}
+
+            {/* Sprint 2.6c: Aggregate Report */}
+            {listenerKind === 'aggregate_report' && (
+              <AggregateReportViewer
+                perSamplerStats={state.per_sampler_stats}
+                totalSamples={state.total_samples_parsed}
+              />
+            )}
+
+            {/* Sprint 2.6d: View Results Tree (la variante "with CSV" usa el mismo viewer) */}
+            {listenerKind === 'view_results_tree' && (
+              <ViewResultsTreeViewer
+                samplesTail={state.samples_tail}
+                totalSamplesParsed={state.total_samples_parsed}
+              />
+            )}
+
+            {/* Sprint 2.6e: jp@gc Response Times Over Time */}
+            {listenerKind === 'kg_apc_response_times_over_time' && (
+              <ResponseTimesOverTimeViewer timeBuckets={state.time_buckets} />
+            )}
+
+            {/* Sprint 2.6e: jp@gc Response Codes per Second */}
+            {listenerKind === 'kg_apc_response_codes_per_second' && (
+              <ResponseCodesPerSecondViewer timeBuckets={state.time_buckets} />
+            )}
+
+            {/* Sprint 2.6f: jp@gc Transactions per Second */}
+            {listenerKind === 'kg_apc_transactions_per_second' && (
+              <TransactionsPerSecondViewer timeBuckets={state.time_buckets} />
+            )}
+
+            {/* Sprint 2.6f: jp@gc Active Threads Over Time */}
+            {listenerKind === 'kg_apc_active_threads_over_time' && (
+              <ActiveThreadsOverTimeViewer timeBuckets={state.time_buckets} />
+            )}
+
+            {/* Sprint 2.6f: Response Time Graph nativo (kind real del frontend: graph_results) */}
+            {listenerKind === 'graph_results' && (
+              <ResponseTimeGraphViewer timeBuckets={state.time_buckets} />
+            )}
+
+            {/* Sprint 2.6g: jp@gc Hits per Second */}
+            {listenerKind === 'kg_apc_hits_per_second' && (
+              <HitsPerSecondViewer
+                timeBuckets={state.time_buckets}
+                bucketSizeSec={state.bucket_size_sec}
+              />
+            )}
+
+            {/* Sprint 2.6g: Backend Listener (caso especial — no usa datos del JTL) */}
+            {listenerKind === 'other' && (
+              <BackendListenerViewer
+                listenerName={listenerName}
+                executionStatus={executionStatus}
+              />
+            )}
+
+            {/* Placeholder defensivo para kinds desconocidos futuros */}
+            {![
+              'summary_report',
+              'aggregate_report',
+              'view_results_tree',
+              'kg_apc_response_times_over_time',
+              'kg_apc_response_codes_per_second',
+              'kg_apc_transactions_per_second',
+              'kg_apc_active_threads_over_time',
+              'graph_results',
+              'kg_apc_hits_per_second',
+              'other',
+            ].includes(listenerKind) && (
+              <div className="space-y-3">
+                <div className="bg-white border border-gray-200 rounded p-3">
+                  <div className="text-xs text-gray-500 mb-2">Resumen</div>
+                  <div className="grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <div className="text-xs text-gray-500">Samples</div>
+                      <div className="font-semibold">{state.total_samples_parsed}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Samplers únicos</div>
+                      <div className="font-semibold">{Object.keys(state.per_sampler_stats).length}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Buckets de tiempo</div>
+                      <div className="font-semibold">{state.time_buckets.length}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-indigo-50 border border-indigo-200 rounded p-4 text-sm text-indigo-900">
+                  <p className="font-medium mb-1">Renderer en construcción</p>
+                  <p className="text-indigo-700 text-xs">
+                    Renderer específico para "{label}" llegará en próximos sub-sprints del Sprint 2.6.
+                  </p>
+                  <p className="text-indigo-700 text-xs mt-2">
+                    kind: <code className="bg-indigo-100 px-1 rounded">{listenerKind}</code>
+                  </p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {!loading && !state && (
+          <div className="text-center py-12 text-sm text-gray-500">
+            No hay datos disponibles todavía.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Sprint 2.6c: Summary Report Viewer
+// Tabla simple con métricas por sampler (estilo JMeter Summary Report) + fila TOTAL.
+// ============================================================================
+
+interface SummaryReportViewerProps {
+  perSamplerStats: Record<string, SamplerStats>;
+  totalSamples: number;
+}
+
+function SummaryReportViewer({ perSamplerStats, totalSamples }: SummaryReportViewerProps) {
+  const samplers = Object.entries(perSamplerStats);
+
+  // Totales globales (avg ponderado por count, min/max globales).
+  const totals = useMemo(() => {
+    if (samplers.length === 0) {
+      return { count: 0, avg: 0, min: 0, max: 0, errors: 0, throughput: 0, kb_per_sec: 0, error_pct: 0 };
+    }
+    let totalCount = 0;
+    let totalErrors = 0;
+    let weightedAvgSum = 0;
+    let globalMin = Infinity;
+    let globalMax = 0;
+    let totalThroughput = 0;
+    let totalKbRecv = 0;
+
+    for (const [, stats] of samplers) {
+      totalCount += stats.count;
+      totalErrors += stats.errors;
+      weightedAvgSum += stats.avg * stats.count;
+      globalMin = Math.min(globalMin, stats.min);
+      globalMax = Math.max(globalMax, stats.max);
+      totalThroughput += stats.throughput_per_sec;
+      totalKbRecv += stats.kb_received_per_sec;
+    }
+
+    return {
+      count: totalCount,
+      avg: totalCount > 0 ? Math.round(weightedAvgSum / totalCount) : 0,
+      min: globalMin === Infinity ? 0 : globalMin,
+      max: globalMax,
+      errors: totalErrors,
+      throughput: Math.round(totalThroughput * 100) / 100,
+      kb_per_sec: Math.round(totalKbRecv * 100) / 100,
+      error_pct: totalCount > 0 ? Math.round((totalErrors / totalCount) * 10000) / 100 : 0,
+    };
+  }, [samplers]);
+
+  if (samplers.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando samples del JTL…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-100 border-b border-gray-200">
+            <tr>
+              <th className="text-left px-3 py-2 font-semibold text-gray-700">Sampler</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">#</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Avg</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Min</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Max</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Err %</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Throughput</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">KB/sec</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {samplers.map(([label, stats]) => (
+              <tr key={label} className="hover:bg-gray-50">
+                <td className="px-3 py-2 font-medium text-gray-900">{label}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.count}</td>
+                <td className="text-right px-3 py-2 font-mono">{Math.round(stats.avg)}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.min}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.max}</td>
+                <td className={`text-right px-3 py-2 font-mono ${stats.error_pct > 0 ? 'text-red-600 font-semibold' : ''}`}>
+                  {stats.error_pct.toFixed(2)}%
+                </td>
+                <td className="text-right px-3 py-2 font-mono">{stats.throughput_per_sec.toFixed(2)}/s</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.kb_received_per_sec.toFixed(2)}</td>
+              </tr>
+            ))}
+            {/* Fila TOTAL */}
+            <tr className="bg-gray-100 font-semibold border-t-2 border-gray-300">
+              <td className="px-3 py-2 text-gray-900">TOTAL</td>
+              <td className="text-right px-3 py-2 font-mono">{totals.count}</td>
+              <td className="text-right px-3 py-2 font-mono">{totals.avg}</td>
+              <td className="text-right px-3 py-2 font-mono">{totals.min}</td>
+              <td className="text-right px-3 py-2 font-mono">{totals.max}</td>
+              <td className={`text-right px-3 py-2 font-mono ${totals.error_pct > 0 ? 'text-red-600' : ''}`}>
+                {totals.error_pct.toFixed(2)}%
+              </td>
+              <td className="text-right px-3 py-2 font-mono">{totals.throughput.toFixed(2)}/s</td>
+              <td className="text-right px-3 py-2 font-mono">{totals.kb_per_sec.toFixed(2)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 border-t border-gray-200">
+        Total samples: <span className="font-semibold text-gray-700">{totalSamples}</span> ·
+        Samplers únicos: <span className="font-semibold text-gray-700">{samplers.length}</span>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6c: Aggregate Report Viewer
+// Tabla con métricas completas: percentiles, std dev, KB recibidos/enviados.
+// ============================================================================
+
+interface AggregateReportViewerProps {
+  perSamplerStats: Record<string, SamplerStats>;
+  totalSamples: number;
+}
+
+function AggregateReportViewer({ perSamplerStats, totalSamples }: AggregateReportViewerProps) {
+  const samplers = Object.entries(perSamplerStats);
+
+  if (samplers.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando samples del JTL…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-100 border-b border-gray-200">
+            <tr>
+              <th className="text-left px-3 py-2 font-semibold text-gray-700">Sampler</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">#</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Avg</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Median</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">90%</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">95%</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">99%</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Min</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Max</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Std Dev</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">Err %</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">TPS</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">KB recv/s</th>
+              <th className="text-right px-3 py-2 font-semibold text-gray-700">KB sent/s</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {samplers.map(([label, stats]) => (
+              <tr key={label} className="hover:bg-gray-50">
+                <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">{label}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.count}</td>
+                <td className="text-right px-3 py-2 font-mono">{Math.round(stats.avg)}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.median}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.p90}</td>
+                <td className="text-right px-3 py-2 font-mono font-semibold">{stats.p95}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.p99}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.min}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.max}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.std_dev.toFixed(2)}</td>
+                <td className={`text-right px-3 py-2 font-mono ${stats.error_pct > 0 ? 'text-red-600 font-semibold' : ''}`}>
+                  {stats.error_pct.toFixed(2)}%
+                </td>
+                <td className="text-right px-3 py-2 font-mono">{stats.throughput_per_sec.toFixed(2)}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.kb_received_per_sec.toFixed(2)}</td>
+                <td className="text-right px-3 py-2 font-mono">{stats.kb_sent_per_sec.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 border-t border-gray-200">
+        Total samples: <span className="font-semibold text-gray-700">{totalSamples}</span> ·
+        Samplers únicos: <span className="font-semibold text-gray-700">{samplers.length}</span>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6d: View Results Tree Viewer
+// Lista cronológica de samples (samples_tail) con detalle por sample seleccionado.
+// ============================================================================
+
+interface ViewResultsTreeViewerProps {
+  samplesTail: Array<Record<string, string>>;
+  totalSamplesParsed: number;
+}
+
+function ViewResultsTreeViewer({ samplesTail, totalSamplesParsed }: ViewResultsTreeViewerProps) {
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [filterErrors, setFilterErrors] = useState(false);
+  const [filterLabel, setFilterLabel] = useState<string>('');
+  const [searchText, setSearchText] = useState('');
+
+  // Filtrado (orden cronológico inverso: más reciente primero).
+  const filteredSamples = useMemo(() => {
+    let items = [...samplesTail];
+
+    if (filterErrors) {
+      items = items.filter((s) => (s.success || '').toLowerCase() !== 'true');
+    }
+
+    if (filterLabel) {
+      items = items.filter((s) => s.label === filterLabel);
+    }
+
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase();
+      items = items.filter((s) => {
+        return (
+          (s.label || '').toLowerCase().includes(q) ||
+          (s.responseMessage || '').toLowerCase().includes(q) ||
+          (s.URL || '').toLowerCase().includes(q) ||
+          (s.responseCode || '').toLowerCase().includes(q)
+        );
+      });
+    }
+
+    return items.reverse();
+  }, [samplesTail, filterErrors, filterLabel, searchText]);
+
+  // Labels únicos para el dropdown de filtro.
+  const uniqueLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of samplesTail) {
+      if (s.label) set.add(s.label);
+    }
+    return Array.from(set).sort();
+  }, [samplesTail]);
+
+  const selectedSample = selectedIdx !== null ? filteredSamples[selectedIdx] : null;
+
+  // Formatea timestamp epoch ms a hora local legible.
+  const formatTimestamp = (tsStr: string): string => {
+    try {
+      const ts = parseInt(tsStr, 10);
+      if (isNaN(ts)) return tsStr;
+      const d = new Date(ts);
+      return d.toLocaleTimeString('es-CO', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        fractionalSecondDigits: 3,
+      } as Intl.DateTimeFormatOptions);
+    } catch {
+      return tsStr;
+    }
+  };
+
+  // Badge color según código HTTP.
+  const codeBadgeClass = (code: string): string => {
+    if (!code) return 'bg-gray-100 text-gray-700';
+    if (code.startsWith('2')) return 'bg-emerald-100 text-emerald-700';
+    if (code.startsWith('3')) return 'bg-blue-100 text-blue-700';
+    if (code.startsWith('4')) return 'bg-amber-100 text-amber-700';
+    return 'bg-red-100 text-red-700';
+  };
+
+  if (samplesTail.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando samples del JTL…
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-white border border-gray-200 rounded-lg overflow-hidden">
+      {/* Filtros */}
+      <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1 text-xs cursor-pointer">
+          <input
+            type="checkbox"
+            checked={filterErrors}
+            onChange={(e) => {
+              setFilterErrors(e.target.checked);
+              setSelectedIdx(null);
+            }}
+            className="rounded"
+          />
+          <span>Solo errores</span>
+        </label>
+
+        <select
+          value={filterLabel}
+          onChange={(e) => {
+            setFilterLabel(e.target.value);
+            setSelectedIdx(null);
+          }}
+          className="text-xs px-2 py-1 border border-gray-300 rounded"
+        >
+          <option value="">Todos los samplers</option>
+          {uniqueLabels.map((l) => (
+            <option key={l} value={l}>{l}</option>
+          ))}
+        </select>
+
+        <input
+          type="text"
+          value={searchText}
+          onChange={(e) => {
+            setSearchText(e.target.value);
+            setSelectedIdx(null);
+          }}
+          placeholder="Buscar en label / código / URL…"
+          className="text-xs px-2 py-1 border border-gray-300 rounded flex-1 min-w-[200px]"
+        />
+
+        <div className="text-xs text-gray-500 ml-auto">
+          {filteredSamples.length} / {samplesTail.length} mostrados (cap 100)
+          {totalSamplesParsed > samplesTail.length && (
+            <span className="ml-1 text-gray-400">· {totalSamplesParsed} total</span>
+          )}
+        </div>
+      </div>
+
+      {/* Cuerpo: lista a la izquierda + detalle a la derecha */}
+      <div className="flex-1 flex overflow-hidden min-h-[300px]">
+        {/* Lista de samples */}
+        <div className="w-[420px] border-r border-gray-200 overflow-y-auto bg-gray-50">
+          {filteredSamples.length === 0 ? (
+            <div className="text-center py-8 text-xs text-gray-500">
+              No hay samples que coincidan con el filtro.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {filteredSamples.map((s, idx) => {
+                const isSuccess = (s.success || '').toLowerCase() === 'true';
+                const isSelected = selectedIdx === idx;
+                return (
+                  <li key={idx}>
+                    <button
+                      onClick={() => setSelectedIdx(idx)}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-white transition-colors ${isSelected ? 'bg-white border-l-2 border-l-indigo-500' : ''}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isSuccess ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        ) : (
+                          <XCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                        )}
+                        <span className="font-medium text-gray-900 truncate">{s.label || '—'}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 ml-5">
+                        <code className={`text-xs px-1.5 py-0.5 rounded ${codeBadgeClass(s.responseCode || '')}`}>
+                          {s.responseCode || '—'}
+                        </code>
+                        <span className="text-gray-500 font-mono">{s.elapsed || 0}ms</span>
+                        <span className="text-gray-400 text-xs ml-auto">{formatTimestamp(s.timeStamp || '')}</span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* Panel de detalle del sample seleccionado */}
+        <div className="flex-1 overflow-y-auto bg-white">
+          {!selectedSample ? (
+            <div className="flex items-center justify-center h-full text-sm text-gray-400">
+              Selecciona un sample para ver el detalle
+            </div>
+          ) : (
+            <div className="p-4">
+              <SampleDetailView sample={selectedSample} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6d: Detalle de un sample individual (tabs Resultado / Request / Response Data).
+// ============================================================================
+
+interface SampleDetailViewProps {
+  sample: Record<string, string>;
+}
+
+function SampleDetailView({ sample }: SampleDetailViewProps) {
+  const [activeTab, setActiveTab] = useState<'result' | 'request' | 'response_data'>('result');
+
+  const isSuccess = (sample.success || '').toLowerCase() === 'true';
+
+  return (
+    <div className="space-y-3">
+      {/* Header con estado */}
+      <div className="flex items-center gap-2 pb-2 border-b border-gray-200">
+        {isSuccess ? (
+          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+        ) : (
+          <XCircle className="w-5 h-5 text-red-500" />
+        )}
+        <h3 className="font-semibold text-gray-900">{sample.label || '—'}</h3>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-200">
+        {(['result', 'request', 'response_data'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              activeTab === tab
+                ? 'border-b-2 border-indigo-500 text-indigo-700'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {tab === 'result' && 'Resultado'}
+            {tab === 'request' && 'Request'}
+            {tab === 'response_data' && 'Response Data'}
+          </button>
+        ))}
+      </div>
+
+      {/* Contenido de tabs */}
+      <div>
+        {activeTab === 'result' && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <div>
+              <dt className="text-gray-500">Estado</dt>
+              <dd className={`font-mono font-semibold ${isSuccess ? 'text-emerald-700' : 'text-red-700'}`}>
+                {isSuccess ? 'SUCCESS' : 'FAIL'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Código HTTP</dt>
+              <dd className="font-mono">{sample.responseCode || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Mensaje</dt>
+              <dd className="font-mono">{sample.responseMessage || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Response time</dt>
+              <dd className="font-mono">{sample.elapsed || 0} ms</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Latency</dt>
+              <dd className="font-mono">{sample.Latency || 0} ms</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Connect time</dt>
+              <dd className="font-mono">{sample.Connect || 0} ms</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Bytes recibidos</dt>
+              <dd className="font-mono">{sample.bytes || 0}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Bytes enviados</dt>
+              <dd className="font-mono">{sample.sentBytes || 0}</dd>
+            </div>
+            {sample.failureMessage && (
+              <div className="col-span-2 mt-2 bg-red-50 border border-red-200 rounded p-2">
+                <dt className="text-red-700 text-xs font-semibold mb-1">Failure message</dt>
+                <dd className="text-red-900 text-xs font-mono whitespace-pre-wrap">{sample.failureMessage}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+
+        {activeTab === 'request' && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <div className="col-span-2">
+              <dt className="text-gray-500">URL</dt>
+              <dd className="font-mono text-xs break-all">{sample.URL || sample.url || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Thread</dt>
+              <dd className="font-mono">{sample.threadName || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Timestamp</dt>
+              <dd className="font-mono">{sample.timeStamp || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">Group threads</dt>
+              <dd className="font-mono">{sample.grpThreads || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">All threads</dt>
+              <dd className="font-mono">{sample.allThreads || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">DataType</dt>
+              <dd className="font-mono">{sample.dataType || '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500">IdleTime</dt>
+              <dd className="font-mono">{sample.IdleTime || 0} ms</dd>
+            </div>
+          </dl>
+        )}
+
+        {activeTab === 'response_data' && (
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+            <p className="font-medium mb-1">Response Data no disponible</p>
+            <p>
+              Por defecto JMeter NO guarda el body de la respuesta en el JTL.
+              Para verlo desde Kinetix, habilita <code className="bg-amber-100 px-1 rounded">saveResponseData</code> en
+              el Result Collector del listener "View Results Tree (con CSV)".
+            </p>
+            <p className="mt-2 text-xs text-amber-700">
+              Alternativa: descarga el JMX, ábrelo en JMeter desktop y ejecuta con
+              View Results Tree en GUI para ver request/response completos.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6e: Helpers de transformación de time_buckets a series Recharts.
+// ============================================================================
+
+// time_buckets → puntos { time, [sampler]: avg_ms, ... } para LineChart.
+function bucketsToResponseTimeSeries(buckets: TimeBucket[]): Array<Record<string, number>> {
+  return buckets.map((b) => {
+    const point: Record<string, number> = { time: b.bucket_start_sec };
+    for (const [label, stats] of Object.entries(b.per_sampler)) {
+      point[label] = stats.avg_response_ms;
+    }
+    return point;
+  });
+}
+
+// time_buckets → puntos { time, "200": count, "500": count, ... } para AreaChart.
+function bucketsToCodesPerSecondSeries(buckets: TimeBucket[]): Array<Record<string, number>> {
+  return buckets.map((b) => {
+    const point: Record<string, number> = { time: b.bucket_start_sec };
+    for (const [code, count] of Object.entries(b.totals.codes)) {
+      point[code] = count;
+    }
+    return point;
+  });
+}
+
+// Lista única de samplers presentes en todos los buckets.
+function uniqueSamplersFromBuckets(buckets: TimeBucket[]): string[] {
+  const set = new Set<string>();
+  for (const b of buckets) {
+    for (const label of Object.keys(b.per_sampler)) {
+      set.add(label);
+    }
+  }
+  return Array.from(set).sort();
+}
+
+// Lista única de códigos HTTP (orden lógico 2xx → 3xx → 4xx → 5xx).
+function uniqueCodesFromBuckets(buckets: TimeBucket[]): string[] {
+  const set = new Set<string>();
+  for (const b of buckets) {
+    for (const code of Object.keys(b.totals.codes)) {
+      set.add(code);
+    }
+  }
+  return Array.from(set).sort((a, b) => a.charAt(0).localeCompare(b.charAt(0)));
+}
+
+// Paleta cíclica para líneas por sampler.
+const CHART_COLORS = [
+  '#4f46e5', // indigo
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#ef4444', // red
+  '#3b82f6', // blue
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#14b8a6', // teal
+  '#f97316', // orange
+  '#6366f1', // indigo-500
+];
+
+// Color por familia de código HTTP.
+function colorForCode(code: string): string {
+  if (code.startsWith('2')) return '#10b981'; // emerald
+  if (code.startsWith('3')) return '#3b82f6'; // blue
+  if (code.startsWith('4')) return '#f59e0b'; // amber
+  if (code.startsWith('5')) return '#ef4444'; // red
+  return '#6b7280'; // gray
+}
+
+
+// ============================================================================
+// Sprint 2.6e: jp@gc - Response Times Over Time (línea por sampler).
+// ============================================================================
+
+interface ResponseTimesOverTimeViewerProps {
+  timeBuckets: TimeBucket[];
+}
+
+function ResponseTimesOverTimeViewer({ timeBuckets }: ResponseTimesOverTimeViewerProps) {
+  const series = useMemo(() => bucketsToResponseTimeSeries(timeBuckets), [timeBuckets]);
+  const samplers = useMemo(() => uniqueSamplersFromBuckets(timeBuckets), [timeBuckets]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Response Times Over Time</h4>
+        <p className="text-xs text-gray-500">Tiempo de respuesta promedio por sampler (ms) vs tiempo (s)</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <LineChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Response time (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number, name: string) => [`${value} ms`, name]}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {samplers.map((sampler, idx) => (
+              <Line
+                key={sampler}
+                type="monotone"
+                dataKey={sampler}
+                stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-xs text-gray-500">
+        Buckets: {timeBuckets.length} · Samplers: {samplers.length}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6e: jp@gc - Response Codes per Second (área apilada por código HTTP).
+// ============================================================================
+
+interface ResponseCodesPerSecondViewerProps {
+  timeBuckets: TimeBucket[];
+}
+
+function ResponseCodesPerSecondViewer({ timeBuckets }: ResponseCodesPerSecondViewerProps) {
+  const series = useMemo(() => bucketsToCodesPerSecondSeries(timeBuckets), [timeBuckets]);
+  const codes = useMemo(() => uniqueCodesFromBuckets(timeBuckets), [timeBuckets]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Response Codes per Second</h4>
+        <p className="text-xs text-gray-500">Códigos HTTP por intervalo (apilados) vs tiempo (s)</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <AreaChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Samples / intervalo', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number, name: string) => [value, `Código ${name}`]}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {codes.map((code) => (
+              <Area
+                key={code}
+                type="monotone"
+                dataKey={code}
+                stackId="1"
+                stroke={colorForCode(code)}
+                fill={colorForCode(code)}
+                fillOpacity={0.6}
+                isAnimationActive={false}
+              />
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-xs text-gray-500">
+        Buckets: {timeBuckets.length} · Códigos detectados: {codes.join(', ') || '—'}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6f: Helpers de transformación adicionales (reusan tipos de 2.6e).
+// ============================================================================
+
+// time_buckets → serie TPS por sampler + total (clave reservada '__total__').
+function bucketsToTpsSeries(buckets: TimeBucket[]): Array<Record<string, number>> {
+  return buckets.map((b) => {
+    const point: Record<string, number> = { time: b.bucket_start_sec };
+    for (const [label, stats] of Object.entries(b.per_sampler)) {
+      point[label] = stats.throughput;
+    }
+    point['__total__'] = b.totals.throughput;
+    return point;
+  });
+}
+
+// time_buckets → serie de usuarios virtuales activos (pico) en el tiempo.
+function bucketsToActiveThreadsSeries(buckets: TimeBucket[]): Array<{ time: number; activeThreads: number }> {
+  return buckets.map((b) => ({
+    time: b.bucket_start_sec,
+    activeThreads: b.totals.active_threads_max,
+  }));
+}
+
+
+// ============================================================================
+// Sprint 2.6f: jp@gc - Transactions per Second (total destacado + líneas por sampler).
+// ============================================================================
+
+interface TransactionsPerSecondViewerProps {
+  timeBuckets: TimeBucket[];
+}
+
+function TransactionsPerSecondViewer({ timeBuckets }: TransactionsPerSecondViewerProps) {
+  const series = useMemo(() => bucketsToTpsSeries(timeBuckets), [timeBuckets]);
+  const samplers = useMemo(() => uniqueSamplersFromBuckets(timeBuckets), [timeBuckets]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Transactions per Second</h4>
+        <p className="text-xs text-gray-500">Transacciones por segundo por sampler vs tiempo (s)</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <LineChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'TPS', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number, name: string) => {
+                if (name === '__total__') return [`${value.toFixed(2)} tps`, 'Total'];
+                return [`${value.toFixed(2)} tps`, name];
+              }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 11 }}
+              formatter={(value) => (value === '__total__' ? 'Total' : value)}
+            />
+            {/* Línea total destacada */}
+            <Line
+              type="monotone"
+              dataKey="__total__"
+              stroke="#1f2937"
+              strokeWidth={3}
+              dot={false}
+              isAnimationActive={false}
+              name="__total__"
+            />
+            {samplers.map((sampler, idx) => (
+              <Line
+                key={sampler}
+                type="monotone"
+                dataKey={sampler}
+                stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+                dot={false}
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-xs text-gray-500">
+        La línea negra gruesa es el TPS total. Las líneas punteadas son por sampler.
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6f: jp@gc - Active Threads Over Time (usuarios concurrentes).
+// ============================================================================
+
+interface ActiveThreadsOverTimeViewerProps {
+  timeBuckets: TimeBucket[];
+}
+
+function ActiveThreadsOverTimeViewer({ timeBuckets }: ActiveThreadsOverTimeViewerProps) {
+  const series = useMemo(() => bucketsToActiveThreadsSeries(timeBuckets), [timeBuckets]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  const maxThreads = series.reduce((acc, p) => Math.max(acc, p.activeThreads), 0);
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Active Threads Over Time</h4>
+        <p className="text-xs text-gray-500">Usuarios virtuales activos vs tiempo (s)</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <AreaChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Usuarios activos', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+              allowDecimals={false}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number) => [`${value} usuarios`, 'Activos']}
+            />
+            <Area
+              type="stepAfter"
+              dataKey="activeThreads"
+              stroke="#8b5cf6"
+              fill="#8b5cf6"
+              fillOpacity={0.3}
+              strokeWidth={2}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-xs text-gray-500">
+        Pico máximo: <span className="font-semibold text-gray-700">{maxThreads}</span> usuarios concurrentes
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6f: Response Time Graph (nativo de JMeter).
+// Equivalente al jp@gc Response Times pero sin línea por sampler: solo el
+// response time avg total. Kind real del frontend: 'graph_results'.
+// ============================================================================
+
+interface ResponseTimeGraphViewerProps {
+  timeBuckets: TimeBucket[];
+}
+
+function ResponseTimeGraphViewer({ timeBuckets }: ResponseTimeGraphViewerProps) {
+  const series = useMemo(() => {
+    return timeBuckets.map((b) => ({
+      time: b.bucket_start_sec,
+      avg: b.totals.avg_response_ms,
+    }));
+  }, [timeBuckets]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Response Time Graph</h4>
+        <p className="text-xs text-gray-500">Response time promedio total vs tiempo (s) — listener nativo JMeter</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <LineChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Response time (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number) => [`${value} ms`, 'Promedio']}
+            />
+            <Line
+              type="monotone"
+              dataKey="avg"
+              stroke="#4f46e5"
+              strokeWidth={2.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="mt-2 text-xs text-gray-500">
+        Para ver por sampler individual, usa el listener jp@gc Response Times Over Time.
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6g: jp@gc - Hits per Second (hits totales por segundo).
+// ============================================================================
+
+interface HitsPerSecondViewerProps {
+  timeBuckets: TimeBucket[];
+  bucketSizeSec: number;
+}
+
+function HitsPerSecondViewer({ timeBuckets, bucketSizeSec }: HitsPerSecondViewerProps) {
+  const series = useMemo(() => {
+    return timeBuckets.map((b) => ({
+      time: b.bucket_start_sec,
+      // hits/sec = count del bucket / tamaño del bucket en segundos.
+      hitsPerSec: bucketSizeSec > 0 ? Math.round((b.totals.count / bucketSizeSec) * 100) / 100 : 0,
+    }));
+  }, [timeBuckets, bucketSizeSec]);
+
+  if (timeBuckets.length === 0) {
+    return (
+      <div className="text-center py-12 text-sm text-gray-500">
+        Esperando datos para graficar…
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Hits per Second</h4>
+        <p className="text-xs text-gray-500">Total de hits por segundo vs tiempo (s)</p>
+      </div>
+
+      <div style={{ width: '100%', height: 380 }}>
+        <ResponsiveContainer>
+          <LineChart data={series} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="time"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Tiempo (s)', position: 'insideBottom', offset: -15, style: { fontSize: 11 } }}
+            />
+            <YAxis
+              tick={{ fontSize: 11 }}
+              label={{ value: 'Hits/sec', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }}
+            />
+            <Tooltip
+              contentStyle={{ fontSize: 11, padding: '6px 10px' }}
+              labelFormatter={(label) => `t = ${label}s`}
+              formatter={(value: number) => [`${value} hits/s`, 'Hits']}
+            />
+            <Line
+              type="monotone"
+              dataKey="hitsPerSec"
+              stroke="#10b981"
+              strokeWidth={2.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.6g: Backend Listener Viewer (CASO ESPECIAL).
+// No muestra datos del JTL — muestra configuración del listener y guía sobre
+// cómo ver las métricas en Grafana.
+// ============================================================================
+
+interface BackendListenerViewerProps {
+  listenerName: string | null;
+  executionStatus: string;
+}
+
+function BackendListenerViewer({ listenerName, executionStatus }: BackendListenerViewerProps) {
+  const isRunning = executionStatus === 'running';
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="bg-orange-100 rounded-lg p-2">
+          <Zap className="w-5 h-5 text-orange-600" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-gray-900">Backend Listener</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{listenerName || 'InfluxDB'}</p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {/* Estado actual */}
+        <div className={`rounded-lg p-3 border ${isRunning ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
+          <div className="flex items-center gap-2 mb-1">
+            {isRunning ? (
+              <>
+                <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                <span className="text-sm font-medium text-emerald-900">Enviando métricas a InfluxDB</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">Sesión finalizada</span>
+              </>
+            )}
+          </div>
+          <p className="text-xs text-gray-600">
+            {isRunning
+              ? 'JMeter está publicando métricas en tiempo real al stack InfluxDB de Kinetix.'
+              : 'Las métricas históricas siguen disponibles en InfluxDB.'}
+          </p>
+        </div>
+
+        {/* Configuración */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <h4 className="text-sm font-semibold text-blue-900 mb-2">Configuración del listener</h4>
+          <dl className="text-xs space-y-1.5 text-blue-800">
+            <div className="flex gap-2">
+              <dt className="font-medium w-32 flex-shrink-0">URL InfluxDB:</dt>
+              <dd className="font-mono bg-blue-100 px-1.5 py-0.5 rounded text-xs">
+                http://influxdb:8086/api/v2/write?org=performance&amp;bucket=jmeter
+              </dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="font-medium w-32 flex-shrink-0">Bucket:</dt>
+              <dd className="font-mono">jmeter</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="font-medium w-32 flex-shrink-0">Implementación:</dt>
+              <dd className="font-mono text-xs">InfluxdbBackendListenerClient</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="font-medium w-32 flex-shrink-0">Percentiles:</dt>
+              <dd className="font-mono">90, 95, 99</dd>
+            </div>
+          </dl>
+        </div>
+
+        {/* Cómo ver gráficas */}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <h4 className="text-sm font-semibold text-amber-900 mb-2">Cómo ver las gráficas</h4>
+          <p className="text-xs text-amber-800 mb-2">
+            El Backend Listener envía métricas detalladas a InfluxDB, que son consumidas
+            por Grafana. Para visualizar las gráficas profesionales:
+          </p>
+          <ol className="list-decimal list-inside text-xs text-amber-800 space-y-1 ml-2">
+            <li>Verifica que tu stack Grafana esté configurado con un dashboard JMeter</li>
+            <li>Accede a Grafana (típicamente <code className="bg-amber-100 px-1 rounded">http://localhost:3000</code>)</li>
+            <li>Busca el dashboard "JMeter" o similar</li>
+          </ol>
+          <p className="text-xs text-amber-700 mt-2 italic">
+            Nota: el provisionamiento automático de dashboard Grafana queda pendiente
+            para sprints futuros del proyecto.
+          </p>
+        </div>
+
+        {/* Renderers alternativos */}
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <h4 className="text-sm font-semibold text-indigo-900 mb-2">Mientras tanto, dentro de Kinetix</h4>
+          <p className="text-xs text-indigo-800">
+            Si quieres ver gráficas en vivo dentro de Kinetix sin abrir Grafana,
+            agrega cualquiera de estos listeners a tu diseño:
+          </p>
+          <ul className="list-disc list-inside text-xs text-indigo-800 mt-1.5 ml-2">
+            <li>jp@gc - Response Times Over Time</li>
+            <li>jp@gc - Response Codes per Second</li>
+            <li>jp@gc - Transactions per Second</li>
+            <li>jp@gc - Active Threads Over Time</li>
+            <li>jp@gc - Hits per Second</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ============================================================================
 // OverviewPanel (vista resumen)
@@ -3217,27 +5994,74 @@ interface DataFilesPanelProps {
   dataFiles: AIDesignDataFile[];
   loading: boolean;
   onReload: () => void;
+  onReloadStructure: () => void;
 }
 
-function DataFilesPanel({ designId, dataFiles, loading, onReload }: DataFilesPanelProps) {
+function DataFilesPanel({ designId, dataFiles, loading, onReload, onReloadStructure }: DataFilesPanelProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [delimiter, setDelimiter] = useState(',');
   const [hasHeader, setHasHeader] = useState(true);
+  // Sprint 2.5c.1 (HF2.1): variables declaradas → autocrea CSV Data Set
+  const [variableNames, setVariableNames] = useState('');
+  // Sprint 2.5c.1-HF12 (UX): modal obligatorio de variables si no se declararon
+  const [showVariablesPrompt, setShowVariablesPrompt] = useState(false);
+  const [pendingVariables, setPendingVariables] = useState('');
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  const handleUpload = async (file: File) => {
+  // Al seleccionar archivo: si no hay variables declaradas, exigirlas en modal.
+  const handleFilePicked = (file: File) => {
+    if (variableNames.trim()) {
+      void doUpload(file, variableNames.trim());
+    } else {
+      setPendingFile(file);
+      setPendingVariables('');
+      setShowVariablesPrompt(true);
+    }
+  };
+
+  const doUpload = async (file: File, declared: string) => {
     setUploading(true);
     setUploadError(null);
     try {
-      await aiDesignDataFilesAPI.upload(designId, file, delimiter, hasHeader ? 'true' : 'false', 'UTF-8');
+      await aiDesignDataFilesAPI.upload(
+        designId,
+        file,
+        delimiter,
+        hasHeader ? 'true' : 'false',
+        'UTF-8',
+        declared,
+      );
       onReload();
+      // Con variables declaradas el backend autocreó un CSV Data Set →
+      // refrescar el árbol para que aparezca.
+      if (declared) {
+        onReloadStructure();
+      }
+      setVariableNames('');
+      setShowVariablesPrompt(false);
+      setPendingFile(null);
+      setPendingVariables('');
     } catch (e: any) {
       setUploadError(e?.response?.data?.detail || e?.message || 'Error al subir');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleConfirmVariables = () => {
+    if (!pendingVariables.trim() || !pendingFile) return;
+    setVariableNames(pendingVariables.trim());
+    void doUpload(pendingFile, pendingVariables.trim());
+  };
+
+  const handleCancelUpload = () => {
+    setShowVariablesPrompt(false);
+    setPendingVariables('');
+    setPendingFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleDelete = async (fileId: string) => {
@@ -3286,6 +6110,20 @@ function DataFilesPanel({ designId, dataFiles, loading, onReload }: DataFilesPan
             </label>
           </FormField>
         </div>
+        <FormField label="Nombres de variables JMeter (separadas por coma)">
+          <input
+            type="text"
+            value={variableNames}
+            onChange={(e) => setVariableNames(e.target.value)}
+            placeholder="ej. firstname,lastname"
+            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Se autocrea un CSV Data Set en el árbol apuntando a este archivo
+            (filename <code>${'{Data}'}/&lt;archivo&gt;</code>, portable para descarga).
+            Si no las declaras aquí, se te pedirán al seleccionar el archivo.
+          </p>
+        </FormField>
         <input
           ref={fileInputRef}
           type="file"
@@ -3293,7 +6131,7 @@ function DataFilesPanel({ designId, dataFiles, loading, onReload }: DataFilesPan
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) handleUpload(f);
+            if (f) handleFilePicked(f);
           }}
         />
         <button
@@ -3344,6 +6182,72 @@ function DataFilesPanel({ designId, dataFiles, loading, onReload }: DataFilesPan
       <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-800">
         <strong>Tip:</strong> los archivos subidos quedan asociados al diseño. Para usarlos en un sampler, crea un CSV Data Set en el árbol y referencia el archivo desde el campo "Archivo CSV".
       </div>
+
+      {/* Sprint 2.5c.1-HF12 — modal obligatorio de variables */}
+      {showVariablesPrompt && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-[500px] max-w-full">
+            <div className="px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+                <h3 className="text-lg font-semibold">Variables JMeter requeridas</h3>
+              </div>
+            </div>
+
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-700 mb-3">
+                Para que <strong>{pendingFile?.name}</strong> sea utilizable por JMeter, necesitas
+                declarar las variables que se mapearán a cada columna del archivo.
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 text-xs">
+                <p className="font-medium text-blue-900 mb-1">¿Cómo funciona?</p>
+                <p className="text-blue-800">
+                  Si tu archivo tiene 2 columnas (ej. <code className="bg-blue-100 px-1">Sally,Brown</code>) y
+                  declaras <code className="bg-blue-100 px-1">firstname,lastname</code>, entonces
+                  en tu JMX podrás usar <code className="bg-blue-100 px-1">{'${firstname}'}</code> y <code className="bg-blue-100 px-1">{'${lastname}'}</code>.
+                </p>
+              </div>
+
+              <label className="block text-xs font-medium mb-1">
+                Nombres de variables (separadas por coma)
+              </label>
+              <input
+                type="text"
+                value={pendingVariables}
+                onChange={(e) => setPendingVariables(e.target.value)}
+                placeholder="ej. firstname,lastname"
+                autoFocus
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-mono focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && pendingVariables.trim()) {
+                    handleConfirmVariables();
+                  }
+                }}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                El número de variables debe coincidir con el número de columnas del CSV.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={handleCancelUpload}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-white"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmVariables}
+                disabled={!pendingVariables.trim() || uploading}
+                className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploading ? 'Subiendo...' : 'Subir con variables'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3864,6 +6768,585 @@ function TextareaWithFx({
       />
       <div className="absolute top-1 right-1">
         <FunctionHelperButton onInsert={handleInsert} />
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// HF7.A — AddElementModal (modal de creación de elementos)
+// ============================================================================
+
+interface AddElementModalProps {
+  open: boolean;
+  elementType: AddElementType;
+  onClose: () => void;
+  onConfirm: (data: any) => void;
+}
+
+function AddElementModal({ open, elementType, onClose, onConfirm }: AddElementModalProps) {
+  const [formData, setFormData] = useState<any>({});
+  const [childKind, setChildKind] = useState<string>('header_manager');
+
+  useEffect(() => {
+    if (!open) return;
+    const defaults: Record<AddElementType, any> = {
+      sampler: { name: 'Nuevo Sampler', method: 'GET', path: '/', domain: '' },
+      sampler_child: { name: '' },
+      udv: { name: '', value: '' },
+      csv_dataset: { testname: 'CSV Data Set', filename: '', variable_names: '' },
+      listener: { listener_kind: 'view_results_tree', name: '' },
+    };
+    setFormData(defaults[elementType] || {});
+    setChildKind('header_manager');
+  }, [open, elementType]);
+
+  if (!open) return null;
+
+  const titles: Record<AddElementType, string> = {
+    sampler: 'Nuevo HTTP Sampler',
+    sampler_child: 'Agregar componente al Sampler',
+    udv: 'Nueva variable (UDV)',
+    csv_dataset: 'Nuevo CSV Data Set',
+    listener: 'Nuevo Listener',
+  };
+
+  const handleConfirm = () => {
+    if (elementType === 'sampler_child') {
+      onConfirm({ child_kind: childKind, data: formData });
+    } else if (elementType === 'csv_dataset') {
+      const vars = String(formData.variable_names || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+      onConfirm({ ...formData, variable_names: vars });
+    } else if (elementType === 'listener') {
+      onConfirm({
+        listener_kind: formData.listener_kind || 'view_results_tree',
+        name: formData.name || undefined,
+      });
+    } else {
+      onConfirm(formData);
+    }
+    onClose();
+  };
+
+  const disabled =
+    (elementType === 'udv' && !formData.name) ||
+    (elementType === 'csv_dataset' && !formData.filename);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-[520px] max-w-[90vw] p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">{titles[elementType]}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+            aria-label="Cerrar"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {elementType === 'sampler' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Nombre</label>
+              <input
+                type="text"
+                value={formData.name || ''}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1 text-gray-700">Método</label>
+                <select
+                  value={formData.method || 'GET'}
+                  onChange={(e) => setFormData({ ...formData, method: e.target.value })}
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                >
+                  {['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1 text-gray-700">Path</label>
+                <input
+                  type="text"
+                  value={formData.path || ''}
+                  onChange={(e) => setFormData({ ...formData, path: e.target.value })}
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Dominio</label>
+              <input
+                type="text"
+                value={formData.domain || ''}
+                onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                placeholder="vacío = usa HTTP Request Defaults"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {elementType === 'sampler_child' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Tipo de componente</label>
+              <select
+                value={childKind}
+                onChange={(e) => setChildKind(e.target.value)}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                autoFocus
+              >
+                <option value="header_manager">Header Manager</option>
+                <option value="response_assertion">Response Assertion (status 200)</option>
+                <option value="regex_extractor">Regex Extractor</option>
+                <option value="json_extractor">JSON Extractor</option>
+                <option value="constant_timer">Constant Timer (1000 ms)</option>
+              </select>
+            </div>
+            <p className="text-xs text-gray-500">
+              Se creará con valores por defecto. Edítalo en el panel derecho tras agregarlo.
+            </p>
+          </div>
+        )}
+
+        {elementType === 'udv' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Nombre de variable *</label>
+              <input
+                type="text"
+                value={formData.name || ''}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="ej. host"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Valor</label>
+              <input
+                type="text"
+                value={formData.value || ''}
+                onChange={(e) => setFormData({ ...formData, value: e.target.value })}
+                placeholder="ej. api.example.com"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {elementType === 'csv_dataset' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Nombre (testname)</label>
+              <input
+                type="text"
+                value={formData.testname || ''}
+                onChange={(e) => setFormData({ ...formData, testname: e.target.value })}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Archivo CSV *</label>
+              <input
+                type="text"
+                value={formData.filename || ''}
+                onChange={(e) => setFormData({ ...formData, filename: e.target.value })}
+                placeholder="ej. data/users.csv"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Variables (separadas por coma)</label>
+              <input
+                type="text"
+                value={formData.variable_names || ''}
+                onChange={(e) => setFormData({ ...formData, variable_names: e.target.value })}
+                placeholder="firstname,lastname,email"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+              />
+            </div>
+          </div>
+        )}
+
+        {elementType === 'listener' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Tipo de Listener</label>
+              <select
+                value={formData.listener_kind || 'view_results_tree'}
+                onChange={(e) => setFormData({ ...formData, listener_kind: e.target.value })}
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                autoFocus
+              >
+                <optgroup label="Resultados">
+                  <option value="view_results_tree">View Results Tree (debug)</option>
+                  <option value="view_results_tree_with_csv">View Results Tree (errors + CSV)</option>
+                  <option value="summary_report">Summary Report (resumen)</option>
+                  <option value="aggregate_report">Informe Agregado</option>
+                  <option value="aggregate_report_with_csv">Informe Agregado (con CSV)</option>
+                  <option value="response_time_graph">Response Time Graph</option>
+                </optgroup>
+                <optgroup label="Gráficas jp@gc">
+                  <option value="jpgc_response_times_over_time">jp@gc - Response Times Over Time</option>
+                  <option value="jpgc_response_codes_per_second">jp@gc - Response Codes per Second</option>
+                  <option value="jpgc_transactions_per_second">jp@gc - Transactions per Second</option>
+                  <option value="jpgc_active_threads_over_time">jp@gc - Active Threads Over Time</option>
+                </optgroup>
+                <optgroup label="Otros">
+                  <option value="backend_listener">Backend Listener (InfluxDB → Grafana)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-gray-700">Nombre</label>
+              <input
+                type="text"
+                value={formData.name || ''}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="(opcional, se autocompleta según el tipo)"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+              />
+            </div>
+            {formData.listener_kind === 'backend_listener' && (
+              <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-800">
+                <strong>Backend Listener:</strong> se configurará apuntando al InfluxDB del stack Kinetix
+                (<code className="font-mono">http://influxdb:8086</code>, bucket <code className="font-mono">jmeter</code>,
+                org <code className="font-mono">performance</code>). Puedes ajustar la URL y argumentos editando el listener
+                después de crearlo.
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={disabled}
+            className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Crear
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// Sprint 2.5c — SmokeTestModal
+// ============================================================================
+
+interface SmokeTestModalProps {
+  open: boolean;
+  running: boolean;
+  result: SmokeTestResult | null;
+  error: string | null;
+  showLog: boolean;
+  config: { numThreads: number; loops: number };
+  onConfigChange: (c: { numThreads: number; loops: number }) => void;
+  onRun: () => void;
+  onClose: () => void;
+  onRetry: () => void;
+  onToggleLog: () => void;
+}
+
+function SmokeTestModal({
+  open,
+  running,
+  result,
+  error,
+  showLog,
+  config,
+  onConfigChange,
+  onRun,
+  onClose,
+  onRetry,
+  onToggleLog,
+}: SmokeTestModalProps) {
+  if (!open) return null;
+
+  const statusConfig: Record<
+    SmokeTestResult['status'],
+    { color: string; bg: string; icon: React.ReactNode; label: string }
+  > = {
+    success: {
+      color: 'text-emerald-700',
+      bg: 'bg-emerald-50 border-emerald-200',
+      icon: <CheckCircle2 className="w-5 h-5" />,
+      label: 'Éxito',
+    },
+    partial: {
+      color: 'text-amber-700',
+      bg: 'bg-amber-50 border-amber-200',
+      icon: <AlertTriangle className="w-5 h-5" />,
+      label: 'Parcial',
+    },
+    failed: {
+      color: 'text-red-700',
+      bg: 'bg-red-50 border-red-200',
+      icon: <XCircle className="w-5 h-5" />,
+      label: 'Fallido',
+    },
+    error: {
+      color: 'text-red-700',
+      bg: 'bg-red-50 border-red-200',
+      icon: <XCircle className="w-5 h-5" />,
+      label: 'Error de ejecución',
+    },
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-[800px] max-w-full max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <Play className="w-5 h-5 text-emerald-600" />
+            <h3 className="text-lg font-semibold">Smoke Test</h3>
+            <span className="text-xs text-gray-500">(1 usuario, 1 iteración)</span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {/* Sprint 2.5c.1 — panel de configuración (antes de ejecutar) */}
+          {!running && !result && !error && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h4 className="font-medium text-blue-900 mb-3 text-sm">Configuración del smoke test</h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Usuarios concurrentes
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={config.numThreads}
+                    onChange={(e) =>
+                      onConfigChange({
+                        ...config,
+                        numThreads: Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1)),
+                      })
+                    }
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">1-20 (útil para validar datos distintos del CSV)</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Iteraciones por usuario
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={config.loops}
+                    onChange={(e) =>
+                      onConfigChange({
+                        ...config,
+                        loops: Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 1)),
+                      })
+                    }
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">1-5</p>
+                </div>
+              </div>
+              <button
+                onClick={onRun}
+                className="mt-3 w-full px-3 py-1.5 bg-emerald-600 text-white text-sm font-medium rounded hover:bg-emerald-700"
+              >
+                Ejecutar smoke test
+              </button>
+            </div>
+          )}
+
+          {running && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-emerald-500 animate-spin mb-3" />
+              <p className="text-sm text-gray-600">Ejecutando JMeter…</p>
+              <p className="text-xs text-gray-400 mt-1">Puede tardar entre 5-15 segundos</p>
+            </div>
+          )}
+
+          {!running && error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-start gap-2">
+                <XCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium text-red-900">No se pudo ejecutar el smoke test</p>
+                  <p className="text-sm text-red-700 mt-1 break-words">{error}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!running && result && (
+            <>
+              {/* Resumen */}
+              <div
+                className={`rounded-lg border p-4 mb-4 ${
+                  statusConfig[result.status]?.bg || 'bg-gray-50 border-gray-200'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className={statusConfig[result.status]?.color}>
+                      {statusConfig[result.status]?.icon}
+                    </span>
+                    <div>
+                      <p className={`font-medium ${statusConfig[result.status]?.color}`}>
+                        {statusConfig[result.status]?.label}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        {result.successful_samples} / {result.total_samples} samplers OK · {result.duration_sec.toFixed(1)}s
+                      </p>
+                    </div>
+                  </div>
+                  {result.error_message && (
+                    <p className="text-xs text-red-700 max-w-md text-right break-words">
+                      {result.error_message}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Tabla de samplers */}
+              {result.samplers.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-gray-700 w-8"></th>
+                        <th className="text-left px-3 py-2 font-medium text-gray-700">Sampler</th>
+                        <th className="text-left px-3 py-2 font-medium text-gray-700 w-20">Código</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-700 w-20">Tiempo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {result.samplers.map((s, idx) => (
+                        <tr key={idx} className={s.success ? '' : 'bg-red-50/40'}>
+                          <td className="px-3 py-2 align-top">
+                            {s.success ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-red-500" />
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="font-medium text-gray-900">{s.label || '(sin nombre)'}</div>
+                            {s.failure_message && (
+                              <div className="text-xs text-red-600 mt-0.5 font-mono break-all">
+                                {s.failure_message}
+                              </div>
+                            )}
+                            {s.response_message && !s.success && (
+                              <div className="text-xs text-gray-500 mt-0.5">{s.response_message}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            <code
+                              className={`text-xs px-1.5 py-0.5 rounded ${
+                                s.response_code.startsWith('2')
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : s.response_code.startsWith('3')
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : s.response_code.startsWith('4')
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-red-100 text-red-700'
+                              }`}
+                            >
+                              {s.response_code || '—'}
+                            </code>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs text-gray-600 align-top">
+                            {s.elapsed_ms}ms
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                  No se ejecutó ningún sampler. Verifica que el JMX tenga samplers habilitados.
+                </div>
+              )}
+
+              {/* Log de JMeter expandible */}
+              {result.jmeter_log_tail && (
+                <div className="mt-4">
+                  <button
+                    onClick={onToggleLog}
+                    className="text-xs text-gray-600 hover:text-gray-900 flex items-center gap-1"
+                  >
+                    {showLog ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                    Log de JMeter ({result.jmeter_log_tail.length} chars)
+                  </button>
+                  {showLog && (
+                    <pre className="mt-2 p-3 bg-gray-900 text-gray-100 text-xs font-mono rounded overflow-auto max-h-64 whitespace-pre-wrap">
+                      {result.jmeter_log_tail}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200 bg-gray-50">
+          <p className="text-xs text-gray-500">
+            El smoke test ejecuta el JMX con 1 usuario y 1 iteración. No envía métricas a InfluxDB.
+          </p>
+          <div className="flex gap-2">
+            {!running && (result || error) && (
+              <button
+                onClick={onRetry}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-white"
+              >
+                Reintentar
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-sm bg-gray-700 text-white rounded hover:bg-gray-800"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

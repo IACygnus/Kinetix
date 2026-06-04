@@ -13,11 +13,16 @@ performance analysis pipeline).
 """
 from __future__ import annotations
 
+import asyncio
+import csv as csv_module
 import io
+import os
 import json
 import logging
 import re
+import shutil
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -28,9 +33,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_role
+from app.db.models.ai_design_data_file import AIDesignDataFile
 from app.db.models.ai_script_design import AIScriptDesign
+from app.db.models.performance_execution import PerformanceExecution
 from app.db.models.user import User
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
 from app.schemas.ai_script_design import (
     AIScriptDesignDetail,
     AIScriptDesignSaveAs,
@@ -38,13 +45,47 @@ from app.schemas.ai_script_design import (
     AIScriptDesignUpsert,
 )
 from app.schemas.ai_script_structure import AIScriptStructure
-from app.services.ai.gemini import load_ai_config_from_db
+from app.schemas.refine_operations import (
+    RefineOperationSet,
+    RefineSurgicalRequest,
+    RefineSurgicalResponse,
+)
+from app.services.ai.gemini import (
+    OPENAI_DEFAULT_MAX_TOKENS,
+    OPENAI_MAX_TOKENS,
+    load_ai_config_from_db,
+)
+from app.schemas.smoke import SmokeSamplerResult, SmokeTestResult
+from app.services.engine.har_compressor import compress_har
+from app.services.engine.execution_tracker import execution_tracker
+from app.services.engine.jmeter_runner import (
+    JMeterRunResult,
+    cleanup_workdir,
+    create_smoke_workdir,
+    parse_jtl_summary,
+    patch_jmx_for_smoke,
+    prepare_full_run_jmx,
+    run_jmeter,
+    run_jmeter_async,
+)
 from app.services.engine.jmx_to_structure import parse_jmx_to_structure
+from app.services.engine.refine_operations_applier import (
+    OperationError,
+    apply_operations,
+)
 from app.services.engine.structure_to_jmx import regenerate_jmx_from_structure
 
-# Max bytes of an uploaded reference file (Postman / Swagger / text).
+# Max bytes of an uploaded reference file (Postman / Swagger / text / HAR).
 # Anything bigger gets truncated to keep OpenAI token usage bounded.
-MAX_FILE_BYTES = 5 * 1024 * 1024  # 5 MB (subido desde 500 KB en Sprint 2.4-HF3)
+# HF6: subido a 50 MB para HARs reales (Croydonistas-class ~45 MB). HAR
+# detectado se comprime antes de mandarlo a la IA con el modulo har_compressor.
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB (Sprint 2.4-HF6, antes 5 MB en HF3)
+
+# Sprint 2.4-HF5 — output ceilings raised so a complete JMX (~95KB ≈ 30K tokens)
+# fits without truncation. Generation keeps the legacy 8192 cap to avoid changing
+# its behavior; refine uses the model's maximum.
+REFINE_OPENAI_FALLBACK_MAX_TOKENS = 16384
+REFINE_GEMINI_MAX_TOKENS = 32768
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -292,6 +333,224 @@ Si el usuario sube un archivo Swagger/OpenAPI:
 """.strip()
 
 
+# Sprint 2.4-HF5 — system prompt dedicado para refinamiento.
+# El SYSTEM_PROMPT general empuja a "generar JMX completos" — el modelo
+# entonces re-crea/abrevia en vez de modificar. Este prompt invierte la
+# instruccion: preservar todo, modificar solo lo pedido.
+REFINE_SYSTEM_PROMPT = """
+Eres un Arquitecto experto en Apache JMeter. Tu unica tarea es REFINAR un
+Test Plan JMX EXISTENTE segun la instruccion del usuario.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLA ABSOLUTA: PRESERVAR TODO LO EXISTENTE
+═══════════════════════════════════════════════════════════════════════════════
+
+Recibes un JMX COMPLETO. Debes devolver el JMX COMPLETO modificado.
+
+OBLIGATORIO:
+- Devuelve SIEMPRE el JMX ENTERO, desde <?xml...?> hasta </jmeterTestPlan>.
+- Conserva TODOS los Thread Groups, HTTP Samplers, Header Managers,
+  Response Assertions, Regex/JSON Extractors, Listeners, CSV Data Sets,
+  User Defined Variables y configuraciones que ya existen.
+- Aplica UNICAMENTE el cambio que el usuario pide. Todo lo demas queda IDENTICO,
+  byte por byte cuando sea posible.
+
+PROHIBIDO ABSOLUTAMENTE:
+- NUNCA devuelvas un fragmento o solo la parte modificada.
+- NUNCA borres samplers, thread groups o secciones que el usuario no pidio eliminar.
+- NUNCA reemplaces el JMX por una version "nueva" mas corta.
+- NUNCA uses comentarios placeholder como <!-- Samplers aqui -->,
+  <!-- resto del script -->, <!-- ... -->, etc. Si un elemento existia
+  en el JMX que recibes, debe aparecer COMPLETO en tu respuesta.
+- NUNCA explanas que "omitiste para brevedad" — devuelve TODO.
+
+═══════════════════════════════════════════════════════════════════════════════
+PROCESO
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Lee el JMX actual COMPLETO (te lo doy abajo, claramente delimitado).
+2. Identifica EXACTAMENTE que pide cambiar el usuario.
+3. Aplica solo ese cambio sobre el JMX completo.
+4. Devuelve el JMX completo resultante.
+
+Las reglas de calidad de generacion siguen aplicando para los cambios:
+- Body POST/PUT dentro del sampler con postBodyRaw=true.
+- Variables definidas en UDV/CSV/Extractor (nunca huerfanas).
+- Funciones JMeter helper (${__time}, ${__UUID}, ${__Random}, etc.)
+  cuando se piden datos dinamicos.
+
+═══════════════════════════════════════════════════════════════════════════════
+FORMATO DE SALIDA
+═══════════════════════════════════════════════════════════════════════════════
+
+Devuelve el XML completo dentro de un bloque ```xml ... ```. Puedes anteceder
+con 1-2 lineas explicando que cambio aplicaste, pero el JMX que sigue debe
+estar COMPLETO desde <?xml hasta </jmeterTestPlan>.
+""".strip()
+
+
+# Sprint 2.4-HF5.1 — system prompt para el refine quirurgico.
+# La IA devuelve SOLO operaciones estructuradas en JSON; el backend las
+# aplica a la AIScriptStructure y regenera el JMX localmente. Esto evita
+# que la IA escupa el JMX completo (que se truncaba en JMX grandes).
+REFINE_SURGICAL_SYSTEM_PROMPT = """
+Eres un Arquitecto experto en Apache JMeter. Tu tarea es ANALIZAR un Test Plan
+JMX existente y la instruccion del usuario, y devolver SOLO las OPERACIONES
+ESTRUCTURADAS necesarias en formato JSON.
+
+═══════════════════════════════════════════════════════════════════════════════
+PROTOCOLO OBLIGATORIO
+═══════════════════════════════════════════════════════════════════════════════
+
+NO devuelvas XML. NO devuelvas el JMX. NO escribas explicaciones largas.
+Devuelve UNICAMENTE un JSON con este shape:
+
+{
+  "operations": [ ...lista de operaciones... ],
+  "explanation": "frase corta describiendo el cambio",
+  "fallback_to_full_refine": false,
+  "fallback_reason": null
+}
+
+═══════════════════════════════════════════════════════════════════════════════
+OPERACIONES SOPORTADAS
+═══════════════════════════════════════════════════════════════════════════════
+
+1. update_test_plan
+   { "op": "update_test_plan", "fields": { "name": "...", "comments": "...", "functional_mode": false, "serialize_threadgroups": false } }
+
+2. update_thread_group  (modificar TG existente — usa el ID que aparece en la estructura)
+   { "op": "update_thread_group", "id": "<id>", "fields": { "name": "...", "num_threads": 50, "ramp_time": 30, "loops": 1, "continue_forever": false, "on_sample_error": "continue", "enabled": true, "stepping": { "start_users_count": 1 } } }
+
+   IMPORTANTE — KIND DEL THREAD GROUP (revisa el marcador STANDARD/STEPPING en la estructura):
+   - Si el TG es STANDARD: usa los campos directamente en el root:
+       { "num_threads": 50, "ramp_time": 30, "loops": 1, "on_sample_error": "continue" }
+   - Si el TG es STEPPING: los campos de carga van DENTRO de "stepping":
+       { "num_threads": 50, "stepping": { "initial_delay": 0, "start_users_count": 5, "start_users_period": 10, "ramp_up": 5, "flight_time": 60, "stop_users_count": 5, "stop_users_period": 10 } }
+   - `ramp_time` SOLO aplica a TG standard. Para un TG stepping usa `stepping.ramp_up`.
+   - Los campos `initial_delay`, `start_users_count`, `start_users_count_burst`, `start_users_period`, `ramp_up`, `flight_time`, `stop_users_count`, `stop_users_period` SOLO existen en stepping — usalos dentro de "stepping".
+   - `num_threads` y `on_sample_error` viven en el root del TG en ambos kinds.
+
+3. update_sampler  (modificar HTTPSampler — usa el ID del sampler)
+   { "op": "update_sampler", "id": "<id>", "fields": { "name": "...", "method": "POST", "domain": "${host}", "port": "${port}", "protocol": "https", "path": "/api/x", "follow_redirects": true, "use_keepalive": true, "body": { "mode": "raw", "raw_text": "{...JSON...}" } } }
+
+4. update_sampler_child  (modificar HeaderManager, Assertion, Extractor o Timer existente)
+   { "op": "update_sampler_child", "sampler_id": "<id>", "child_id": "<id>", "fields": { ... } }
+
+5. update_udvs  (REEMPLAZA TODA la lista de variables globales)
+   { "op": "update_udvs", "udvs": [ {"name": "host", "value": "api.example.com"}, {"name": "scheme", "value": "https"} ] }
+
+6. update_csv_dataset
+   { "op": "update_csv_dataset", "id": "<id>", "fields": { "testname": "...", "filename": "data/users.csv", "variable_names": ["firstname","lastname"], "delimiter": ",", "share_mode": "shareMode.all" } }
+
+7. update_http_defaults
+   { "op": "update_http_defaults", "fields": { "protocol": "https", "domain": "${host}", "port": "${port}", "path": "/api" } }
+
+8. set_enabled  (activar/desactivar)
+   { "op": "set_enabled", "target_kind": "thread_group", "id": "<id>", "enabled": false }
+   target_kind soportado: "thread_group", "sampler", "sampler_child" (requiere sampler_id), "csv_data_set", "listener", "cookie_manager" (sin id), "cache_manager" (sin id)
+
+9. add_sampler  (agregar HTTPSampler a un Thread Group existente)
+   { "op": "add_sampler", "thread_group_id": "<tg_id>", "sampler": { "name": "1. Login", "method": "POST", "path": "/auth", "body": { "mode": "raw", "raw_text": "{\\"u\\":\\"x\\"}" } }, "position": null }
+
+10. add_sampler_child  (agregar HeaderManager, Assertion, Extractor o Timer a un sampler)
+    { "op": "add_sampler_child", "sampler_id": "<sampler_id>", "child_kind": "header_manager|response_assertion|regex_extractor|json_extractor|constant_timer", "data": { ... } }
+
+    Campos por child_kind (todos opcionales con defaults):
+    - header_manager: { "headers": [{"name":"Content-Type","value":"application/json"}] }
+    - response_assertion: { "test_field": "Assertion.response_code", "test_type": 2, "test_strings": ["200"] }
+    - regex_extractor: { "refname": "token", "regex": "\\"token\\":\\"([^\\"]+)\\"", "template": "$1$", "match_number": "1", "default": "NOT_FOUND" }
+    - json_extractor: { "refname": "id", "json_path": "$.id", "match_number": "1", "default": "NOT_FOUND" }
+    - constant_timer: { "delay_ms": 500 }
+
+11. add_udv  (agregar variable global)
+    { "op": "add_udv", "name": "host", "value": "api.example.com" }
+
+12. add_csv_dataset  (agregar CSV Data Set nuevo)
+    { "op": "add_csv_dataset", "data": { "testname": "Datos", "filename": "data/users.csv", "variable_names": ["firstname","lastname"], "delimiter": "," } }
+
+13. delete_element  (eliminar cualquier elemento)
+    { "op": "delete_element", "target_kind": "sampler|sampler_child|thread_group|csv_data_set|listener|udv", "id": "<id>", "sampler_id": "<solo para sampler_child>", "udv_name": "<solo para udv>" }
+
+14. add_listener  (agregar listener al test plan)
+    { "op": "add_listener", "listener_kind": "view_results_tree|summary_report|aggregate_report|response_time_graph|backend_listener", "name": "<opcional, se autocompleta segun el kind>" }
+
+    Tipos de listener disponibles:
+    - view_results_tree: para debug en desarrollo.
+    - summary_report: resumen agregado por sampler.
+    - aggregate_report: percentiles y throughput detallados.
+    - response_time_graph: grafico de tiempos en el tiempo.
+    - backend_listener: envia metricas en tiempo real a InfluxDB del stack Kinetix (por defecto apunta a http://influxdb:8086, bucket=jmeter, org=performance).
+
+    Para customizar el Backend Listener (otro InfluxDB/Graphite/etc.):
+    { "op": "add_listener", "listener_kind": "backend_listener", "name": "Mi backend",
+      "backend_listener_config": { "implementation": "...", "arguments": [{"name":"influxdbUrl","value":"..."}] } }
+
+═══════════════════════════════════════════════════════════════════════════════
+FALLBACK
+═══════════════════════════════════════════════════════════════════════════════
+
+Las operaciones de add/delete YA estan soportadas — emitelas directamente
+con add_sampler / add_sampler_child / add_udv / add_csv_dataset / delete_element.
+
+Solo emite fallback_to_full_refine=true si el cambio requiere algo que NINGUNA
+operacion cubre, por ejemplo:
+- Convertir un TG standard a stepping (cambio estructural del kind).
+- Agregar un Thread Group nuevo (fuera del MVP).
+- Mover elementos entre Thread Groups.
+- Cambios masivos que reorganicen mas de la mitad del JMX.
+
+Si necesitas fallback responde:
+{ "operations": [], "explanation": "<razon>", "fallback_to_full_refine": true, "fallback_reason": "<motivo>" }
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS
+═══════════════════════════════════════════════════════════════════════════════
+
+- Usa SIEMPRE los IDs reales que aparecen en la AIScriptStructure que recibes para targets de update/delete.
+- Para add_*, los IDs los genera el backend — no los inventes en el payload.
+- No inventes IDs sobre elementos existentes. Si no encuentras el elemento que el usuario menciona, usa fallback_to_full_refine=true.
+- Devuelve SOLO el JSON. Sin markdown, sin ```json```, sin explicaciones antes ni despues.
+- Si el usuario pide algo ambiguo, escoge la interpretacion mas conservadora y describela en "explanation".
+
+═══════════════════════════════════════════════════════════════════════════════
+EJEMPLOS
+═══════════════════════════════════════════════════════════════════════════════
+
+Usuario: "Cambia el ramp-up del primer TG a 45 segundos y deshabilita el listener View Results Tree"
+
+Respuesta:
+{
+  "operations": [
+    { "op": "update_thread_group", "id": "tg-abc-123", "fields": { "ramp_time": 45 } },
+    { "op": "set_enabled", "target_kind": "listener", "id": "lst-xyz-789", "enabled": false }
+  ],
+  "explanation": "Ramp-up del TG a 45s y View Results Tree desactivado",
+  "fallback_to_full_refine": false,
+  "fallback_reason": null
+}
+
+Usuario: "Agrega un sampler POST /api/logout al primer TG y un Response Assertion que verifique status 204"
+
+Respuesta:
+{
+  "operations": [
+    { "op": "add_sampler", "thread_group_id": "tg-abc-123", "sampler": { "name": "Logout", "method": "POST", "path": "/api/logout" } },
+    { "op": "add_sampler_child", "sampler_id": "<id del nuevo sampler retornado por el backend tras add>", "child_kind": "response_assertion", "data": { "test_strings": ["204"], "test_field": "Assertion.response_code" } }
+  ],
+  "explanation": "Sampler Logout y assertion de status 204 agregados",
+  "fallback_to_full_refine": false,
+  "fallback_reason": null
+}
+
+NOTA: cuando combines add_sampler + add_sampler_child sobre el mismo nuevo
+sampler, emite SOLO el add_sampler. El backend tambien acepta secuencias en
+las que el sampler_id se descubre tras aplicar el primero, pero si tienes
+dudas, agrega el sampler con su HeaderManager/Assertion embebido pidiendolo
+en el explanation y emitiendo en turnos separados.
+""".strip()
+
+
 # ===================== PYDANTIC SCHEMAS =====================
 
 
@@ -486,9 +745,12 @@ def _build_messages(
     history: Optional[List[ChatMessage]],
     current_jmx: Optional[str] = None,
     file_context: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> List[dict]:
     """Compose the message list for the chat completion."""
-    messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: List[dict] = [
+        {"role": "system", "content": system_prompt or SYSTEM_PROMPT}
+    ]
     if history:
         for m in history:
             if m.role in ("user", "assistant", "system") and m.content:
@@ -503,6 +765,56 @@ def _build_messages(
             f"```xml\n{current_jmx}\n```"
         )
     parts.append(f"Instruccion del usuario:\n{base_prompt}")
+    messages.append({"role": "user", "content": "\n\n".join(parts)})
+    return messages
+
+
+def _build_refine_messages(
+    user_instruction: str,
+    current_jmx: str,
+    history: Optional[List[ChatMessage]],
+    file_context: Optional[str] = None,
+) -> List[dict]:
+    """Compose messages for /refine.
+
+    Layout choices (Sprint 2.4-HF5):
+    - REFINE_SYSTEM_PROMPT replaces the generative SYSTEM_PROMPT so the model
+      sees "preserve everything" as its primary directive.
+    - The current JMX is the FIRST block in the user message, framed as an
+      immutable base. The instruction comes AFTER and references it.
+    - Optional reference file (Postman / Swagger) goes before the JMX so it
+      stays available without diluting the JMX block.
+    - Conversation history is included verbatim before the new turn so the
+      model keeps prior context (and so the user can iterate naturally).
+    """
+    messages: List[dict] = [
+        {"role": "system", "content": REFINE_SYSTEM_PROMPT}
+    ]
+    if history:
+        for m in history:
+            if m.role in ("user", "assistant", "system") and m.content:
+                messages.append({"role": m.role, "content": m.content})
+
+    parts: List[str] = []
+    if file_context:
+        parts.append(file_context)
+    parts.append(
+        "═══════════════════════════════════════════════════════════════\n"
+        "JMX ACTUAL — este es el script COMPLETO que debes refinar.\n"
+        "NO lo acortes, NO omitas samplers, NO uses placeholders.\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        f"```xml\n{current_jmx}\n```"
+    )
+    parts.append(
+        "═══════════════════════════════════════════════════════════════\n"
+        "INSTRUCCION DEL USUARIO\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        f"{user_instruction}\n\n"
+        "Aplica SOLO ese cambio sobre el JMX completo de arriba. "
+        "Conserva todo lo demas IDENTICO. "
+        "Devuelve el JMX COMPLETO (desde <?xml hasta </jmeterTestPlan>) "
+        "en un bloque ```xml ... ```."
+    )
     messages.append({"role": "user", "content": "\n\n".join(parts)})
     return messages
 
@@ -666,10 +978,37 @@ def _format_openapi_spec(data: dict) -> str:
     return "\n".join(lines)
 
 
+def _is_har_file(filename: str, content: str) -> bool:
+    """Detect whether the uploaded file is a HAR (HTTP Archive).
+
+    Looks first at the filename extension. As a fallback, inspects the first
+    ~2KB of content for the canonical HAR shape: ``{"log": {"entries": [...]}}``.
+    """
+    if filename and filename.lower().endswith(".har"):
+        return True
+    sample = (content or "")[:2048]
+    if not sample.strip().startswith("{"):
+        return False
+    try:
+        # Try to parse a small prefix. If the full HAR is huge, we cant always
+        # parse just 2KB cleanly; fall back to text matching as a last resort.
+        data = json.loads(sample)
+    except json.JSONDecodeError:
+        return (
+            '"log"' in sample
+            and '"entries"' in sample
+            and ('"version"' in sample or '"creator"' in sample)
+        )
+    if not isinstance(data, dict):
+        return False
+    log = data.get("log")
+    return isinstance(log, dict) and "entries" in log
+
+
 def _detect_and_format(raw: str, filename: str) -> tuple[str, str]:
     """Detect file kind and produce (kind_label, formatted_context).
 
-    kind_label: 'postman' | 'openapi' | 'text'
+    kind_label: 'postman' | 'openapi' | 'har' | 'text'
     formatted_context: text the AI will see, prefixed with a hint.
     """
     raw = _truncate(raw)
@@ -709,8 +1048,17 @@ def _detect_and_format(raw: str, filename: str) -> tuple[str, str]:
     )
 
 
-def _call_ai(messages: List[dict], ai_conf: dict) -> str:
-    """Dispatch to OpenAI or Gemini based on the stored config. Returns raw text."""
+def _call_ai(
+    messages: List[dict],
+    ai_conf: dict,
+    max_tokens_override: Optional[int] = None,
+) -> str:
+    """Dispatch to OpenAI or Gemini based on the stored config. Returns raw text.
+
+    ``max_tokens_override`` lets callers (notably /refine) raise the output
+    cap above the generation default of 8192 so a full JMX (~95KB ≈ 30K tokens)
+    fits without truncation.
+    """
     provider = (ai_conf.get("provider") or "").lower()
     model = ai_conf.get("model_name") or ""
     api_key = ai_conf.get("api_key") or ""
@@ -727,14 +1075,25 @@ def _call_ai(messages: List[dict], ai_conf: dict) -> str:
         except ImportError as e:
             raise HTTPException(status_code=500, detail=f"openai SDK no disponible: {e}")
         client = OpenAI(api_key=api_key)
+        if max_tokens_override is not None:
+            # Refine path: ride the model's actual ceiling instead of the
+            # hardcoded 8192 used for first-shot generation.
+            model_ceiling = OPENAI_MAX_TOKENS.get(model, OPENAI_DEFAULT_MAX_TOKENS)
+            effective_max_tokens = min(max_tokens_override, model_ceiling)
+        else:
+            effective_max_tokens = 8192
         completion = client.chat.completions.create(
             model=model or "gpt-4o",
             messages=messages,
             temperature=0.4,
-            max_tokens=8192,
+            max_tokens=effective_max_tokens,
         )
         if not completion.choices:
             raise HTTPException(status_code=502, detail="OpenAI devolvio respuesta vacia")
+        logger.info(
+            "AI Script Designer: OpenAI call model=%s max_tokens=%d finish_reason=%s",
+            model, effective_max_tokens, completion.choices[0].finish_reason,
+        )
         return completion.choices[0].message.content or ""
 
     if provider == "gemini":
@@ -751,9 +1110,14 @@ def _call_ai(messages: List[dict], ai_conf: dict) -> str:
             flat.append(f"[{role}]\n{m['content']}")
         prompt = "\n\n".join(flat)
         model_obj = genai.GenerativeModel(model or "gemini-2.5-flash")
+        gemini_max_tokens = max_tokens_override if max_tokens_override is not None else 8192
         resp = model_obj.generate_content(
             prompt,
-            generation_config={"max_output_tokens": 8192, "temperature": 0.4},
+            generation_config={"max_output_tokens": gemini_max_tokens, "temperature": 0.4},
+        )
+        logger.info(
+            "AI Script Designer: Gemini call model=%s max_output_tokens=%d",
+            model, gemini_max_tokens,
         )
         return (resp.text or "") if resp else ""
 
@@ -761,6 +1125,73 @@ def _call_ai(messages: List[dict], ai_conf: dict) -> str:
         status_code=400,
         detail=f"Provider de IA no soportado para JMX: {provider!r}. Soportados: openai, gemini.",
     )
+
+
+# ===================== REFINE SAFETY =====================
+
+
+def _count_jmx_elements(jmx: str) -> tuple[int, int]:
+    """Count thread groups and samplers in a JMX. Used to detect destructive refines.
+
+    Falls back to lightweight string counting if the structured parser cannot
+    parse the JMX (e.g. mid-refinement partial output).
+
+    Returns (thread_groups_count, samplers_count).
+    """
+    try:
+        structure = parse_jmx_to_structure(jmx)
+    except Exception:
+        # Lightweight fallback — tag count, not perfect but enough to detect
+        # massive deletions.
+        tg = jmx.count("<ThreadGroup ") + jmx.count("<SetupThreadGroup ") + jmx.count("<PostThreadGroup ")
+        samplers = jmx.count("<HTTPSamplerProxy ") + jmx.count("<HTTPSampler ")
+        return tg, samplers
+
+    tg_count = len(structure.thread_groups)
+    sampler_count = 0
+
+    def walk_children(children):
+        nonlocal sampler_count
+        for ch in children:
+            if ch.type == "sampler":
+                sampler_count += 1
+            elif ch.type == "controller" and ch.controller is not None:
+                # Controllers have their own children list of TGChild
+                nested = getattr(ch.controller, "children", None) or []
+                walk_children(nested)
+
+    for tg in structure.thread_groups:
+        walk_children(tg.children)
+
+    return tg_count, sampler_count
+
+
+def _validate_refine_not_destructive(
+    original_jmx: str, refined_jmx: str
+) -> tuple[bool, str]:
+    """Reject a refinement that lost more than half of the samplers or any TG.
+
+    Returns (is_safe, error_message). When is_safe is False the caller should
+    keep the original JMX and surface error_message to the frontend.
+    """
+    try:
+        orig_tgs, orig_samplers = _count_jmx_elements(original_jmx)
+        refined_tgs, refined_samplers = _count_jmx_elements(refined_jmx)
+    except Exception as e:
+        return False, f"No se pudo validar el JMX refinado ({e}). Se conserva el actual."
+
+    if orig_tgs > 0 and refined_tgs < orig_tgs:
+        return False, (
+            f"El refinamiento eliminó Thread Groups ({orig_tgs} → {refined_tgs}). "
+            f"Posible pérdida de contenido — se conserva el JMX actual."
+        )
+    if orig_samplers > 0 and refined_samplers < orig_samplers * 0.5:
+        return False, (
+            f"El refinamiento redujo los samplers de {orig_samplers} a {refined_samplers}. "
+            f"Posible pérdida de contenido — se conserva el JMX actual."
+        )
+
+    return True, ""
 
 
 # ===================== ENDPOINTS =====================
@@ -814,6 +1245,9 @@ class FileGenerateResponse(AIResponse):
     file_kind: Optional[str] = None
     file_content: Optional[str] = None  # echoed back so the FE can persist for /refine
     file_name: Optional[str] = None
+    # Sprint 2.4-HF6 — HAR compression stats so the FE can show the user
+    # how much was reduced. Only populated when the uploaded file is a HAR.
+    compression_stats: Optional[dict] = None
 
 
 @router.post("/generate-from-file", response_model=FileGenerateResponse)
@@ -853,7 +1287,45 @@ async def generate_jmx_from_file(
         raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo: {e}")
 
     filename = file.filename or "archivo"
+
+    # Sprint 2.4-HF6 — HAR detection + compression BEFORE sending to the AI.
+    # Real HARs can be 30-50 MB; raw they blow the LLM context. The compressor
+    # filters static assets + tracking, dedups by canonical URL + body hash,
+    # and truncates oversized bodies, typically reducing size by 80-99%.
+    compression_stats: Optional[dict] = None
+    if _is_har_file(filename, raw_text):
+        try:
+            compressed_text, compression_stats = compress_har(raw_text)
+            raw_text = compressed_text
+            logger.info(
+                "AI Script Designer: HAR comprimido %s: %s -> %s bytes "
+                "(%.1f%% reduccion), entries %s -> %s",
+                filename,
+                compression_stats["original_size"],
+                compression_stats["compressed_size"],
+                compression_stats["reduction_ratio"],
+                compression_stats["entries_original"],
+                compression_stats["entries_unique"],
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"HAR invalido: {e}")
+
     kind, file_ctx = _detect_and_format(raw_text, filename)
+    # If we compressed a HAR, hint to the IA explicitly — _detect_and_format
+    # would fall into the generic "text" branch otherwise.
+    if compression_stats is not None:
+        kind = "har"
+        file_ctx = (
+            "CONTEXTO: el usuario adjunto un HAR (HTTP Archive) que se "
+            "comprimio antes de mandarlo a ti — los assets estaticos y los "
+            "duplicados ya fueron filtrados, solo quedan las transacciones "
+            "logicas unicas. Usa los entries como base para los samplers JMX. "
+            "Cuando veas _duplicate_count en un entry, significa que la misma "
+            "transaccion aparecio varias veces durante la grabacion.\n\n"
+            "--- HAR COMPRIMIDO ---\n"
+            f"{raw_text}\n"
+            "--- FIN ---"
+        )
     logger.info(
         "AI Script Designer: file upload kind=%s name=%s size=%d",
         kind, filename, len(raw_bytes),
@@ -895,6 +1367,7 @@ async def generate_jmx_from_file(
             file_kind=kind,
             file_content=_truncate(raw_text),
             file_name=filename,
+            compression_stats=compression_stats,
         )
 
     is_valid, components, errors = _parse_jmx(jmx)
@@ -907,6 +1380,7 @@ async def generate_jmx_from_file(
         file_kind=kind,
         file_content=_truncate(raw_text),
         file_name=filename,
+        compression_stats=compression_stats,
     )
 
 
@@ -916,7 +1390,17 @@ async def refine_jmx(
     _current_user: User = Depends(require_role(["admin", "analyst"])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Refine an existing JMX based on a follow-up prompt."""
+    """Refine an existing JMX based on a follow-up prompt.
+
+    Sprint 2.4-HF5:
+    - Uses REFINE_SYSTEM_PROMPT (preserve-everything directive) instead of
+      the generative SYSTEM_PROMPT.
+    - Raises max_tokens to the model ceiling so a full JMX fits without
+      truncation (was hardcoded 8192, often clipped the response mid-sampler).
+    - Validates the refined JMX against the original — rejects destructive
+      refines (lost > 50% samplers or any Thread Group) and keeps the
+      original instead.
+    """
     if not body.current_jmx or "<jmeterTestPlan" not in body.current_jmx:
         raise HTTPException(status_code=400, detail="current_jmx no es un JMX valido")
 
@@ -932,15 +1416,30 @@ async def refine_jmx(
         # Re-format on each refine so the context stays under the file size cap
         _, file_ctx = _detect_and_format(body.file_content, body.file_name or "archivo_referencia")
 
-    messages = _build_messages(
-        body.prompt,
-        body.conversation_history,
+    messages = _build_refine_messages(
+        user_instruction=body.prompt,
         current_jmx=body.current_jmx,
+        history=body.conversation_history,
         file_context=file_ctx,
     )
 
+    # Pick a max_tokens ceiling that allows the model to output a complete JMX.
+    provider = (ai_conf.get("provider") or "").lower()
+    if provider == "openai":
+        max_tokens_refine = OPENAI_MAX_TOKENS.get(
+            ai_conf.get("model_name") or "",
+            REFINE_OPENAI_FALLBACK_MAX_TOKENS,
+        )
+    else:
+        max_tokens_refine = REFINE_GEMINI_MAX_TOKENS
+
+    logger.info(
+        "AI Script Designer /refine: provider=%s model=%s current_jmx_chars=%d max_tokens=%d",
+        provider, ai_conf.get("model_name"), len(body.current_jmx), max_tokens_refine,
+    )
+
     try:
-        raw_text = _call_ai(messages, ai_conf)
+        raw_text = _call_ai(messages, ai_conf, max_tokens_override=max_tokens_refine)
     except HTTPException:
         raise
     except Exception as e:
@@ -949,12 +1448,43 @@ async def refine_jmx(
 
     jmx, explanation = _extract_jmx_and_explanation(raw_text)
     if not jmx:
-        # If the AI returned no fenced JMX, keep the existing one but report the issue.
+        # No fenced JMX block — keep the current JMX and report.
+        # If the response *started* a JMX but didn't close </jmeterTestPlan>,
+        # the model hit its output ceiling mid-XML; give a more specific hint.
+        truncated_xml = (
+            "<?xml" in raw_text and "</jmeterTestPlan>" not in raw_text
+        )
+        if truncated_xml:
+            err_msg = (
+                "La respuesta de la IA quedo truncada (output incompleto). "
+                "El JMX es demasiado grande para el modelo actual. "
+                "Se conserva el JMX actual. Considera usar un modelo con "
+                "mayor capacidad (gpt-4.1, gemini-2.5-flash) o pedir cambios "
+                "mas localizados."
+            )
+        else:
+            err_msg = "La IA no devolvio un bloque JMX actualizado. Se conserva el actual."
         return AIResponse(
             jmx_content=body.current_jmx,
             explanation=explanation or raw_text,
             is_valid=True,
-            error="La IA no devolvio un bloque JMX actualizado. Se conserva el actual.",
+            error=err_msg,
+            components=_parse_jmx(body.current_jmx)[1],
+        )
+
+    # Anti-destructive guard: if the refined JMX lost massive content vs the
+    # original (truncated mid-output, removed samplers, dropped a Thread Group),
+    # reject the refinement and keep the original.
+    is_safe, safety_error = _validate_refine_not_destructive(body.current_jmx, jmx)
+    if not is_safe:
+        logger.warning(
+            "AI Script Designer /refine: destructive output rejected — %s", safety_error,
+        )
+        return AIResponse(
+            jmx_content=body.current_jmx,
+            explanation=explanation or "",
+            is_valid=True,
+            error=safety_error,
             components=_parse_jmx(body.current_jmx)[1],
         )
 
@@ -965,6 +1495,267 @@ async def refine_jmx(
         is_valid=is_valid,
         error="; ".join(errors) if errors else None,
         components=components,
+    )
+
+
+# =========================================================================
+# Sprint 2.4-HF5.1 — Refine quirurgico (structured operations)
+# =========================================================================
+
+
+def _build_structure_summary(structure) -> str:
+    """Build a textual summary of the AIScriptStructure so the AI can target
+    elements by their real IDs without having to re-parse the JMX itself.
+    """
+    lines: List[str] = []
+    lines.append(f"TestPlan: name='{structure.test_plan.name}'")
+
+    if structure.user_defined_variables:
+        lines.append(
+            "UDVs ({}): {}".format(
+                len(structure.user_defined_variables),
+                ", ".join(
+                    f"{v.name}={v.value}" for v in structure.user_defined_variables
+                ),
+            )
+        )
+
+    if structure.http_defaults:
+        d = structure.http_defaults
+        lines.append(
+            f"HttpDefaults: protocol={d.protocol or '-'} domain={d.domain or '-'} "
+            f"port={d.port or '-'} path={d.path or '-'}"
+        )
+
+    if structure.cookie_manager:
+        lines.append(
+            f"CookieManager: enabled={structure.cookie_manager.enabled} "
+            f"clear_each_iteration={structure.cookie_manager.clear_each_iteration}"
+        )
+    if structure.cache_manager:
+        lines.append(
+            f"CacheManager: enabled={structure.cache_manager.enabled} "
+            f"clear_each_iteration={structure.cache_manager.clear_each_iteration}"
+        )
+
+    for ds in structure.csv_data_sets:
+        lines.append(
+            f"CSV id={ds.id} testname='{ds.testname}' enabled={ds.enabled} "
+            f"filename={ds.filename} vars={ds.variable_names}"
+        )
+
+    for tg in structure.thread_groups:
+        lines.append("")
+        # Sprint 2.4-HF5.2 — marca cada TG como STANDARD o STEPPING y lista
+        # los campos que aplican en cada caso para que la IA escoja bien.
+        kind_label = "STEPPING" if tg.kind == "stepping" else "STANDARD"
+        lines.append(
+            f"ThreadGroup id={tg.id} name='{tg.name}' kind={kind_label} "
+            f"enabled={tg.enabled}"
+        )
+        if tg.kind == "standard":
+            lines.append(
+                f"  Campos standard: num_threads={tg.num_threads}, "
+                f"ramp_time={tg.ramp_time}, loops={tg.loops}, "
+                f"on_sample_error={tg.on_sample_error}"
+            )
+        elif tg.kind == "stepping" and tg.stepping is not None:
+            s = tg.stepping
+            lines.append(
+                f"  Campos stepping: num_threads={tg.num_threads}, "
+                f"initial_delay={s.initial_delay}, "
+                f"start_users_count={s.start_users_count}, "
+                f"start_users_period={s.start_users_period}, "
+                f"ramp_up={s.ramp_up}, flight_time={s.flight_time}, "
+                f"stop_users_count={s.stop_users_count}, "
+                f"stop_users_period={s.stop_users_period}"
+            )
+        for ch in tg.children:
+            if ch.type == "sampler" and ch.sampler is not None:
+                s = ch.sampler
+                lines.append(
+                    f"  Sampler id={s.id} name='{s.name}' method={s.method} "
+                    f"path={s.path or '-'} enabled={s.enabled} body.mode={s.body.mode}"
+                )
+                for sc in s.children:
+                    child_name = getattr(sc.data, "name", "?")
+                    child_id = getattr(sc.data, "id", "?")
+                    lines.append(
+                        f"    Child id={child_id} type={sc.type} name='{child_name}'"
+                    )
+            elif ch.type == "controller" and ch.controller is not None:
+                lines.append(
+                    f"  Controller id={ch.controller.id} "
+                    f"name='{ch.controller.name}' kind={ch.controller.kind}"
+                )
+
+    for li in structure.listeners:
+        lines.append(
+            f"Listener id={li.id} kind={li.kind} name='{li.name}' enabled={li.enabled}"
+        )
+
+    return "\n".join(lines)
+
+
+def _parse_ai_operations(raw_response: str) -> RefineOperationSet:
+    """Extract the operations JSON from the AI response, tolerant to markdown."""
+    text = (raw_response or "").strip()
+
+    # Strip markdown fences if the AI used them despite being told not to
+    if text.startswith("```"):
+        first_nl = text.find("\n")
+        if first_nl > 0:
+            text = text[first_nl + 1:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3].rstrip()
+
+    # As a last resort, try to extract the first JSON object from a noisy response
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start: end + 1]
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"La IA no devolvio JSON valido: {e}")
+
+    return RefineOperationSet(**data)
+
+
+@router.post("/refine-surgical", response_model=RefineSurgicalResponse)
+async def refine_jmx_surgical(
+    payload: RefineSurgicalRequest,
+    _current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Surgical refine: ask the AI for structured operations only (not the
+    full JMX), apply them to the parsed AIScriptStructure, and regenerate
+    the JMX locally.
+
+    If the change requires add/delete (not supported in MVP) the AI returns
+    ``fallback_to_full_refine=true`` and the frontend falls back to the
+    classic /refine endpoint from HF5.
+    """
+    # 1. Parse the current JMX
+    try:
+        structure = parse_jmx_to_structure(payload.current_jmx)
+    except Exception as e:
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=False,
+            error=f"El JMX actual no se pudo parsear: {e}",
+        )
+
+    # 2. Build the contextual prompt for the AI
+    structure_summary = _build_structure_summary(structure)
+    user_message = (
+        "ESTRUCTURA ACTUAL DEL JMX (usa estos IDs reales en tus operaciones):\n\n"
+        f"{structure_summary}\n\n"
+        "═══════════════════════════════════════════════\n"
+        "INSTRUCCION DEL USUARIO:\n"
+        f"{payload.prompt}\n\n"
+        "Devuelve SOLO el JSON con las operaciones."
+    )
+
+    # 3. Load AI config
+    ai_conf = await load_ai_config_from_db(db)
+    if ai_conf.get("limit_reached"):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
+        )
+
+    # 4. Build messages — reuse _build_messages with our surgical system_prompt.
+    #    The conversation_history is passed verbatim (dicts → ChatMessage).
+    history_msgs: List[ChatMessage] = []
+    for m in payload.conversation_history or []:
+        try:
+            history_msgs.append(
+                ChatMessage(
+                    role=str(m.get("role", "user")),
+                    content=str(m.get("content", "")),
+                )
+            )
+        except Exception:
+            continue
+
+    messages = _build_messages(
+        base_prompt=user_message,
+        history=history_msgs or None,
+        system_prompt=REFINE_SURGICAL_SYSTEM_PROMPT,
+    )
+
+    # 5. Call the AI. The operations JSON is small, 4096 is plenty.
+    try:
+        raw_response = _call_ai(messages, ai_conf, max_tokens_override=4096)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=True,
+            error=f"Error llamando a la IA: {e}",
+        )
+
+    logger.info(
+        "AI Script Designer /refine-surgical: response_chars=%d",
+        len(raw_response or ""),
+    )
+
+    # 6. Parse the operations JSON
+    try:
+        op_set = _parse_ai_operations(raw_response)
+    except ValueError as e:
+        # Bad JSON → signal fallback so the frontend retries with /refine
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=True,
+            fallback_used=True,
+            fallback_reason=f"La IA quirurgica no devolvio JSON valido: {e}",
+            error="Fallback al refine clasico necesario",
+        )
+
+    # 7. AI itself requested a fallback (add/delete required)
+    if op_set.fallback_to_full_refine:
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=True,
+            fallback_used=True,
+            fallback_reason=op_set.fallback_reason
+            or "Requiere agregar/borrar elementos no soportado en MVP",
+            explanation=op_set.explanation,
+        )
+
+    # 8. Apply the operations to the structure
+    try:
+        structure, applied = apply_operations(structure, op_set.operations)
+    except OperationError as e:
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=True,
+            error=f"No se pudo aplicar la operacion: {e}",
+            explanation=op_set.explanation,
+        )
+
+    # 9. Regenerate the JMX locally from the mutated structure
+    try:
+        new_jmx = regenerate_jmx_from_structure(structure)
+    except Exception as e:
+        logger.exception("Error regenerando JMX en /refine-surgical")
+        return RefineSurgicalResponse(
+            jmx_content=payload.current_jmx,
+            is_valid=False,
+            error=f"Error regenerando JMX: {e}",
+        )
+
+    return RefineSurgicalResponse(
+        jmx_content=new_jmx,
+        is_valid=True,
+        explanation=op_set.explanation,
+        operations_applied=applied,
+        fallback_used=False,
     )
 
 
@@ -1285,3 +2076,477 @@ async def regenerate_jmx_endpoint(
     except Exception as e:
         logger.exception("Error inesperado regenerando JMX")
         raise HTTPException(status_code=500, detail=f"Error interno regenerando JMX: {str(e)}")
+
+
+# =========================================================================
+# Sprint 2.5b — Smoke test (ejecucion real con JMeter subprocess)
+# =========================================================================
+
+
+def _read_log_tail(log_path: Optional[str], max_bytes: int = 3000) -> Optional[str]:
+    """Lee los ultimos N bytes del log de JMeter (UTF-8 tolerante)."""
+    if not log_path or not os.path.exists(log_path):
+        return None
+    try:
+        size = os.path.getsize(log_path)
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()  # descartar linea parcial
+            return f.read()
+    except Exception:
+        return None
+
+
+def _parse_jtl_csv_for_smoke(jtl_path: str) -> List[dict]:
+    """Lee el JTL CSV y devuelve lista de samples como dicts.
+
+    Solo lee — no usa pandas porque para smoke los samples suelen ser
+    decenas. Si el JTL no existe o no es CSV, devuelve [].
+    """
+    samples: List[dict] = []
+    try:
+        with open(jtl_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv_module.DictReader(f)
+            for row in reader:
+                samples.append(row)
+    except Exception:
+        pass
+    return samples
+
+
+def _build_smoke_result(run: JMeterRunResult) -> SmokeTestResult:
+    """Construye el SmokeTestResult a partir del run de JMeter."""
+    # Caso 1: JMeter ni siquiera arranco (timeout, FileNotFoundError, etc.)
+    if run.error_message:
+        return SmokeTestResult(
+            status="error",
+            duration_sec=run.duration_sec,
+            total_samples=0,
+            successful_samples=0,
+            failed_samples=0,
+            samplers=[],
+            jmeter_log_tail=_read_log_tail(run.jmeter_log_path),
+            error_message=run.error_message,
+        )
+
+    # Caso 2: JMeter arranco pero exit_code != 0 sin error_message
+    # (raro — JMeter suele salir con 0 incluso si los samplers fallan).
+    samples = _parse_jtl_csv_for_smoke(run.jtl_path) if run.jtl_path else []
+
+    sampler_results: List[SmokeSamplerResult] = []
+    successful = 0
+    failed = 0
+    for s in samples:
+        is_success = (s.get("success", "").lower() == "true")
+        if is_success:
+            successful += 1
+        else:
+            failed += 1
+        try:
+            elapsed = int(s.get("elapsed", "0") or "0")
+        except (ValueError, TypeError):
+            elapsed = 0
+        sampler_results.append(
+            SmokeSamplerResult(
+                label=s.get("label", "") or "",
+                success=is_success,
+                response_code=s.get("responseCode", "") or "",
+                response_message=s.get("responseMessage", "") or "",
+                elapsed_ms=elapsed,
+                failure_message=(s.get("failureMessage") or None) or None,
+            )
+        )
+
+    if not samples:
+        # JMeter corrio pero no produjo samples — JMX sin samplers habilitados
+        # o el subprocess fallo antes de escribir nada.
+        status = "failed"
+    elif failed == 0:
+        status = "success"
+    elif successful == 0:
+        status = "failed"
+    else:
+        status = "partial"
+
+    return SmokeTestResult(
+        status=status,
+        duration_sec=run.duration_sec,
+        total_samples=len(samples),
+        successful_samples=successful,
+        failed_samples=failed,
+        samplers=sampler_results,
+        jmeter_log_tail=_read_log_tail(run.jmeter_log_path),
+        error_message=None,
+    )
+
+
+@router.post(
+    "/designs/{design_id}/smoke-test",
+    response_model=SmokeTestResult,
+)
+async def run_smoke_test(
+    design_id: UUID,
+    num_threads: int = Query(1, ge=1, le=20, description="Usuarios concurrentes (1-20)"),
+    loops: int = Query(1, ge=1, le=5, description="Iteraciones por usuario (1-5)"),
+    timeout_sec: int = Query(60, ge=10, le=300, description="Timeout subprocess JMeter (10-300 s)"),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+) -> SmokeTestResult:
+    """Ejecuta el JMX del diseno como smoke test (N users / M loops / no scheduler).
+
+    Pasos:
+    1. Carga el AIScriptDesign por id y verifica acceso.
+    2. Patchea el JMX en memoria con ``patch_jmx_for_smoke``.
+    3. Corre ``jmeter -n -t patched.jmx -l result.jtl -j jmeter.log``
+       en un workdir temporal.
+    4. Parsea el JTL CSV con ``csv.DictReader``.
+    5. Devuelve ``SmokeTestResult`` con status/total/samplers + log tail.
+    6. Limpia el workdir.
+    """
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    res = await db.execute(stmt)
+    design = res.scalar_one_or_none()
+    if not design:
+        raise HTTPException(status_code=404, detail="Diseno no encontrado")
+
+    # ACL: admin ve todo, analyst solo lo suyo
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sin acceso a este diseno")
+
+    jmx = design.current_jmx
+    if not jmx or len(jmx) < 50:
+        raise HTTPException(
+            status_code=400,
+            detail="El diseno no tiene un JMX valido para ejecutar",
+        )
+
+    # Sprint 2.5c.1-HF12 — Bug "0/0 samplers": JMeter FileServer no encuentra
+    # ${Data}/<original_filename> porque en disco el archivo se llama por su
+    # stored_filename (UUID), no por su original_filename. FIX: copiar cada Data
+    # File al workdir del smoke usando su original_filename (el nombre que el JMX
+    # referencia) y apuntar ${Data} al workdir local. JMeter resuelve y lee bien.
+    q_files = select(AIDesignDataFile).where(
+        AIDesignDataFile.design_id == design.id
+    )
+    res_files = await db.execute(q_files)
+    data_files = res_files.scalars().all()
+
+    workdir = create_smoke_workdir()
+    uploads_base = f"/app/uploads/ai_data_files/{design.id}"
+
+    copied_files: List[str] = []
+    skipped_files: List[dict] = []
+    for df in data_files:
+        src = os.path.join(uploads_base, df.stored_filename)
+        dst = os.path.join(workdir, df.original_filename)
+        try:
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                copied_files.append(df.original_filename)
+            else:
+                skipped_files.append(
+                    {"file": df.original_filename, "reason": f"no existe en {src}"}
+                )
+        except Exception as e:  # noqa: BLE001 — best-effort, seguir con el smoke
+            skipped_files.append({"file": df.original_filename, "reason": str(e)})
+
+    # ${Data} apunta al WORKDIR local (no a /app/uploads/), donde los archivos
+    # ya tienen su original_filename.
+    data_dir_resolver = {"Data": workdir}
+
+    try:
+        patched_jmx = patch_jmx_for_smoke(
+            jmx,
+            num_threads=num_threads,
+            loops=loops,
+            data_dir_resolver=data_dir_resolver,
+        )
+    except ValueError as e:
+        cleanup_workdir(workdir)
+        raise HTTPException(status_code=400, detail=f"JMX invalido o parametros: {e}")
+
+    try:
+        run = run_jmeter(patched_jmx, timeout_sec=timeout_sec, workdir=workdir)
+        logger.info(
+            "[smoke-test] design=%s threads=%s loops=%s exit=%s duration=%.2fs "
+            "samples_will_parse=%s data_files_copied=%s skipped=%s",
+            design_id, num_threads, loops, run.exit_code, run.duration_sec,
+            bool(run.jtl_path), copied_files, skipped_files,
+        )
+        result = _build_smoke_result(run)
+
+        # Anexar info de Data Files al log para diagnostico (no rompe el modelo).
+        if copied_files or skipped_files:
+            extra = (
+                f"[HF12] Data Files: copiados={copied_files}, "
+                f"omitidos={skipped_files}\n"
+            )
+            result.jmeter_log_tail = extra + (result.jmeter_log_tail or "")
+
+        return result
+    finally:
+        cleanup_workdir(workdir)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2.5d.1 — Ejecucion FULL (no smoke) + historial
+# ---------------------------------------------------------------------------
+
+JTL_RESULTS_BASE = "/app/uploads/jtl_results"
+
+
+@router.post("/designs/{design_id}/execute")
+async def execute_full_run(
+    design_id: UUID,
+    timeout_sec: int = Query(3600, ge=30, le=14400, description="Timeout duro del subprocess JMeter (s)"),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ejecuta el JMX del diseno en modo FULL (NO smoke).
+
+    - Respeta ``num_threads`` / ramp / duration del Thread Group.
+    - Habilita el Backend Listener (metricas -> InfluxDB/Grafana).
+    - Persiste el JTL en ``/app/uploads/jtl_results/{execution_id}/``.
+    - Crea una fila en ``performance_executions`` con ``ai_design_id`` = diseno y
+      ``scenario_id`` NULL (la ejecucion nacio del Editor IA, no de un Scenario).
+    - Lanza un background task y devuelve el ``execution_id`` (int) de inmediato.
+    """
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    res = await db.execute(stmt)
+    design = res.scalar_one_or_none()
+    if not design:
+        raise HTTPException(status_code=404, detail="Diseno no encontrado")
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sin acceso a este diseno")
+
+    jmx = design.current_jmx
+    if not jmx or len(jmx) < 50:
+        raise HTTPException(
+            status_code=400,
+            detail="El diseno no tiene un JMX valido para ejecutar",
+        )
+
+    # Data Files del diseno (se copiaran al execution_dir con su original_filename).
+    q_files = select(AIDesignDataFile).where(AIDesignDataFile.design_id == design.id)
+    res_files = await db.execute(q_files)
+    data_files = res_files.scalars().all()
+
+    design_name = design.name or "design"
+
+    # 1) INSERT para obtener el id autoincrement (int). El workdir usa ese id.
+    perf_exec = PerformanceExecution(
+        scenario_id=None,
+        user_id=current_user.id,
+        ai_design_id=str(design.id),
+        status="starting",
+        output_filename=f"{design_name}",
+        scenario_snapshot={
+            "design_id": str(design.id),
+            "design_name": design_name,
+            "num_data_files": len(data_files),
+            "source": "ai_editor",
+        },
+        started_at=datetime.utcnow(),
+    )
+    db.add(perf_exec)
+    await db.flush()  # asigna perf_exec.id sin cerrar la transaccion
+    execution_id = perf_exec.id  # INT
+
+    # 2) Workdir persistente bajo el id de la ejecucion.
+    execution_dir = os.path.join(JTL_RESULTS_BASE, str(execution_id))
+    os.makedirs(execution_dir, exist_ok=True)
+
+    jtl_path = os.path.join(execution_dir, "result.jtl")
+    jmx_path = os.path.join(execution_dir, "test.jmx")
+    log_path = os.path.join(execution_dir, "jmeter.log")
+
+    # 3) Copiar Data Files al execution_dir usando su original_filename (mismo
+    #    patron que el smoke HF12). ${Data} apuntara al execution_dir.
+    copied_files: List[str] = []
+    skipped_files: List[dict] = []
+    for df in data_files:
+        src = df.file_path  # ruta absoluta ya guardada en el modelo
+        dst = os.path.join(execution_dir, df.original_filename)
+        try:
+            if src and os.path.exists(src):
+                shutil.copy2(src, dst)
+                copied_files.append(df.original_filename)
+            else:
+                skipped_files.append(
+                    {"file": df.original_filename, "reason": f"no existe en {src}"}
+                )
+        except Exception as e:  # noqa: BLE001 — best-effort
+            skipped_files.append({"file": df.original_filename, "reason": str(e)})
+
+    # 4) ${Data} y ${Resultados} -> execution_dir (donde estan los CSV y el JTL).
+    data_dir_resolver = {"Data": execution_dir, "Resultados": execution_dir}
+
+    # 5) Preparar JMX FULL (Backend Listener habilitado, sin reducir threads).
+    try:
+        prepared_jmx = prepare_full_run_jmx(jmx, data_dir_resolver=data_dir_resolver)
+    except ValueError as e:
+        perf_exec.status = "error"
+        perf_exec.error_message = f"JMX invalido: {e}"
+        perf_exec.completed_at = datetime.utcnow()
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"JMX invalido: {e}")
+
+    # 6) Escribir el JMX preparado y persistir rutas.
+    with open(jmx_path, "w", encoding="utf-8") as f:
+        f.write(prepared_jmx)
+
+    perf_exec.jtl_file_path = jtl_path
+    perf_exec.jmx_file_path = jmx_path
+    await db.commit()
+
+    logger.info(
+        "[execute] design=%s execution_id=%s data_files_copied=%s skipped=%s",
+        design_id, execution_id, copied_files, skipped_files,
+    )
+
+    # 7) Registrar en el tracker en memoria.
+    execution_tracker.register(execution_id, {
+        "status": "starting",
+        "jtl_path": jtl_path,
+        "log_path": log_path,
+        "workdir": execution_dir,
+        "user_id": str(current_user.id),
+        "design_id": str(design.id),
+        "start_time": datetime.utcnow().timestamp(),
+        "latest_metrics": {},
+        "elapsed_sec": 0,
+        "pid": None,
+    })
+
+    # 8) Lanzar el background task (no await).
+    asyncio.create_task(
+        _run_full_execution_background(
+            execution_id, jmx_path, jtl_path, log_path, execution_dir, timeout_sec
+        )
+    )
+
+    return {
+        "execution_id": execution_id,
+        "status": "starting",
+        "design_id": str(design.id),
+        "execution_dir": execution_dir,
+    }
+
+
+async def _run_full_execution_background(
+    execution_id: int,
+    jmx_path: str,
+    jtl_path: str,
+    log_path: str,
+    workdir: str,
+    timeout_sec: int,
+) -> None:
+    """Background task: ejecuta JMeter async, actualiza status en DB y tracker.
+
+    El progreso se publica en el tracker (el frontend lo lee por polling en
+    ``/performance-executions/{id}/live-metrics``).
+    """
+    execution_tracker.update(execution_id, status="running")
+
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(
+            select(PerformanceExecution).where(PerformanceExecution.id == execution_id)
+        )
+        perf_exec = res.scalar_one_or_none()
+        if perf_exec and perf_exec.status not in ("stopping", "cancelled"):
+            perf_exec.status = "running"
+            await db.commit()
+
+    async def emit_progress(elapsed_sec: float, jtl_size_bytes: int) -> None:
+        summary = parse_jtl_summary(jtl_path)
+        execution_tracker.update(
+            execution_id,
+            latest_metrics=summary,
+            elapsed_sec=int(elapsed_sec),
+        )
+
+    def register_pid(pid: int) -> None:
+        execution_tracker.update(execution_id, pid=pid)
+
+    result = await run_jmeter_async(
+        jmx_path=jmx_path,
+        jtl_path=jtl_path,
+        log_path=log_path,
+        workdir=workdir,
+        timeout_sec=timeout_sec,
+        progress_callback=emit_progress,
+        pid_callback=register_pid,
+    )
+
+    final_summary = parse_jtl_summary(jtl_path)
+
+    # Si el usuario pidio stop, respetar 'cancelled'; si no, completed/error.
+    tracker_data = execution_tracker.get(execution_id) or {}
+    if tracker_data.get("status") in ("stopping", "cancelled"):
+        final_status = "cancelled"
+    elif result["exit_code"] == 0 and not result.get("error"):
+        final_status = "completed"
+    else:
+        final_status = "error"
+
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(
+            select(PerformanceExecution).where(PerformanceExecution.id == execution_id)
+        )
+        perf_exec = res.scalar_one_or_none()
+        if perf_exec:
+            perf_exec.status = final_status
+            perf_exec.completed_at = datetime.utcnow()
+            perf_exec.summary_metrics = final_summary
+            if result.get("error"):
+                perf_exec.error_message = result["error"]
+            await db.commit()
+
+    execution_tracker.update(
+        execution_id, status=final_status, latest_metrics=final_summary
+    )
+    logger.info(
+        "[execute] execution_id=%s finished status=%s exit=%s duration=%.1fs",
+        execution_id, final_status, result.get("exit_code"), result.get("duration_sec", 0),
+    )
+
+    # Mantener en el tracker un rato por si el frontend pide el estado final.
+    await asyncio.sleep(300)
+    execution_tracker.unregister(execution_id)
+
+
+@router.get("/designs/{design_id}/executions")
+async def list_design_executions(
+    design_id: UUID,
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Historial de ejecuciones FULL de un diseno (mas reciente primero)."""
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    res = await db.execute(stmt)
+    design = res.scalar_one_or_none()
+    if not design:
+        raise HTTPException(status_code=404, detail="Diseno no encontrado")
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sin acceso a este diseno")
+
+    q = (
+        select(PerformanceExecution)
+        .where(PerformanceExecution.ai_design_id == str(design_id))
+        .order_by(PerformanceExecution.started_at.desc().nullslast())
+        .limit(limit)
+    )
+    rows = (await db.execute(q)).scalars().all()
+    return [
+        {
+            "execution_id": r.id,
+            "status": r.status,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "summary_metrics": r.summary_metrics,
+            "error_message": r.error_message,
+        }
+        for r in rows
+    ]

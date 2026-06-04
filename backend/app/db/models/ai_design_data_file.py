@@ -44,6 +44,21 @@ class AIDesignDataFile(Base):
     # Si esta vacio, las variables son los nombres de columna directos.
     variable_mapping = Column(JSONB, nullable=False, default=dict)
 
+    # Sprint 2.5c.1 (HF2.1) — vinculacion automatica con un CSV Data Set en la
+    # estructura del diseno. Al subir un CSV con variables declaradas, se
+    # autocrea un CSVDataSet y se guarda aqui su id para trazabilidad.
+    linked_csv_dataset_id = Column(
+        String(50),
+        nullable=True,
+        comment="ID del CSVDataSet asociado en la estructura. Null si no vinculado.",
+    )
+    variable_names_declared = Column(
+        JSONB,
+        nullable=True,
+        default=list,
+        comment="Variables JMeter declaradas por el usuario. Ej: ['firstname','lastname']",
+    )
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime(timezone=True),
