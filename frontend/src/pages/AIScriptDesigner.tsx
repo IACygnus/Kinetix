@@ -91,6 +91,9 @@ interface AIResponse {
   file_content?: string | null;
   file_name?: string | null;
   compression_stats?: CompressionStats | null;
+  // Sprint 2.7a — backend flags a response the model cut off mid-XML.
+  truncated?: boolean | null;
+  partial_samplers?: number | null;
 }
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB — matches backend MAX_FILE_BYTES (Sprint 2.4-HF6)
@@ -317,11 +320,23 @@ export default function AIScriptDesigner() {
         overrides?.conversation ??
         messages.map((m) => ({ role: m.role, content: m.content }));
 
+      // Sprint 2.7a — never overwrite a valid JMX with an empty/truncated one.
+      // A failed generation returns jmx_content="" (no closing tag); if we
+      // already hold a complete JMX in state, keep it instead of wiping it.
+      const isClosedJmx = (s: string | null | undefined): boolean =>
+        !!s && s.includes('</jmeterTestPlan>');
+      const incomingJmx = overrides?.current_jmx ?? (currentJmx || null);
+      const jmxToSave = isClosedJmx(incomingJmx)
+        ? incomingJmx
+        : isClosedJmx(currentJmx)
+          ? currentJmx
+          : incomingJmx;
+
       const payload = {
         session_id: sessionIdRef.current,
         client_id: selectedClientId,
         conversation: convPayload,
-        current_jmx: overrides?.current_jmx ?? (currentJmx || null),
+        current_jmx: jmxToSave,
         reference_file_name: overrides?.reference_file_name ?? refFileName,
         reference_file_content: overrides?.reference_file_content ?? refFileContent,
         reference_file_type: overrides?.reference_file_type ?? refFileType,
@@ -962,7 +977,7 @@ export default function AIScriptDesigner() {
 
           {/* Error banner */}
           {error && (
-            <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-800">
+            <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-800 whitespace-pre-line">
               {error}
             </div>
           )}

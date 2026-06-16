@@ -27,7 +27,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import require_role
 from app.db.models.ai_design_data_file import AIDesignDataFile
 from app.db.models.ai_script_design import AIScriptDesign
+from app.db.models.client import Client
 from app.db.models.performance_execution import PerformanceExecution
 from app.db.models.user import User
 from app.db.session import AsyncSessionLocal, get_db
@@ -67,6 +68,15 @@ from app.services.engine.jmeter_runner import (
     prepare_full_run_jmx,
     run_jmeter,
     run_jmeter_async,
+    _detect_silent_failure,
+)
+from app.services.engine.csv_reference_validator import (
+    find_missing_csv_files,
+    build_missing_csv_error_message,
+)
+from app.services.engine.export_bundle_builder import (
+    build_export_bundle,
+    build_export_filename,
 )
 from app.services.engine.jmx_to_structure import parse_jmx_to_structure
 from app.services.engine.refine_operations_applier import (
@@ -333,6 +343,103 @@ Si el usuario sube un archivo Swagger/OpenAPI:
 """.strip()
 
 
+# ===================== ADAPTIVE PROMPT (Sprint 2.7c) =====================
+#
+# The standard SYSTEM_PROMPT pushes maximal verbosity (header + assertion +
+# extractor on EVERY sampler). With large HARs (PeopleSoft / SAP / many
+# transactions) that target output blows past the model ceiling and truncates.
+# For large inputs we swap to a token-economical prompt instead.
+
+# Thresholds that flip generation into the conservative prompt.
+_LARGE_INPUT_BYTE_THRESHOLD = 20_000   # reference file > 20 KB → large input
+_MANY_TRANSACTIONS_THRESHOLD = 8       # > 8 unique transactions → large input
+
+
+# Sprint 2.7c — token-economical prompt for large inputs (big HAR, enterprise
+# apps like PeopleSoft / SAP, or many transactions).
+SYSTEM_PROMPT_CONSERVATIVE = """Eres un arquitecto experto en Apache JMeter 5.6.3 con 15 anos de experiencia.
+Tu trabajo es generar un Test Plan JMeter (JMX) a partir del input del usuario.
+
+CONTEXTO ESPECIAL: el input es GRANDE (HAR voluminoso, app empresarial tipo PeopleSoft/SAP, o muchas transacciones).
+DEBES generar un JMX COMPLETO PERO conciso para no agotar el limite de tokens de salida.
+
+REGLAS DE ECONOMÍA DE TOKENS (estrictas):
+1. Bodies grandes: si un body POST/PUT tiene >500 caracteres, ENVUELVELO en una variable UDV para reducir verbosidad.
+   Por ejemplo, en lugar de copiar 2KB de form-urlencoded inline, define una UDV `BODY_SAMPLER_5` y usa `${BODY_SAMPLER_5}` en el sampler.
+2. Headers repetidos: define UN solo Header Manager a nivel Thread Group con los headers comunes (Cookie, User-Agent, Accept, etc.).
+   NO repitas headers en cada sampler. Solo anade un Header Manager LOCAL si el sampler necesita headers EXTRA.
+3. Extractors: solo agrega Regex Extractor / JSON Extractor si CLARAMENTE el siguiente sampler usa el valor extraido (token de auth, ID, etc.).
+   NO agregues extractors "por si acaso".
+4. Response Assertions: agrega UNA assertion simple por sampler (response code 200/2xx). NO asserts sobre el body salvo que sea critico.
+5. Comentarios XML: NINGUNO. Cero `<!-- ... -->`.
+6. Atributos por defecto: omite atributos opcionales (concurrentPool, contentEncoding vacio, etc.). Solo incluye los necesarios.
+7. Agrupacion: si hay samplers que llaman al MISMO endpoint con bodies similares, considera agruparlos con un CSV Data Set en lugar de duplicarlos.
+
+ESTRUCTURA OBLIGATORIA (en orden, sin repeticion):
+1. `<?xml version="1.0" encoding="UTF-8"?>`
+2. `<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">`
+3. Test Plan
+4. User Defined Variables (host, scheme, port, y los bodies grandes)
+5. HTTP Request Defaults (usa ${host}, ${scheme}, ${port})
+6. Cookie Manager (clearEachIteration=true)
+7. Cache Manager (clearEachIteration=true)
+8. Thread Group (1 hilo, 1 loop, ramp 1s — el usuario lo ajusta despues)
+9. Header Manager GLOBAL con los headers comunes
+10. Samplers HTTP (numerados, nombres descriptivos en espanol)
+11. UN listener View Results Tree + UN Summary Report
+
+VARIABLES OBLIGATORIAS:
+- host (dominio sin protocolo)
+- scheme (http o https)
+- port (80, 443, 8080, etc.)
+
+FORMATO DE RESPUESTA:
+Envuelve el JMX en un bloque ```xml ... ```. NO anadas explicaciones largas antes/despues.
+Una nota breve en espanol al final esta OK, pero el JMX debe ser COMPLETO y CERRADO con `</jmeterTestPlan>`.
+""".strip()
+
+
+def _detect_large_input(prompt: str, file_content: Optional[str]) -> tuple[bool, str]:
+    """Decide whether the input is large enough to warrant the conservative prompt.
+
+    Returns (is_large, reason). Two signals on the reference file:
+    - raw size over _LARGE_INPUT_BYTE_THRESHOLD bytes, or
+    - more than _MANY_TRANSACTIONS_THRESHOLD HAR transactions ("request" keys).
+    A prompt without a reference file is treated as small.
+    """
+    if file_content:
+        size_bytes = len(file_content.encode("utf-8"))
+        if size_bytes > _LARGE_INPUT_BYTE_THRESHOLD:
+            return True, (
+                f"archivo de referencia >{_LARGE_INPUT_BYTE_THRESHOLD} bytes "
+                f"({size_bytes} bytes)"
+            )
+        # Small in bytes but many transactions (e.g. a HAR with terse entries).
+        transaction_count = file_content.count('"request"')
+        if transaction_count > _MANY_TRANSACTIONS_THRESHOLD:
+            return True, f"input con muchas transacciones ({transaction_count} entries en HAR)"
+
+    return False, ""
+
+
+def _select_system_prompt(prompt: str, file_content: Optional[str]) -> tuple[str, dict]:
+    """Pick the SYSTEM_PROMPT variant by input size.
+
+    Returns (system_prompt, metadata) where metadata carries prompt_mode and the
+    reason — logged by the endpoints so large-input behavior is debuggable.
+    """
+    is_large, reason = _detect_large_input(prompt, file_content)
+    if is_large:
+        return SYSTEM_PROMPT_CONSERVATIVE, {
+            "prompt_mode": "conservative",
+            "large_input_reason": reason,
+        }
+    return SYSTEM_PROMPT, {
+        "prompt_mode": "standard",
+        "large_input_reason": None,
+    }
+
+
 # Sprint 2.4-HF5 — system prompt dedicado para refinamiento.
 # El SYSTEM_PROMPT general empuja a "generar JMX completos" — el modelo
 # entonces re-crea/abrevia en vez de modificar. Este prompt invierte la
@@ -593,6 +700,13 @@ class AIResponse(BaseModel):
     is_valid: bool
     error: Optional[str] = None
     components: Optional[List[ComponentInfo]] = None
+    # Sprint 2.7a — set when the model hit its output ceiling mid-XML so the FE
+    # can show a specific "truncated" hint instead of the generic "reformula".
+    truncated: Optional[bool] = None
+    partial_samplers: Optional[int] = None
+    # Sprint 2.7b — True when the JMX was completed via a second auto-continuation
+    # call after the first response was truncated.
+    continued: Optional[bool] = None
 
 
 class ValidationResponse(BaseModel):
@@ -623,6 +737,189 @@ def _extract_jmx_and_explanation(text: str) -> tuple[str, str]:
     explanation = (text[: match.start()] + text[match.end():]).strip()
     explanation = re.sub(r"```(?:xml|jmx)?\s*```", "", explanation).strip()
     return jmx, explanation
+
+
+def _detect_truncation(raw_text: str) -> tuple[bool, int, str]:
+    """Detect a JMX response that the model cut off mid-XML (output ceiling hit).
+
+    Sprint 2.7a — ported from the /refine path so /generate and
+    /generate-from-file can give the same specific hint instead of the generic
+    "reformula tu prompt".
+
+    Returns (is_truncated, partial_samplers, message). When is_truncated is
+    False the other two are (0, "").
+    """
+    is_truncated = "<?xml" in raw_text and "</jmeterTestPlan>" not in raw_text
+    if not is_truncated:
+        return False, 0, ""
+    partial_samplers = raw_text.count("<HTTPSamplerProxy")
+    message = (
+        f"La IA genero una respuesta truncada por limite de tokens del modelo "
+        f"(se alcanzaron {partial_samplers} samplers parciales sin cerrar el JMX). "
+        "Soluciones: 1) usa un modelo con mayor capacidad de salida "
+        "(gpt-4.1, gemini-2.5-flash); 2) reduce el HAR/archivo de referencia; "
+        "3) pide solo las transacciones mas criticas."
+    )
+    return True, partial_samplers, message
+
+
+# ===================== AUTO-CONTINUATION (Sprint 2.7b) =====================
+#
+# When the model cuts a JMX off mid-XML (finish_reason=length), 2.7a only
+# reported it. 2.7b makes ONE follow-up call asking the model to continue from
+# where it stopped, then stitches both halves into a complete JMX. This rescues
+# the N samplers already generated (HAR / PeopleSoft-class scripts) instead of
+# throwing them away. Max 1 continuation per generation.
+
+# Tail of the partial JMX sent as continuation context (the model only needs the
+# immediate cut point, not the whole truncated blob — keeps token usage bounded).
+_CONTINUATION_CONTEXT_TAIL_CHARS = 2000
+
+
+def _extract_partial_xml(raw_text: str) -> str:
+    """Extract the XML block from a (possibly truncated) AI response.
+
+    Starts at the first ``<?xml`` and returns to the end, dropping a trailing
+    ```` ``` ```` fence if one is present. Returns "" when there is no XML.
+    """
+    if "<?xml" not in raw_text:
+        return ""
+    partial = raw_text[raw_text.find("<?xml"):]
+    fence_end = partial.find("```")
+    if fence_end > 0:
+        partial = partial[:fence_end]
+    return partial.strip()
+
+
+def _build_continuation_messages(
+    original_prompt: str,
+    file_content: Optional[str],
+    partial_xml: str,
+    samplers_done: int,
+) -> List[dict]:
+    """Build the chat messages that ask the model to FINISH a truncated JMX.
+
+    The model sees only the tail of the partial XML (the cut point) plus the
+    original intent — not the whole reference file again, which already drained
+    the first call's budget. It must return ONLY the missing fragment, fenced.
+    """
+    tail = (
+        partial_xml[-_CONTINUATION_CONTEXT_TAIL_CHARS:]
+        if len(partial_xml) > _CONTINUATION_CONTEXT_TAIL_CHARS
+        else partial_xml
+    )
+
+    system_msg = (
+        "Eres un asistente experto en Apache JMeter 5.6.3. Tu tarea ahora es "
+        "CONTINUAR un JMX que quedo truncado por limite de tokens. Reglas "
+        "estrictas:\n"
+        "1. NO repitas el contenido ya generado.\n"
+        "2. NO incluyas el preambulo <?xml, <jmeterTestPlan>, ni headers ya "
+        "presentes.\n"
+        "3. Continua EXACTAMENTE desde donde se corto.\n"
+        "4. Cierra correctamente todos los elementos XML abiertos.\n"
+        "5. Termina con los cierres apropiados: </hashTree> (los que falten) y "
+        "</jmeterTestPlan>.\n"
+        "6. Envuelve tu respuesta en un bloque ```xml ... ``` que contenga SOLO "
+        "el fragmento de continuacion.\n"
+        "7. No agregues explicaciones fuera del bloque XML."
+    )
+
+    parts: List[str] = [
+        f"Prompt original del usuario:\n{original_prompt}",
+        "",
+    ]
+    if file_content:
+        parts.append(
+            f"(Archivo de referencia ya analizado anteriormente, "
+            f"{len(file_content)} chars)"
+        )
+        parts.append("")
+    parts.extend([
+        f"Hasta ahora se generaron {samplers_done} samplers parciales.",
+        "El JMX se corto aqui (ultimos chars):",
+        "",
+        "```xml",
+        tail,
+        "```",
+        "",
+        "Continua el JMX desde EXACTAMENTE donde se corto. NO repitas el "
+        "preambulo. Genera los samplers/elementos que faltan + listeners + "
+        "cierres XML. Envuelve la continuacion en ```xml ... ```",
+    ])
+
+    return [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": "\n".join(parts)},
+    ]
+
+
+def _extract_continuation_xml(continuation_raw: str) -> str:
+    """Extract the XML fragment from a continuation response.
+
+    Prefers a fenced ```` ```xml ... ``` ```` block; falls back to the trimmed
+    raw text when no fence is present.
+    """
+    fence_match = re.search(r"```(?:xml)?\s*(.*?)```", continuation_raw, re.DOTALL)
+    if fence_match:
+        return fence_match.group(1).strip()
+    return continuation_raw.strip()
+
+
+def _assemble_continued_jmx(partial_xml: str, continuation_xml: str) -> str:
+    """Stitch the partial JMX and its continuation into one document.
+
+    The continuation prompt forbids repeating the preamble, so a plain
+    concatenation (newline-joined) yields a single <jmeterTestPlan> document.
+    Well-formedness is validated downstream by _parse_jmx.
+    """
+    return f"{partial_xml}\n{continuation_xml}"
+
+
+def _try_continue_truncated_generation(
+    partial_raw_text: str,
+    original_prompt: str,
+    file_content: Optional[str],
+    ai_conf: dict,
+    samplers_done: int,
+) -> tuple[str, bool, str]:
+    """Attempt ONE continuation of a truncated JMX generation.
+
+    Returns (final_jmx, success, error_message):
+    - On success: (assembled_jmx_with_closing_tag, True, "").
+    - On failure: ("", False, reason) — caller falls back to the 2.7a message.
+
+    _call_ai is synchronous (blocking OpenAI/Gemini call), matching how the
+    endpoints already invoke it; no await here.
+    """
+    partial_xml = _extract_partial_xml(partial_raw_text)
+    if not partial_xml:
+        return "", False, "No se pudo extraer XML parcial del raw_text"
+
+    continuation_messages = _build_continuation_messages(
+        original_prompt=original_prompt,
+        file_content=file_content,
+        partial_xml=partial_xml,
+        samplers_done=samplers_done,
+    )
+
+    try:
+        continuation_raw = _call_ai(continuation_messages, ai_conf)
+    except Exception as e:  # noqa: BLE001 — any failure degrades to the 2.7a path
+        return "", False, f"Error en llamada de continuacion: {str(e)[:200]}"
+
+    if not continuation_raw or not continuation_raw.strip():
+        return "", False, "Continuacion devolvio respuesta vacia"
+
+    continuation_xml = _extract_continuation_xml(continuation_raw)
+    if not continuation_xml:
+        return "", False, "No se pudo extraer XML de la continuacion"
+
+    assembled = _assemble_continued_jmx(partial_xml, continuation_xml)
+    if "</jmeterTestPlan>" not in assembled:
+        return "", False, "La continuacion tampoco completo el JMX (sigue truncado)"
+
+    return assembled, True, ""
 
 
 # JMeter component testclass → human label
@@ -1081,7 +1378,11 @@ def _call_ai(
             model_ceiling = OPENAI_MAX_TOKENS.get(model, OPENAI_DEFAULT_MAX_TOKENS)
             effective_max_tokens = min(max_tokens_override, model_ceiling)
         else:
-            effective_max_tokens = 8192
+            # Sprint 2.7a — without an override (generation paths), use the
+            # model's real output ceiling instead of the legacy fixed 8192 cap.
+            # gpt-4o supports 16384; the old 8192 truncated large JMX (HAR /
+            # PeopleSoft). Matches the override branch's model_ceiling lookup.
+            effective_max_tokens = OPENAI_MAX_TOKENS.get(model, OPENAI_DEFAULT_MAX_TOKENS)
         completion = client.chat.completions.create(
             model=model or "gpt-4o",
             messages=messages,
@@ -1211,7 +1512,16 @@ async def generate_jmx(
             detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
         )
 
-    messages = _build_messages(body.prompt, body.conversation_history)
+    # Sprint 2.7c — pick standard vs conservative prompt by input size.
+    selected_prompt, prompt_meta = _select_system_prompt(body.prompt, None)
+    logger.info(
+        "AI Script Designer /generate: prompt_mode=%s%s",
+        prompt_meta["prompt_mode"],
+        f" ({prompt_meta['large_input_reason']})" if prompt_meta["large_input_reason"] else "",
+    )
+    messages = _build_messages(
+        body.prompt, body.conversation_history, system_prompt=selected_prompt
+    )
 
     try:
         raw_text = _call_ai(messages, ai_conf)
@@ -1222,14 +1532,61 @@ async def generate_jmx(
         raise HTTPException(status_code=502, detail=f"Error llamando al proveedor de IA: {e}")
 
     jmx, explanation = _extract_jmx_and_explanation(raw_text)
+    continued = False
     if not jmx:
-        return AIResponse(
-            jmx_content="",
-            explanation=explanation or raw_text,
-            is_valid=False,
-            error="La IA no devolvio un bloque JMX. Reformula tu prompt.",
-            components=[],
-        )
+        # Sprint 2.7a — distinguish "model hit its output ceiling mid-XML"
+        # from "no JMX at all"; the first needs a model/size hint, not a reprompt.
+        is_truncated, partial_samplers, trunc_msg = _detect_truncation(raw_text)
+        if is_truncated:
+            # Sprint 2.7b — try ONE auto-continuation before surfacing the error.
+            logger.info(
+                "AI Script Designer /generate: JMX truncado, intentando "
+                "auto-continuacion (samplers=%d)", partial_samplers,
+            )
+            assembled_jmx, cont_ok, cont_err = _try_continue_truncated_generation(
+                partial_raw_text=raw_text,
+                original_prompt=body.prompt,
+                file_content=None,
+                ai_conf=ai_conf,
+                samplers_done=partial_samplers,
+            )
+            if cont_ok:
+                logger.info(
+                    "AI Script Designer /generate: auto-continuacion OK (%d chars)",
+                    len(assembled_jmx),
+                )
+                jmx = assembled_jmx
+                explanation = (
+                    f"JMX generado en 2 pasos por limite de tokens "
+                    f"({partial_samplers} samplers en la primera pasada, resto "
+                    f"completado en la continuacion automatica)."
+                )
+                continued = True
+            else:
+                logger.warning(
+                    "AI Script Designer /generate: auto-continuacion fallo: %s",
+                    cont_err,
+                )
+                return AIResponse(
+                    jmx_content="",
+                    explanation=explanation or raw_text,
+                    is_valid=False,
+                    error=(
+                        f"{trunc_msg} Intento automatico de continuacion tambien "
+                        f"fallo: {cont_err}."
+                    ),
+                    components=[],
+                    truncated=True,
+                    partial_samplers=partial_samplers,
+                )
+        else:
+            return AIResponse(
+                jmx_content="",
+                explanation=explanation or raw_text,
+                is_valid=False,
+                error="La IA no devolvio un bloque JMX. Reformula tu prompt.",
+                components=[],
+            )
 
     is_valid, components, errors = _parse_jmx(jmx)
     return AIResponse(
@@ -1238,6 +1595,7 @@ async def generate_jmx(
         is_valid=is_valid,
         error="; ".join(errors) if errors else None,
         components=components,
+        continued=True if continued else None,
     )
 
 
@@ -1346,7 +1704,17 @@ async def generate_jmx_from_file(
         "extractores de correlacion, Cookie Manager y listeners."
     )
 
-    messages = _build_messages(effective_prompt, history, file_context=file_ctx)
+    # Sprint 2.7c — large HAR/PeopleSoft inputs use the token-economical prompt.
+    # raw_text here is the (already compressed) reference payload.
+    selected_prompt, prompt_meta = _select_system_prompt(effective_prompt, raw_text)
+    logger.info(
+        "AI Script Designer /generate-from-file: prompt_mode=%s%s",
+        prompt_meta["prompt_mode"],
+        f" ({prompt_meta['large_input_reason']})" if prompt_meta["large_input_reason"] else "",
+    )
+    messages = _build_messages(
+        effective_prompt, history, file_context=file_ctx, system_prompt=selected_prompt
+    )
 
     try:
         raw_response = _call_ai(messages, ai_conf)
@@ -1357,18 +1725,69 @@ async def generate_jmx_from_file(
         raise HTTPException(status_code=502, detail=f"Error llamando al proveedor de IA: {e}")
 
     jmx, explanation = _extract_jmx_and_explanation(raw_response)
+    continued = False
     if not jmx:
-        return FileGenerateResponse(
-            jmx_content="",
-            explanation=explanation or raw_response,
-            is_valid=False,
-            error="La IA no devolvio un bloque JMX. Reformula tu prompt o revisa el archivo.",
-            components=[],
-            file_kind=kind,
-            file_content=_truncate(raw_text),
-            file_name=filename,
-            compression_stats=compression_stats,
-        )
+        # Sprint 2.7a — a truncated HAR/PeopleSoft generation is the common
+        # failure here; give the size/model hint instead of "revisa el archivo".
+        is_truncated, partial_samplers, trunc_msg = _detect_truncation(raw_response)
+        if is_truncated:
+            # Sprint 2.7b — try ONE auto-continuation before surfacing the error.
+            logger.info(
+                "AI Script Designer /generate-from-file: JMX truncado, "
+                "intentando auto-continuacion (samplers=%d)", partial_samplers,
+            )
+            assembled_jmx, cont_ok, cont_err = _try_continue_truncated_generation(
+                partial_raw_text=raw_response,
+                original_prompt=effective_prompt,
+                file_content=file_ctx,
+                ai_conf=ai_conf,
+                samplers_done=partial_samplers,
+            )
+            if cont_ok:
+                logger.info(
+                    "AI Script Designer /generate-from-file: auto-continuacion OK "
+                    "(%d chars)", len(assembled_jmx),
+                )
+                jmx = assembled_jmx
+                explanation = (
+                    f"JMX generado en 2 pasos por limite de tokens "
+                    f"({partial_samplers} samplers en la primera pasada, resto "
+                    f"completado en la continuacion automatica)."
+                )
+                continued = True
+            else:
+                logger.warning(
+                    "AI Script Designer /generate-from-file: auto-continuacion "
+                    "fallo: %s", cont_err,
+                )
+                return FileGenerateResponse(
+                    jmx_content="",
+                    explanation=explanation or raw_response,
+                    is_valid=False,
+                    error=(
+                        f"{trunc_msg} Intento automatico de continuacion tambien "
+                        f"fallo: {cont_err}."
+                    ),
+                    components=[],
+                    truncated=True,
+                    partial_samplers=partial_samplers,
+                    file_kind=kind,
+                    file_content=_truncate(raw_text),
+                    file_name=filename,
+                    compression_stats=compression_stats,
+                )
+        else:
+            return FileGenerateResponse(
+                jmx_content="",
+                explanation=explanation or raw_response,
+                is_valid=False,
+                error="La IA no devolvio un bloque JMX. Reformula tu prompt o revisa el archivo.",
+                components=[],
+                file_kind=kind,
+                file_content=_truncate(raw_text),
+                file_name=filename,
+                compression_stats=compression_stats,
+            )
 
     is_valid, components, errors = _parse_jmx(jmx)
     return FileGenerateResponse(
@@ -1377,6 +1796,7 @@ async def generate_jmx_from_file(
         is_valid=is_valid,
         error="; ".join(errors) if errors else None,
         components=components,
+        continued=True if continued else None,
         file_kind=kind,
         file_content=_truncate(raw_text),
         file_name=filename,
@@ -1789,6 +2209,80 @@ async def download_jmx(
         buffer,
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/designs/{design_id}/export-bundle")
+async def export_design_bundle(
+    design_id: UUID,
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """HF14b: descarga el diseno como bundle portable.
+
+    - Sin CSVs → JMX puro (.jmx).
+    - Con CSVs → ZIP con script.jmx (UDV ``Data`` reescrita a ``./Data``) +
+      carpeta ``Data/`` con los CSV fisicos + README.
+
+    El filename ({cliente}_{nombre}_{timestamp}.{ext}) viaja en Content-Disposition
+    y en el header X-Filename (ambos expuestos via CORS expose_headers).
+    """
+    q = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    res = await db.execute(q)
+    design = res.scalar_one_or_none()
+    if not design:
+        raise HTTPException(status_code=404, detail="Diseno no encontrado")
+
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sin acceso a este diseno")
+
+    if not design.current_jmx:
+        raise HTTPException(status_code=400, detail="El diseno no tiene JMX generado")
+
+    # Archivos CSV fisicos asociados (leer bytes desde file_path; fallback a base+stored).
+    q_csv = select(AIDesignDataFile).where(AIDesignDataFile.design_id == design.id)
+    csv_res = await db.execute(q_csv)
+    data_files = list(csv_res.scalars().all())
+
+    uploads_base = f"/app/uploads/ai_data_files/{design.id}"
+    csv_payload: list = []
+    for df in data_files:
+        src = df.file_path if (df.file_path and os.path.exists(df.file_path)) else \
+            os.path.join(uploads_base, df.stored_filename)
+        if not os.path.exists(src):
+            continue
+        try:
+            with open(src, "rb") as f:
+                csv_payload.append((df.original_filename, f.read()))
+        except Exception:  # noqa: BLE001 — best-effort, omitir CSV ilegible
+            continue
+
+    payload, mime = build_export_bundle(
+        jmx_content=design.current_jmx,
+        csv_files=csv_payload,
+    )
+
+    # Resolver nombre del cliente (FK client_id → tabla clients; sin relationship).
+    client_name = None
+    if design.client_id:
+        cres = await db.execute(select(Client.name).where(Client.id == design.client_id))
+        client_name = cres.scalar_one_or_none()
+
+    extension = "zip" if mime == "application/zip" else "jmx"
+    filename = build_export_filename(
+        design_name=design.name or "diseno",
+        client_name=client_name,
+        extension=extension,
+    )
+
+    return Response(
+        content=payload,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Has-CSVs": "1" if csv_payload else "0",
+            "X-Filename": filename,
+        },
     )
 
 
@@ -2255,6 +2749,25 @@ async def run_smoke_test(
     # ya tienen su original_filename.
     data_dir_resolver = {"Data": workdir}
 
+    # HF14a: validar que todo CSV referenciado en el JMX tenga archivo físico
+    # disponible (copiado al workdir). Si falta alguno → 400 guiado, no ejecutar.
+    missing_csvs = find_missing_csv_files(
+        jmx_content=jmx,
+        workdir=workdir,
+        data_dir_resolver=data_dir_resolver,
+        available_filenames=set(copied_files),
+    )
+    if missing_csvs:
+        cleanup_workdir(workdir)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": "csv_missing",
+                "message": build_missing_csv_error_message(missing_csvs),
+                "missing_csvs": [m["basename"] for m in missing_csvs],
+            },
+        )
+
     try:
         patched_jmx = patch_jmx_for_smoke(
             jmx,
@@ -2382,6 +2895,29 @@ async def execute_full_run(
     # 4) ${Data} y ${Resultados} -> execution_dir (donde estan los CSV y el JTL).
     data_dir_resolver = {"Data": execution_dir, "Resultados": execution_dir}
 
+    # HF14a: validar CSVs referenciados vs copiados antes de lanzar JMeter.
+    # Evita el fallo silencioso "completed con 0 samples".
+    missing_csvs = find_missing_csv_files(
+        jmx_content=jmx,
+        workdir=execution_dir,
+        data_dir_resolver=data_dir_resolver,
+        available_filenames=set(copied_files),
+    )
+    if missing_csvs:
+        error_msg = build_missing_csv_error_message(missing_csvs)
+        perf_exec.status = "error"
+        perf_exec.error_message = error_msg
+        perf_exec.completed_at = datetime.utcnow()
+        await db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": "csv_missing",
+                "message": error_msg,
+                "missing_csvs": [m["basename"] for m in missing_csvs],
+            },
+        )
+
     # 5) Preparar JMX FULL (Backend Listener habilitado, sin reducir threads).
     try:
         prepared_jmx = prepare_full_run_jmx(jmx, data_dir_resolver=data_dir_resolver)
@@ -2482,11 +3018,15 @@ async def _run_full_execution_background(
     final_summary = parse_jtl_summary(jtl_path)
 
     # Si el usuario pidio stop, respetar 'cancelled'; si no, completed/error.
+    # HF14a: aunque JMeter salga con exit 0, detectar fallos silenciosos
+    # (CSV faltante, Test failed!, JTL vacio) y marcar 'error' en vez de 'completed'.
     tracker_data = execution_tracker.get(execution_id) or {}
+    silent_failure_msg = ""
     if tracker_data.get("status") in ("stopping", "cancelled"):
         final_status = "cancelled"
     elif result["exit_code"] == 0 and not result.get("error"):
-        final_status = "completed"
+        has_failure, silent_failure_msg = _detect_silent_failure(workdir, jtl_path)
+        final_status = "error" if has_failure else "completed"
     else:
         final_status = "error"
 
@@ -2501,6 +3041,8 @@ async def _run_full_execution_background(
             perf_exec.summary_metrics = final_summary
             if result.get("error"):
                 perf_exec.error_message = result["error"]
+            elif silent_failure_msg:
+                perf_exec.error_message = silent_failure_msg
             await db.commit()
 
     execution_tracker.update(

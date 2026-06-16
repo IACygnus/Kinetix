@@ -501,6 +501,34 @@ export const aiScriptDesignsAPI = {
     if (!jmx) throw new Error('Este diseño no tiene JMX generado');
     await triggerJmxBlobDownload(jmx, filename || 'ai_generated_test.jmx');
   },
+
+  // HF14b: descarga el diseño como bundle portable. El backend decide JMX puro
+  // (sin CSVs) vs ZIP (con CSVs + Data/). El nombre viene del Content-Disposition
+  // o del header X-Filename ({cliente}_{nombre}_{YYYYMMDD_HHMMSS}.{ext}).
+  exportBundle: async (designId: string): Promise<void> => {
+    const response = await api.get(
+      `/script-designer/ai/designs/${designId}/export-bundle`,
+      { responseType: 'blob' },
+    );
+
+    const cd: string = response.headers['content-disposition'] || '';
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename =
+      (match ? match[1] : null) ||
+      response.headers['x-filename'] ||
+      `diseno_${designId}.zip`;
+
+    const mimeType = response.headers['content-type'] || 'application/octet-stream';
+    const blob = new Blob([response.data], { type: mimeType });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 

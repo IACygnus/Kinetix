@@ -51,7 +51,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-CSRF-Token"],
+    expose_headers=["X-CSRF-Token", "Content-Disposition", "X-Filename", "X-Has-CSVs"],
 )
 
 # CSRF middleware — validate double-submit cookie on mutating requests

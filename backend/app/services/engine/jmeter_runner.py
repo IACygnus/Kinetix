@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -556,3 +557,56 @@ def parse_jtl_summary(jtl_path: str) -> Dict[str, Any]:
         "avg_response_ms": round(elapsed_sum / total, 1) if total > 0 else 0,
         "error_rate_pct": round((fail / total) * 100, 2) if total > 0 else 0.0,
     }
+
+
+# Patrones críticos en jmeter.log que indican un fallo aunque JMeter salga con 0.
+_SILENT_FAILURE_PATTERNS = [
+    r"must exist and be readable",
+    r"Test failed!",
+    r"java\.lang\.IllegalArgumentException",
+    r"java\.io\.FileNotFoundException",
+]
+
+
+def _detect_silent_failure(workdir: str, jtl_path: str) -> tuple[bool, str]:
+    """
+    Detecta si una ejecución de JMeter falló silenciosamente (HF14a).
+
+    JMeter puede salir con exit_code=0 y JTL vacío cuando, por ejemplo, un CSV
+    Data Set apunta a un archivo inexistente. Esto evita el status engañoso
+    "completed" con 0 samples.
+
+    Returns:
+        (has_failure, error_message). has_failure=True si hay evidencia de fallo.
+    """
+    jmeter_log = os.path.join(workdir, "jmeter.log")
+
+    # 1) Patrones de error críticos en jmeter.log.
+    if os.path.exists(jmeter_log):
+        try:
+            with open(jmeter_log, "r", encoding="utf-8", errors="replace") as f:
+                log_content = f.read()
+            for pattern in _SILENT_FAILURE_PATTERNS:
+                if re.search(pattern, log_content):
+                    for line in log_content.split("\n"):
+                        if re.search(pattern, line):
+                            return True, f"JMeter error: {line.strip()[:200]}"
+                    return True, f"JMeter error detectado: {pattern}"
+        except Exception:  # noqa: BLE001 — best-effort, no romper el flujo de status
+            pass
+
+    # 2) JTL vacío o solo header (sin samples).
+    if jtl_path and os.path.exists(jtl_path):
+        try:
+            if os.path.getsize(jtl_path) < 100:
+                with open(jtl_path, "r", encoding="utf-8", errors="replace") as f:
+                    line_count = sum(1 for _ in f)
+                if line_count <= 1:
+                    return True, (
+                        "JMeter terminó sin generar samples — revisar el JMX y los "
+                        "archivos CSV referenciados."
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
+    return False, ""

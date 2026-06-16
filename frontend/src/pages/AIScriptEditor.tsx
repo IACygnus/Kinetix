@@ -399,17 +399,22 @@ export default function AIScriptEditor() {
 
   // Descarga el JMX actual del diseño (originalJmx se mantiene en sync con cada edición).
   const handleDownloadJmx = useCallback(async () => {
-    if (!originalJmx) return;
+    if (!designId) return;
     setDownloadingJmx(true);
     try {
-      const safeName = (designName || 'diseno').replace(/[^\w\-]/g, '_');
-      await aiScriptDesignsAPI.downloadJmx(originalJmx, `${safeName}.jmx`);
+      // HF14b: export-bundle — el backend decide JMX puro vs ZIP (con CSVs) y el naming.
+      await aiScriptDesignsAPI.exportBundle(designId);
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e?.message || 'Error al descargar JMX');
+      const detail = e?.response?.data?.detail;
+      const msg =
+        detail && typeof detail === 'object'
+          ? detail.message || JSON.stringify(detail)
+          : detail || e?.message || 'Error al descargar';
+      alert(String(msg));
     } finally {
       setDownloadingJmx(false);
     }
-  }, [originalJmx, designName]);
+  }, [designId]);
 
   // ==========================================================================
   // Helpers de árbol
@@ -861,7 +866,12 @@ export default function AIScriptEditor() {
         });
         setSmokeResult(r);
       } catch (e: any) {
-        const msg = e?.response?.data?.detail || e?.message || 'Error desconocido';
+        // HF14a: detail puede ser objeto {error_type, message, ...} (csv_missing).
+        const detail = e?.response?.data?.detail;
+        const msg =
+          detail && typeof detail === 'object'
+            ? detail.message || JSON.stringify(detail)
+            : detail || e?.message || 'Error desconocido';
         setSmokeError(String(msg));
       } finally {
         setSmokeRunning(false);
@@ -913,7 +923,12 @@ export default function AIScriptEditor() {
         }
       }, 2000);
     } catch (e: any) {
-      const msg = e?.response?.data?.detail || e?.message || 'Error iniciando ejecución';
+      // HF14a: detail puede ser objeto {error_type, message, ...} (csv_missing).
+      const detail = e?.response?.data?.detail;
+      const msg =
+        detail && typeof detail === 'object'
+          ? detail.message || JSON.stringify(detail)
+          : detail || e?.message || 'Error iniciando ejecución';
       alert(msg);
     } finally {
       setExecutionStarting(false);
@@ -1170,9 +1185,9 @@ export default function AIScriptEditor() {
           </button>
           <button
             onClick={handleDownloadJmx}
-            disabled={!originalJmx || downloadingJmx}
+            disabled={!designId || downloadingJmx}
             className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Descargar el JMX actual del diseño para abrir en JMeter desktop"
+            title="Descargar el diseño para JMeter desktop (ZIP con CSVs si los hay)"
           >
             {downloadingJmx ? (
               <>
@@ -1182,7 +1197,7 @@ export default function AIScriptEditor() {
             ) : (
               <>
                 <Download className="w-4 h-4" />
-                Descargar .jmx
+                Descargar
               </>
             )}
           </button>

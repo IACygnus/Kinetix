@@ -22,20 +22,22 @@ export default function AIScriptEditorList() {
   const [clientFilter, setClientFilter] = useState<string>('all');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-  const handleDownloadDesign = useCallback(
-    async (designId: string, designName: string) => {
-      setDownloadingId(designId);
-      try {
-        const safeName = (designName || 'diseno').replace(/[^\w\-]/g, '_');
-        await aiScriptDesignsAPI.downloadById(designId, `${safeName}.jmx`);
-      } catch (e: any) {
-        alert(e?.response?.data?.detail || e?.message || 'Error al descargar');
-      } finally {
-        setDownloadingId(null);
-      }
-    },
-    [],
-  );
+  const handleDownloadDesign = useCallback(async (designId: string) => {
+    setDownloadingId(designId);
+    try {
+      // HF14b: export-bundle (JMX o ZIP) con naming desde el backend.
+      await aiScriptDesignsAPI.exportBundle(designId);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      const msg =
+        detail && typeof detail === 'object'
+          ? detail.message || JSON.stringify(detail)
+          : detail || e?.message || 'Error al descargar';
+      alert(String(msg));
+    } finally {
+      setDownloadingId(null);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,7 +167,7 @@ export default function AIScriptEditorList() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDownloadDesign(d.id, d.name || '');
+                          handleDownloadDesign(d.id);
                         }}
                         disabled={downloadingId === d.id}
                         className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
