@@ -711,9 +711,9 @@ export default function AIScriptEditor() {
         } as any);
       }
 
-      setStructure(next);
+      updateStructure(next); // HF20b: persiste (marca dirty + auto-save), antes setStructure directo no persistía
     },
-    [addModalType, addModalContext, structure],
+    [addModalType, addModalContext, structure, updateStructure],
   );
 
   const handleDeleteElement = useCallback(
@@ -767,9 +767,9 @@ export default function AIScriptEditor() {
 
       // Si el elemento borrado era el seleccionado, limpiar selección
       setSelected({ kind: 'overview' });
-      setStructure(next);
+      updateStructure(next); // HF20b: persiste el borrado (antes setStructure no disparaba auto-save)
     },
-    [structure],
+    [structure, updateStructure],
   );
 
   const handleToggleEnabled = useCallback(
@@ -834,9 +834,9 @@ export default function AIScriptEditor() {
         next.cache_manager.is_dirty = true;
       }
 
-      setStructure(next);
+      updateStructure(next); // HF20b: persiste el toggle (antes setStructure no disparaba auto-save)
     },
-    [structure],
+    [structure, updateStructure],
   );
 
   const treeActions: TreeActions = useMemo(

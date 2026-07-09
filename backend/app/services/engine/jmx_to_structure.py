@@ -683,6 +683,13 @@ def _parse_tg_children(hash_tree, http_defaults: Optional[HttpDefaultsModel]) ->
             parser_fn = _CONTROLLER_PARSERS[guiclass]
             ctrl = parser_fn(elem, child_ht, http_defaults)
             result.append(TGChild(type="controller", order=order, controller=ctrl))
+        elif "ResultCollector" in testclass:
+            # HF20a: la IA suele emitir los listeners (View Results Tree, Summary
+            # Report, jp@gc, ...) DENTRO del hashTree del Thread Group. Aquí se
+            # omiten como TGChild para que NO rendericen como "unmapped" en el
+            # árbol; el bubble-up a structure.listeners[] lo hace
+            # _extract_nested_listeners() desde el orquestador.
+            pass
         else:
             # Unsupported dentro del thread group / controller
             unsupp = UnsupportedElement(
@@ -725,6 +732,31 @@ def _parse_listener(elem) -> ListenerModel:
         filename=_string_prop(elem, "filename") or None,
         raw_xml=_raw_xml(elem),
     )
+
+
+def _extract_nested_listeners(hash_tree) -> List[ListenerModel]:
+    """
+    HF20a: recolecta los ResultCollector anidados dentro del hashTree de un
+    Thread Group (o controller) y los mapea a ListenerModel para bubble-up a
+    structure.listeners[].
+
+    La IA genera con frecuencia los listeners (View Results Tree, Summary Report,
+    familia jp@gc, ...) DENTRO del TG en vez de top-level. El dispatch top-level
+    (parse_jmx_to_structure) ya los reconoce; esto replica el mismo mapeo para el
+    caso anidado usando _parse_listener, con el MISMO shape. Recorre también los
+    controllers para no perder listeners colocados dentro de ellos.
+    """
+    if hash_tree is None:
+        return []
+    listeners: List[ListenerModel] = []
+    for elem, child_ht in _walk_hashtree_children(hash_tree):
+        guiclass = _guiclass_attr(elem)
+        testclass = _testclass_attr(elem)
+        if "ResultCollector" in testclass:
+            listeners.append(_parse_listener(elem))
+        elif guiclass in _CONTROLLER_PARSERS:
+            listeners.extend(_extract_nested_listeners(child_ht))
+    return listeners
 
 
 # ============================================================================
@@ -873,6 +905,9 @@ def parse_jmx_to_structure(jmx_text: str) -> AIScriptStructure:
         elif "ThreadGroup" in testclass or "ThreadGroupGui" in guiclass or "SteppingThreadGroup" in guiclass:
             tg = _parse_thread_group(elem, child_ht, http_defaults)
             structure_data["thread_groups"].append(tg)
+            # HF20a: bubble-up de listeners que la IA anidó dentro del TG →
+            # structure.listeners[] (mismo shape que el dispatch top-level).
+            structure_data["listeners"].extend(_extract_nested_listeners(child_ht))
 
         # Listeners (ResultCollector)
         elif "ResultCollector" in testclass:
