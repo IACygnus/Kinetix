@@ -112,7 +112,9 @@ export default function AIScriptDesigner() {
   const [error, setError] = useState<string | null>(null);
 
   // Pending file (selected but not yet sent)
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  // Sprint 2.9 — multi-HAR: lista de archivos pendientes (antes era 1 solo).
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const MAX_FILES = 5;
   // Persisted file context — sent on /refine so the AI keeps the reference
   const [refFileName, setRefFileName] = useState<string | null>(null);
   const [refFileContent, setRefFileContent] = useState<string | null>(null);
@@ -459,20 +461,29 @@ export default function AIScriptDesigner() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const selected = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = ''; // allow re-selecting the same file later
-    if (!file) return;
-    if (file.size > MAX_UPLOAD_BYTES) {
+    if (selected.length === 0) return;
+    const oversize = selected.find((f) => f.size > MAX_UPLOAD_BYTES);
+    if (oversize) {
       setError(
-        `El archivo "${file.name}" supera el limite de ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB. ` +
+        `El archivo "${oversize.name}" supera el limite de ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB. ` +
           `Se truncara para el analisis con IA.`
       );
     }
-    setPendingFile(file);
+    // Sprint 2.9 — acumular con los ya pendientes, respetando el tope.
+    setPendingFiles((current) => {
+      const combined = [...current, ...selected];
+      if (combined.length > MAX_FILES) {
+        setError(`Maximo ${MAX_FILES} archivos por conversacion. Se mantienen los primeros ${MAX_FILES}.`);
+        return combined.slice(0, MAX_FILES);
+      }
+      return combined;
+    });
   };
 
-  const removePendingFile = () => {
-    setPendingFile(null);
+  const removePendingFile = (index: number) => {
+    setPendingFiles((current) => current.filter((_, i) => i !== index));
   };
 
   const removeReferenceFile = () => {
@@ -483,10 +494,13 @@ export default function AIScriptDesigner() {
 
   const sendPrompt = async () => {
     const prompt = input.trim();
-    if (!prompt && !pendingFile) return;
+    if (!prompt && pendingFiles.length === 0) return;
     if (isLoading) return;
 
-    const fileTag = pendingFile ? `[📎 ${pendingFile.name}] ` : '';
+    const fileTag =
+      pendingFiles.length > 0
+        ? `[📎 ${pendingFiles.length === 1 ? pendingFiles[0].name : `${pendingFiles.length} archivos`}] `
+        : '';
     const userMessage = `${fileTag}${prompt || '(generar JMX a partir del archivo adjunto)'}`;
     const nextHistory: ChatMessage[] = [...messages, { role: 'user', content: userMessage }];
     setMessages(nextHistory);
@@ -503,17 +517,19 @@ export default function AIScriptDesigner() {
         components: null,
       };
 
-      if (pendingFile) {
-        // multipart upload — backend parses Postman / Swagger / text
+      if (pendingFiles.length > 0) {
+        // multipart upload — backend parses HAR / Postman / Swagger / text.
+        // Sprint 2.9 — varios archivos van en el campo 'files' (FastAPI los
+        // recibe como lista); 1 archivo sigue funcionando igual.
         const form = new FormData();
-        form.append('file', pendingFile);
+        pendingFiles.forEach((f) => form.append('files', f));
         form.append('prompt', prompt);
         form.append('conversation_history', JSON.stringify(messages));
         const response = await aiApi.post<AIResponse>('/generate-from-file', form, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
         data = response.data;
-        setPendingFile(null);
+        setPendingFiles([]);
       } else if (currentJmx) {
         // Sprint 2.4-HF5.1 — refine híbrido: primero intenta el quirúrgico,
         // si la IA pide fallback (o falla) cae al refine clásico del HF5.
@@ -625,7 +641,7 @@ export default function AIScriptDesigner() {
     setComponents([]);
     setIsValid(false);
     setError(null);
-    setPendingFile(null);
+    setPendingFiles([]);
     setRefFileName(null);
     setRefFileContent(null);
     setRefFileType(null);
@@ -677,7 +693,14 @@ export default function AIScriptDesigner() {
     }
   };
 
-  const actionLabel = pendingFile ? 'Generar desde archivo' : currentJmx ? 'Refinar' : 'Generar';
+  const actionLabel =
+    pendingFiles.length > 0
+      ? pendingFiles.length > 1
+        ? 'Generar desde archivos'
+        : 'Generar desde archivo'
+      : currentJmx
+      ? 'Refinar'
+      : 'Generar';
 
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col bg-gray-100">
@@ -853,7 +876,7 @@ export default function AIScriptDesigner() {
               onKeyDown={handleKeyDown}
               rows={3}
               placeholder={
-                pendingFile
+                pendingFiles.length > 0
                   ? 'Instrucciones adicionales (opcional)...'
                   : currentJmx
                   ? 'Describe el ajuste a aplicar al JMX actual...'
@@ -868,31 +891,42 @@ export default function AIScriptDesigner() {
               ref={fileInputRef}
               type="file"
               accept={ACCEPT_UPLOAD}
+              multiple
               className="hidden"
               onChange={handleFileChange}
             />
 
-            {/* Pending file chip (selected but not yet sent) */}
-            {pendingFile && (
-              <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs">
-                <FileText className="w-4 h-4" />
-                <span className="font-medium">{pendingFile.name}</span>
-                <span className="text-indigo-500">
-                  · {(pendingFile.size / 1024).toFixed(1)} KB
-                </span>
-                <button
-                  type="button"
-                  onClick={removePendingFile}
-                  className="ml-1 p-0.5 rounded hover:bg-indigo-200"
-                  aria-label="Quitar archivo"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+            {/* Sprint 2.9 — lista de archivos pendientes (selected, not yet sent) */}
+            {pendingFiles.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {pendingFiles.map((file, idx) => (
+                  <div
+                    key={`${file.name}-${idx}`}
+                    className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs mr-1"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span className="font-medium">{file.name}</span>
+                    <span className="text-indigo-500">· {(file.size / 1024).toFixed(1)} KB</span>
+                    <button
+                      type="button"
+                      onClick={() => removePendingFile(idx)}
+                      className="ml-1 p-0.5 rounded hover:bg-indigo-200"
+                      aria-label="Quitar archivo"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {pendingFiles.length >= 2 && (
+                  <p className="text-xs text-gray-500 italic">
+                    💡 La IA procesará los {pendingFiles.length} archivos como un solo flujo continuo.
+                  </p>
+                )}
               </div>
             )}
 
             {/* Persistent reference file chip (used during refinements) */}
-            {!pendingFile && refFileName && (
+            {pendingFiles.length === 0 && refFileName && (
               <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs">
                 <FileText className="w-4 h-4" />
                 <span className="font-medium">Referencia: {refFileName}</span>
@@ -927,7 +961,7 @@ export default function AIScriptDesigner() {
               <button
                 type="button"
                 onClick={sendPrompt}
-                disabled={isLoading || (!input.trim() && !pendingFile)}
+                disabled={isLoading || (!input.trim() && pendingFiles.length === 0)}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (

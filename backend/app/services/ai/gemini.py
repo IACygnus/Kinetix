@@ -44,8 +44,8 @@ OPENAI_MAX_TOKENS = {
     "gpt-4o": 16384,
     "gpt-4o-mini": 16384,
     "gpt-4.1": 32768,
-    "gpt-4.1-mini": 16384,
-    "gpt-4.1-nano": 8192,
+    "gpt-4.1-mini": 32768,  # HF18b: familia gpt-4.1 soporta 32K de output
+    "gpt-4.1-nano": 32768,  # HF18b: idem — evita truncacion si se cambia a nano
     "gpt-5-mini": 16384,
     "gpt-5-nano": 8192,
     "o4-mini": 16384,

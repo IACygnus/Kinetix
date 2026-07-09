@@ -91,6 +91,9 @@ from app.services.engine.structure_to_jmx import regenerate_jmx_from_structure
 # detectado se comprime antes de mandarlo a la IA con el modulo har_compressor.
 MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB (Sprint 2.4-HF6, antes 5 MB en HF3)
 
+# Sprint 2.9 — multi-HAR: tope de archivos por request de /generate-from-file.
+_MAX_UPLOAD_FILES = 5
+
 # Sprint 2.4-HF5 — output ceilings raised so a complete JMX (~95KB ≈ 30K tokens)
 # fits without truncation. Generation keeps the legacy 8192 cap to avoid changing
 # its behavior; refine uses the model's maximum.
@@ -334,6 +337,127 @@ Si el usuario sube un archivo Swagger/OpenAPI:
   de token
 - Body JSON formateado (no en una sola linea)
 
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS DE CORRELACION Y AUTENTICACION (CRITICAS)
+═══════════════════════════════════════════════════════════════════════════════
+
+Si el HAR o archivo de referencia muestra cualquiera de estos patrones, DEBES
+generar los extractores correspondientes. Un script sin correlacion NO sirve:
+los samplers posteriores fallan por usar tokens/IDs vencidos.
+
+1. Tokens JWT / Bearer:
+   - Si un response contiene "access_token":"...", "token":"...", "authToken":"..."
+     o similar, crea un JSONPostProcessor (o RegexExtractor) en el sampler que
+     devuelve el token.
+   - Nombra la variable segun la key JSON: ${authToken}, ${access_token}.
+   - Usala en samplers posteriores: header Authorization: Bearer ${authToken}.
+
+2. Tokens de transaccion / IDs dinamicos:
+   - Si un response trae tokenIdCliente, tokenIdMotor, sessionId, transactionId,
+     csrf_token, crea un extractor en el sampler origen.
+   - Usa la variable en los samplers posteriores que la necesiten.
+
+3. Cookies de sesion:
+   - Si hay Set-Cookie en responses, usa HTTP Cookie Manager (clearEachIteration=true).
+   - JMeter maneja las cookies automaticamente: NO crees extractores para cookies.
+
+4. Headers de autenticacion que cambian:
+   - Si un sampler envia Authorization: Bearer XXX donde XXX cambia entre requests,
+     SIEMPRE crea el extractor del request previo que genero el token y usa
+     Authorization: Bearer ${authToken} en un Header Manager local.
+
+EJEMPLO de RegexExtractor para un token JSON:
+```xml
+<RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract authToken" enabled="true">
+  <stringProp name="RegexExtractor.useHeaders">false</stringProp>
+  <stringProp name="RegexExtractor.refname">authToken</stringProp>
+  <stringProp name="RegexExtractor.regex">"access_token"\s*:\s*"([^"]+)"</stringProp>
+  <stringProp name="RegexExtractor.template">$1$</stringProp>
+  <stringProp name="RegexExtractor.default">NOT_FOUND</stringProp>
+  <stringProp name="RegexExtractor.match_number">1</stringProp>
+</RegexExtractor>
+```
+
+REGLA ABSOLUTA (post HF17) — LOS EXTRACTORES SON OBLIGATORIOS, NO OPCIONALES:
+- Si el flujo tiene un endpoint de auth (login/oauth/token, incluido Cognito con
+  AccessToken/IdToken en el AuthenticationResult), DEBES generar AL MENOS 1 extractor.
+  Un JMX con auth y CERO extractores es INEJECUTABLE: RECHAZA emitirlo asi.
+- Usa un JSONPostProcessor (referenceNames + jsonPathExprs) o RegexExtractor (refname +
+  regex) en el sampler que devuelve el token, y consume la variable con
+  Authorization: Bearer ${AccessToken} en los samplers posteriores.
+- Por cada ID dinamico (userId, orderId, sellerId, sessionId) que aparezca en URLs
+  posteriores al login, genera 1 extractor por cada ID unico.
+- PROHIBIDO hardcodear el token o dejar el header Authorization ausente. PROHIBIDO
+  emitir >3 samplers post-auth sin ningun extractor.
+- Ante la duda, PREFIERE menos samplers CON extractores que muchos samplers SIN
+  correlacion: un script correlacionado corto sirve; uno largo sin correlacion no.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS DE MULTI-DOMINIO Y UDV (CRITICAS)
+═══════════════════════════════════════════════════════════════════════════════
+
+Si el HAR tiene requests a MULTIPLES dominios:
+
+1. NUNCA hardcodees el dominio en HTTPSampler.domain.
+2. CREA una UDV por cada dominio unico, con nombre descriptivo segun su funcion:
+   - ${host} o ${host_main} para el dominio principal.
+   - ${host_auth} para servicios de autenticacion.
+   - ${host_user} para servicios de usuarios.
+   - ${host_products}, ${host_pagos}, etc. segun la funcion observable.
+3. Cada sampler usa el ${host_xxx} del dominio al que apunta.
+4. Detecta el rol del dominio mirando el path:
+   - /auth/, /login, /oauth        -> host_auth
+   - /users, /user-module          -> host_user
+   - /products, /multi_product     -> host_products
+   - /orders, /payments, /pagos    -> host_pagos
+   - Si no es claro                -> host_1, host_2, ...
+
+EJEMPLO: si el HAR llama a api.banco.com/login, auth-svc.banco.com/oauth/token y
+users-api.banco.com/profile, genera 3 UDV (host_main, host_auth, host_user) y usa
+${host_main}, ${host_auth}, ${host_user} en los samplers correspondientes.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS DE BODIES REALES (CRITICAS)
+═══════════════════════════════════════════════════════════════════════════════
+
+- Los cuerpos (bodies) de POST/PUT/PATCH DEBEN ser reales y completos, nunca vacios
+  ni placeholders.
+- Si usas ${BODY_SAMPLER_N} en un sampler, la UDV BODY_SAMPLER_N DEBE tener
+  Argument.value con el body real completo. Una UDV BODY_SAMPLER_N con valor vacio
+  ("", "...", "PLACEHOLDER") deja el script INEJECUTABLE: JMeter no resuelve el body,
+  el sampler se cuelga y la ejecucion termina con 0 samples.
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS DE COBERTURA DEL FLUJO (CRITICAS)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Incluye TODOS los requests funcionales del HAR; no resumas ni recortes el flujo.
+2. Solo OMITE assets estaticos (.css, .js, .png, .jpg, .woff, .ico) y tracking
+   (analytics, telemetry).
+3. Cubre el flujo end-to-end COMPLETO: login -> operaciones -> logout. No te
+   detengas a la mitad.
+4. Si el HAR muestra logout / cerrarSesion, INCLUYELO al final del flujo.
+5. Si hay patrones repetidos (mismo endpoint con bodies distintos), genera UN
+   sampler parametrizado, no duplicados.
+6. NUMERA los samplers en orden cronologico del flujo:
+   "1. Login", "2. GetUserInfo", "3. EjecutarMotor", "4. CerrarSesion".
+
+═══════════════════════════════════════════════════════════════════════════════
+REGLAS DE MULTI-HAR (cuando el contexto trae varios archivos)
+═══════════════════════════════════════════════════════════════════════════════
+
+Si el contexto incluye el marcador "=== FLUJO DIVIDIDO EN N ARCHIVOS ===":
+1. Procesa TODOS los archivos como un SOLO flujo continuo (multi-HAR).
+2. Si el archivo 1 hace login y extrae authToken, ese mismo authToken se usa en
+   los samplers del archivo 2.
+3. NO generes 2 JMX separados — genera UN JMX con la secuencia completa.
+4. El orden de los samplers es: todos los del archivo 1, luego los del archivo 2,
+   etc.
+5. Numera los samplers en orden cronologico global: "1. Login (archivo 1)",
+   "2. GetUser (archivo 1)", "3. EjecutarOp (archivo 2)", etc.
+6. Si el ultimo sampler del archivo N y el primero del archivo N+1 son el mismo
+   (la captura se corto y reinicio), genera SOLO uno (deduplicacion).
+
 ## FORMATO DE RESPUESTA
 1. Explicacion breve (2-3 parrafos) de lo que se genero
 2. Lista de componentes incluidos
@@ -363,9 +487,43 @@ Tu trabajo es generar un Test Plan JMeter (JMX) a partir del input del usuario.
 CONTEXTO ESPECIAL: el input es GRANDE (HAR voluminoso, app empresarial tipo PeopleSoft/SAP, o muchas transacciones).
 DEBES generar un JMX COMPLETO PERO conciso para no agotar el limite de tokens de salida.
 
+### JERARQUÍA DE REGLAS (cuando dos reglas parezcan competir):
+
+P1 (mas alta): Bodies con valor REAL. Un JMX con UDV vacia es basura. Si tienes
+  que elegir entre UDV vacia o body inline truncado, ELIGE inline truncado.
+
+P2: Extractores para tokens/IDs dinamicos. Un flujo autenticado sin extractores
+  es un script INEJECUTABLE. Si tienes que elegir entre menos samplers CON extractores
+  o mas samplers SIN extractores, ELIGE menos samplers con extractores.
+
+P3: Cobertura del flujo funcional. Cubre TODOS los endpoints del HAR excluyendo
+  assets/tracking. Si tienes que sacrificar cobertura por P1 o P2, sacrifica cobertura
+  al FINAL del flujo (los samplers menos criticos), no en el medio.
+
+P4: Multi-dominio parametrizado en UDV. NUNCA hardcodees dominios.
+
+P5 (mas baja): Economia de tokens. Reduce verbosidad SOLO si no viola P1-P4.
+
+Si te encuentras eligiendo entre P5 y P1-P4, ELIGE SIEMPRE P1-P4.
+
+Si tu output va a truncarse antes de completar P1+P2+P3, PRIORIZA COMPLETAR
+CORRECTAMENTE los primeros 60% de samplers con TODOS sus extractores antes que
+enumerar todos superficialmente.
+
 REGLAS DE ECONOMÍA DE TOKENS (estrictas):
-1. Bodies grandes: si un body POST/PUT tiene >500 caracteres, ENVUELVELO en una variable UDV para reducir verbosidad.
-   Por ejemplo, en lugar de copiar 2KB de form-urlencoded inline, define una UDV `BODY_SAMPLER_5` y usa `${BODY_SAMPLER_5}` en el sampler.
+1. Bodies grandes — REGLA ABSOLUTA (POST/PUT/PATCH):
+   - Si un body tiene <=300 caracteres: PON el body INLINE en el sampler dentro de
+     <stringProp name="Argument.value">... el body real ...</stringProp>. NO uses UDV para esto.
+   - Si un body tiene >300 caracteres: usa UDV `BODY_SAMPLER_N` PERO el
+     <stringProp name="Argument.value"> de esa UDV DEBE contener el body COMPLETO y REAL
+     tal como aparece en el HAR/archivo de referencia.
+   - PROHIBIDO: crear UDV con Argument.value="" (vacio), "..." (elipsis),
+     "PLACEHOLDER", o cualquier stub. Si vas a usar UDV, DEBE tener el valor real completo.
+   - Si el body original excede 2000 caracteres y no puedes replicarlo completo por tokens,
+     PREFIERE dejar el body inline (truncado si es necesario) antes que usar UDV vacia.
+   - Si NO tienes el body real disponible, NO crees el sampler o pon el body como comentario
+     XML explicando que falta. Un sampler con body ${BODY_X} y BODY_X="" es INEJECUTABLE:
+     JMeter no resuelve el body y el sampler se cuelga sin ejecutarse (timeout con 0 samples).
 2. Headers repetidos: define UN solo Header Manager a nivel Thread Group con los headers comunes (Cookie, User-Agent, Accept, etc.).
    NO repitas headers en cada sampler. Solo anade un Header Manager LOCAL si el sampler necesita headers EXTRA.
 3. Extractors: solo agrega Regex Extractor / JSON Extractor si CLARAMENTE el siguiente sampler usa el valor extraido (token de auth, ID, etc.).
@@ -392,6 +550,84 @@ VARIABLES OBLIGATORIAS:
 - host (dominio sin protocolo)
 - scheme (http o https)
 - port (80, 443, 8080, etc.)
+
+REGLAS CRITICAS NO NEGOCIABLES (aplican AUN en modo conservador):
+
+### REGLA ABSOLUTA #2 (post HF17): EXTRACTORES DE TOKENS
+
+Si el HAR/archivo de referencia muestra CUALQUIERA de estos patrones en un response,
+DEBES generar el extractor correspondiente en el sampler que devuelve el valor:
+
+Patrones que EXIGEN extractor:
+1. Response con "access_token": "..." o "AccessToken": "..." (Cognito, OAuth)
+2. Response con "token": "...", "authToken": "...", "jwt": "..."
+3. Response con "IdToken": "...", "RefreshToken": "..." (Cognito)
+4. Response con "sessionId": "...", "transactionId": "...", "tokenId": "..."
+5. Response con "csrf_token": "...", "xsrf_token": "..."
+6. Response con IDs en JSON que se usan en URLs posteriores (/users/{id}, /orders/{id})
+
+CASO INCORRECTO (PROHIBIDO):
+Sampler POST /login -> response {"AccessToken":"eyJhbG..."} -> NO crear extractor ->
+siguiente sampler usa Authorization: Bearer HARDCODED o falta el header.
+Esto es INEJECUTABLE. RECHAZA generar asi.
+
+CASO CORRECTO (OBLIGATORIO):
+```xml
+<HTTPSamplerProxy testname="1. Login Cognito">
+  <!-- ... configuracion del POST ... -->
+</HTTPSamplerProxy>
+<hashTree>
+  <JSONPostProcessor testname="Extract AccessToken">
+    <stringProp name="JSONPostProcessor.referenceNames">AccessToken</stringProp>
+    <stringProp name="JSONPostProcessor.jsonPathExprs">$.AuthenticationResult.AccessToken</stringProp>
+    <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+    <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+  </JSONPostProcessor>
+</hashTree>
+<!-- Luego, en el sampler siguiente: -->
+<HeaderManager>
+  <collectionProp name="HeaderManager.headers">
+    <elementProp name="Authorization" elementType="Header">
+      <stringProp name="Header.name">Authorization</stringProp>
+      <stringProp name="Header.value">Bearer ${AccessToken}</stringProp>
+    </elementProp>
+  </collectionProp>
+</HeaderManager>
+```
+
+NUMERO MINIMO DE EXTRACTORES:
+Si el HAR muestra un flujo con autenticacion (login/auth/token endpoint), DEBES
+generar AL MENOS 1 extractor. Si ademas ves IDs dinamicos (userId, orderId, sellerId,
+sessionId) en URLs posteriores al login, DEBES generar 1 extractor por cada ID unico.
+
+PROHIBIDO: emitir un JMX con mas de 3 samplers despues de un endpoint de auth
+sin ningun extractor. Si vas a hacer eso, DETENTE y anade extractores primero.
+Es preferible emitir un JMX con MENOS samplers CON extractores que uno con muchos
+samplers SIN correlacion: ELIGE siempre menos samplers con extractores.
+
+MULTI-DOMINIO: si hay >=2 dominios distintos, define una UDV por dominio
+(host_main, host_auth, host_user, host_pagos, ...). NUNCA hardcodees dominios en
+los samplers; cada sampler usa su ${host_xxx}.
+
+COBERTURA: incluye TODOS los requests funcionales del HAR (omite solo assets y
+tracking). Incluye el logout/cerrarSesion si existe en el flujo.
+
+### CHECKPOINT PRE-EMISIÓN (revisa cada punto antes de emitir el JMX):
+
+[ ] 1. Todos los BODY_SAMPLER_N declarados en UDV tienen Argument.value con contenido real (no vacio).
+[ ] 2. Todos los BODY_SAMPLER_N declarados en UDV son referenciados por algun sampler con ${BODY_SAMPLER_N}.
+     -> Si BODY_SAMPLER_2 esta en UDV pero NO hay ${BODY_SAMPLER_2} en ningun sampler, ELIMINA la UDV.
+        Estas desperdiciando tokens con una UDV huerfana.
+[ ] 3. Hay al menos 1 extractor por cada endpoint de auth del flujo.
+     -> Si el HAR tiene POST /login o /auth y NO hay JSONPostProcessor o RegexExtractor
+        que capture el token, DETENTE y anadelo.
+[ ] 4. Los headers Authorization posteriores al auth usan ${AccessToken} (o el nombre del extractor).
+     -> Si usan un valor hardcodeado o el header esta ausente, EL SCRIPT NO SIRVE.
+[ ] 5. Todos los dominios distintos estan parametrizados en UDV.
+[ ] 6. El JMX cierra con </jmeterTestPlan>.
+
+Si CUALQUIER check falla, corrige antes de emitir. Es preferible emitir un JMX con
+5 samplers bien hechos + extractores que un JMX con 20 samplers sin correlacion.
 
 FORMATO DE RESPUESTA:
 Envuelve el JMX en un bloque ```xml ... ```. NO anadas explicaciones largas antes/despues.
@@ -739,28 +975,70 @@ def _extract_jmx_and_explanation(text: str) -> tuple[str, str]:
     return jmx, explanation
 
 
-def _detect_truncation(raw_text: str) -> tuple[bool, int, str]:
-    """Detect a JMX response that the model cut off mid-XML (output ceiling hit).
+def _truncation_hint_message(partial_samplers: int) -> str:
+    """User-facing hint shown when auto-continuation cannot rescue a truncated JMX.
 
-    Sprint 2.7a — ported from the /refine path so /generate and
-    /generate-from-file can give the same specific hint instead of the generic
-    "reformula tu prompt".
-
-    Returns (is_truncated, partial_samplers, message). When is_truncated is
-    False the other two are (0, "").
+    Split out of _detect_truncation in HF18a so the detector can return a
+    machine-readable truncation_type while callers still rebuild this message
+    on the failure path (behavior identical to Sprint 2.7a).
     """
-    is_truncated = "<?xml" in raw_text and "</jmeterTestPlan>" not in raw_text
-    if not is_truncated:
-        return False, 0, ""
-    partial_samplers = raw_text.count("<HTTPSamplerProxy")
-    message = (
+    return (
         f"La IA genero una respuesta truncada por limite de tokens del modelo "
         f"(se alcanzaron {partial_samplers} samplers parciales sin cerrar el JMX). "
         "Soluciones: 1) usa un modelo con mayor capacidad de salida "
         "(gpt-4.1, gemini-2.5-flash); 2) reduce el HAR/archivo de referencia; "
         "3) pide solo las transacciones mas criticas."
     )
-    return True, partial_samplers, message
+
+
+def _detect_truncation(
+    raw_text: str,
+    finish_reason: str | None = None,
+) -> tuple[bool, int, str]:
+    """Detect a JMX response that the model cut off mid-XML.
+
+    Sprint 2.7a — ported from the /refine path so /generate and
+    /generate-from-file can give the same specific hint instead of the generic
+    "reformula tu prompt". Original detection: raw has ``<?xml`` but no
+    ``</jmeterTestPlan>``.
+
+    HF18a — extended to weigh ``finish_reason`` so we also catch the "stop
+    mentiroso" failure mode: gpt-4o returns finish_reason="stop" (claims it
+    finished) yet cuts the JMX before the closing tag. 2.7b only fired on
+    finish_reason="length", so this case slipped through and the frontend
+    showed "XML invalido".
+
+    Returns (is_truncated, partial_samplers, truncation_type):
+      - is_truncated: True when auto-continuation should be attempted.
+      - partial_samplers: count of ``<HTTPSamplerProxy`` in the raw text.
+      - truncation_type: "length" | "stop_mentiroso" | "unknown_no_close" |
+        "no_truncation" | "no_xml".
+
+    The user-facing hint lives in _truncation_hint_message (callers rebuild it
+    from partial_samplers on the failure path).
+    """
+    if "<?xml" not in raw_text:
+        # No JMX started at all — this is not a truncation, it's a non-XML reply.
+        return False, 0, "no_xml"
+
+    partial_samplers = raw_text.count("<HTTPSamplerProxy")
+    has_closing = "</jmeterTestPlan>" in raw_text
+
+    if has_closing:
+        return False, partial_samplers, "no_truncation"
+
+    # JMX started but never closed → truncated. Classify by finish_reason.
+    if finish_reason == "length":
+        # Classic Sprint 2.7a case: model hit its output-token ceiling.
+        return True, partial_samplers, "length"
+    if finish_reason == "stop":
+        # HF18a: model claims it finished but cut the XML mid-stream (known
+        # gpt-4o failure mode with dense prompts / large HARs).
+        return True, partial_samplers, "stop_mentiroso"
+    # Unknown/absent finish_reason but XML is incomplete → treat as truncated
+    # defensively (also preserves the Sprint 2.7a call signature: without a
+    # finish_reason an unclosed JMX still activates auto-continuation).
+    return True, partial_samplers, "unknown_no_close"
 
 
 # ===================== AUTO-CONTINUATION (Sprint 2.7b) =====================
@@ -904,7 +1182,7 @@ def _try_continue_truncated_generation(
     )
 
     try:
-        continuation_raw = _call_ai(continuation_messages, ai_conf)
+        continuation_raw, _ = _call_ai(continuation_messages, ai_conf)
     except Exception as e:  # noqa: BLE001 — any failure degrades to the 2.7a path
         return "", False, f"Error en llamada de continuacion: {str(e)[:200]}"
 
@@ -1349,8 +1627,13 @@ def _call_ai(
     messages: List[dict],
     ai_conf: dict,
     max_tokens_override: Optional[int] = None,
-) -> str:
-    """Dispatch to OpenAI or Gemini based on the stored config. Returns raw text.
+) -> tuple[str, str]:
+    """Dispatch to OpenAI or Gemini based on the stored config.
+
+    Returns (raw_text, finish_reason). HF18a — finish_reason is surfaced so
+    _detect_truncation can tell "length" (model hit its ceiling) from
+    "stop mentiroso" (model claims done but cut the XML). OpenAI reports it
+    directly; Gemini's enum is mapped to "length"/"stop"/lowercased-name.
 
     ``max_tokens_override`` lets callers (notably /refine) raise the output
     cap above the generation default of 8192 so a full JMX (~95KB ≈ 30K tokens)
@@ -1371,6 +1654,17 @@ def _call_ai(
             from openai import OpenAI
         except ImportError as e:
             raise HTTPException(status_code=500, detail=f"openai SDK no disponible: {e}")
+        # HF18b — flag any model not in OPENAI_MAX_TOKENS. Without this, a model
+        # missing from the dict silently falls back to OPENAI_DEFAULT_MAX_TOKENS
+        # (4096) and truncates long JMX with no visible cause (the class of bug
+        # that made gpt-4.1 look like a low-coverage model). Warn loudly so the
+        # dict gets the entry instead of us chasing phantom truncation.
+        if model and model not in OPENAI_MAX_TOKENS:
+            logger.warning(
+                "AI Script Designer: model '%s' NOT in OPENAI_MAX_TOKENS; "
+                "usando default %d (posible truncacion). Agregalo al dict.",
+                model, OPENAI_DEFAULT_MAX_TOKENS,
+            )
         client = OpenAI(api_key=api_key)
         if max_tokens_override is not None:
             # Refine path: ride the model's actual ceiling instead of the
@@ -1391,11 +1685,12 @@ def _call_ai(
         )
         if not completion.choices:
             raise HTTPException(status_code=502, detail="OpenAI devolvio respuesta vacia")
+        finish_reason = completion.choices[0].finish_reason or "unknown"
         logger.info(
             "AI Script Designer: OpenAI call model=%s max_tokens=%d finish_reason=%s",
-            model, effective_max_tokens, completion.choices[0].finish_reason,
+            model, effective_max_tokens, finish_reason,
         )
-        return completion.choices[0].message.content or ""
+        return completion.choices[0].message.content or "", finish_reason
 
     if provider == "gemini":
         try:
@@ -1416,11 +1711,26 @@ def _call_ai(
             prompt,
             generation_config={"max_output_tokens": gemini_max_tokens, "temperature": 0.4},
         )
+        # HF18a — map Gemini's finish_reason enum to the OpenAI vocabulary so
+        # _detect_truncation classifies both providers the same way.
+        finish_reason = "stop"
+        try:
+            if resp and getattr(resp, "candidates", None):
+                fr = resp.candidates[0].finish_reason
+                fr_name = getattr(fr, "name", str(fr)).upper()
+                if "MAX_TOKEN" in fr_name:
+                    finish_reason = "length"
+                elif fr_name in ("STOP", "1"):
+                    finish_reason = "stop"
+                else:
+                    finish_reason = fr_name.lower()
+        except Exception:  # noqa: BLE001 — finish_reason is best-effort metadata
+            finish_reason = "stop"
         logger.info(
-            "AI Script Designer: Gemini call model=%s max_output_tokens=%d",
-            model, gemini_max_tokens,
+            "AI Script Designer: Gemini call model=%s max_output_tokens=%d finish_reason=%s",
+            model, gemini_max_tokens, finish_reason,
         )
-        return (resp.text or "") if resp else ""
+        return ((resp.text or "") if resp else ""), finish_reason
 
     raise HTTPException(
         status_code=400,
@@ -1524,7 +1834,7 @@ async def generate_jmx(
     )
 
     try:
-        raw_text = _call_ai(messages, ai_conf)
+        raw_text, finish_reason = _call_ai(messages, ai_conf)
     except HTTPException:
         raise
     except Exception as e:
@@ -1536,12 +1846,16 @@ async def generate_jmx(
     if not jmx:
         # Sprint 2.7a — distinguish "model hit its output ceiling mid-XML"
         # from "no JMX at all"; the first needs a model/size hint, not a reprompt.
-        is_truncated, partial_samplers, trunc_msg = _detect_truncation(raw_text)
+        # HF18a — finish_reason also catches the "stop mentiroso" case.
+        is_truncated, partial_samplers, truncation_type = _detect_truncation(
+            raw_text, finish_reason=finish_reason,
+        )
+        trunc_msg = _truncation_hint_message(partial_samplers)
         if is_truncated:
             # Sprint 2.7b — try ONE auto-continuation before surfacing the error.
             logger.info(
-                "AI Script Designer /generate: JMX truncado, intentando "
-                "auto-continuacion (samplers=%d)", partial_samplers,
+                "AI Script Designer /generate: JMX truncado (tipo=%s), intentando "
+                "auto-continuacion (samplers=%d)", truncation_type, partial_samplers,
             )
             assembled_jmx, cont_ok, cont_err = _try_continue_truncated_generation(
                 partial_raw_text=raw_text,
@@ -1605,51 +1919,25 @@ class FileGenerateResponse(AIResponse):
     file_name: Optional[str] = None
     # Sprint 2.4-HF6 — HAR compression stats so the FE can show the user
     # how much was reduced. Only populated when the uploaded file is a HAR.
+    # Sprint 2.9 — for multiple files this is the aggregate across all HARs.
     compression_stats: Optional[dict] = None
 
 
-@router.post("/generate-from-file", response_model=FileGenerateResponse)
-async def generate_jmx_from_file(
-    file: UploadFile = File(...),
-    prompt: str = Form(""),
-    conversation_history: str = Form(""),
-    _current_user: User = Depends(require_role(["admin", "analyst"])),
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate a JMX using an uploaded reference file (Postman / Swagger / text)
-    plus an optional natural-language prompt.
+def _process_uploaded_file(
+    filename: str, raw_bytes: bytes
+) -> tuple[str, str, str, Optional[dict]]:
+    """Decode + (HAR compress) + format ONE uploaded reference file.
 
-    conversation_history is a JSON-encoded list of {role, content} (multipart can't
-    nest arrays cleanly, so we serialize it on the FE side).
+    Sprint 2.9 — extracted from the endpoint so multiple files share the exact
+    same per-file pipeline. Returns (kind, file_context, raw_reference_text,
+    compression_stats). raw_reference_text is the compressed HAR / file text
+    (echoed back for /refine); file_context is what the AI sees.
     """
-    ai_conf = await load_ai_config_from_db(db)
-    if ai_conf.get("limit_reached"):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
-        )
-
-    # Read + size-check the file
-    raw_bytes = await file.read()
-    if not raw_bytes:
-        raise HTTPException(status_code=400, detail="El archivo esta vacio")
-    if len(raw_bytes) > MAX_FILE_BYTES:
-        # Don't reject — just truncate later in _detect_and_format. Log a warning.
-        logger.warning(
-            "AI Script Designer: file %s is %d bytes, will be truncated to %d",
-            file.filename, len(raw_bytes), MAX_FILE_BYTES,
-        )
     try:
         raw_text = raw_bytes.decode("utf-8", errors="replace")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo: {e}")
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo {filename}: {e}")
 
-    filename = file.filename or "archivo"
-
-    # Sprint 2.4-HF6 — HAR detection + compression BEFORE sending to the AI.
-    # Real HARs can be 30-50 MB; raw they blow the LLM context. The compressor
-    # filters static assets + tracking, dedups by canonical URL + body hash,
-    # and truncates oversized bodies, typically reducing size by 80-99%.
     compression_stats: Optional[dict] = None
     if _is_har_file(filename, raw_text):
         try:
@@ -1666,7 +1954,7 @@ async def generate_jmx_from_file(
                 compression_stats["entries_unique"],
             )
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"HAR invalido: {e}")
+            raise HTTPException(status_code=400, detail=f"HAR invalido ({filename}): {e}")
 
     kind, file_ctx = _detect_and_format(raw_text, filename)
     # If we compressed a HAR, hint to the IA explicitly — _detect_and_format
@@ -1684,9 +1972,155 @@ async def generate_jmx_from_file(
             f"{raw_text}\n"
             "--- FIN ---"
         )
+    return kind, file_ctx, raw_text, compression_stats
+
+
+def _build_unified_file_context(processed_files: list) -> str:
+    """Build a single AI context from one or more processed files (Sprint 2.9).
+
+    - One file  -> its content verbatim (backward compatible, identical to pre-2.9).
+    - N files   -> markers framing the files as ONE continuous business flow so
+      the model correlates across them (tokens from file 1 used in file 2, etc.)
+      and emits a single JMX covering all of them in order.
+    """
+    if len(processed_files) == 1:
+        return processed_files[0]["content"]
+
+    n = len(processed_files)
+    parts = [
+        f"=== FLUJO DIVIDIDO EN {n} ARCHIVOS ===",
+        "",
+        "INSTRUCCION CRITICA: estos archivos representan UN SOLO FLUJO DE NEGOCIO "
+        "dividido en partes por limitaciones de captura. Debes procesarlos como una "
+        "secuencia continua, MANTENIENDO CORRELACION entre ellos:",
+        "  - Tokens extraidos en el archivo 1 se usan en el archivo 2.",
+        "  - El ultimo request del archivo N suele conectar con el primer request del archivo N+1.",
+        "  - Genera UN SOLO JMX que cubra TODOS los archivos en orden.",
+        "",
+    ]
+    for pf in processed_files:
+        parts.append(f"--- ARCHIVO {pf['index']}: {pf['filename']} (kind={pf['kind']}) ---")
+        parts.append("")
+        parts.append(pf["content"])
+        parts.append("")
+    parts.append("=== FIN DEL FLUJO ===")
+    parts.append("")
+    parts.append(
+        f"Recuerda: UN solo JMX que cubra los {n} archivos como flujo continuo. "
+        "Numera los samplers en orden cronologico (1. ..., 2. ..., ..., N. ...)."
+    )
+    return "\n".join(parts)
+
+
+def _aggregate_compression_stats(processed_files: list) -> Optional[dict]:
+    """Sum the HAR compression stats across files for the FE banner (Sprint 2.9).
+
+    Returns None when no file was a HAR.
+    """
+    har_stats = [p["compression_stats"] for p in processed_files if p.get("compression_stats")]
+    if not har_stats:
+        return None
+    orig = sum(s["original_size"] for s in har_stats)
+    comp = sum(s["compressed_size"] for s in har_stats)
+    return {
+        "original_size": orig,
+        "compressed_size": comp,
+        "reduction_ratio": round((1 - comp / orig) * 100, 1) if orig > 0 else 0,
+        "entries_original": sum(s["entries_original"] for s in har_stats),
+        "entries_unique": sum(s["entries_unique"] for s in har_stats),
+        "entries_static_filtered": sum(s["entries_static_filtered"] for s in har_stats),
+        "entries_tracking_filtered": sum(s["entries_tracking_filtered"] for s in har_stats),
+        "files": len(processed_files),
+    }
+
+
+@router.post("/generate-from-file", response_model=FileGenerateResponse)
+async def generate_jmx_from_file(
+    # NOTE: the list MUST NOT be Optional — FastAPI only uses form.getlist() (so a
+    # single `files` part becomes a 1-element list) when the annotation is a bare
+    # List. Optional[List[...]] makes it treat one part as a scalar and 422s.
+    files: List[UploadFile] = File(default=[]),
+    file: Optional[UploadFile] = File(default=None),
+    prompt: str = Form(""),
+    conversation_history: str = Form(""),
+    _current_user: User = Depends(require_role(["admin", "analyst"])),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a JMX from one or more uploaded reference files (HAR / Postman /
+    Swagger / text) plus an optional natural-language prompt.
+
+    Sprint 2.9 — accepts MULTIPLE files via the ``files`` field. The legacy
+    singular ``file`` field still works (backward compatible). Multiple HARs are
+    compressed independently and stitched into one continuous-flow context.
+
+    conversation_history is a JSON-encoded list of {role, content} (multipart can't
+    nest arrays cleanly, so we serialize it on the FE side).
+    """
+    ai_conf = await load_ai_config_from_db(db)
+    if ai_conf.get("limit_reached"):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
+        )
+
+    # Normalize singular/plural inputs into one list (backward compat).
+    upload_list: List[UploadFile] = list(files) if files else ([file] if file else [])
+    if not upload_list:
+        raise HTTPException(
+            status_code=400,
+            detail="Adjunta al menos un archivo (campo 'files' o 'file').",
+        )
+    if len(upload_list) > _MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximo {_MAX_UPLOAD_FILES} archivos por request.",
+        )
+
+    # Process each file independently (decode + HAR compression + format).
+    processed: List[dict] = []
+    for idx, up in enumerate(upload_list):
+        raw_bytes = await up.read()
+        if not raw_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo {up.filename or idx + 1} esta vacio",
+            )
+        if len(raw_bytes) > MAX_FILE_BYTES:
+            logger.warning(
+                "AI Script Designer: file %s is %d bytes, will be truncated to %d",
+                up.filename, len(raw_bytes), MAX_FILE_BYTES,
+            )
+        fname = up.filename or f"archivo_{idx + 1}"
+        kind_i, ctx_i, raw_i, stats_i = _process_uploaded_file(fname, raw_bytes)
+        processed.append({
+            "index": idx + 1,
+            "filename": fname,
+            "kind": kind_i,
+            "content": ctx_i,
+            "raw": raw_i,
+            "compression_stats": stats_i,
+        })
+
+    # Downstream code is unchanged: reuse the legacy variable names with
+    # multi-aware values (single file => identical behavior to pre-2.9).
+    single = len(processed) == 1
+    file_ctx = _build_unified_file_context(processed)
+    raw_text = processed[0]["raw"] if single else file_ctx
+    kind = (
+        processed[0]["kind"] if single
+        else ("har" if all(p["kind"] == "har" for p in processed) else "mixed")
+    )
+    filename = (
+        processed[0]["filename"] if single
+        else ", ".join(p["filename"] for p in processed)
+    )
+    compression_stats = (
+        processed[0]["compression_stats"] if single
+        else _aggregate_compression_stats(processed)
+    )
     logger.info(
-        "AI Script Designer: file upload kind=%s name=%s size=%d",
-        kind, filename, len(raw_bytes),
+        "AI Script Designer: file upload count=%d kind=%s name=%s",
+        len(processed), kind, filename,
     )
 
     # Parse history (frontend sends JSON because multipart can't nest arrays)
@@ -1717,7 +2151,7 @@ async def generate_jmx_from_file(
     )
 
     try:
-        raw_response = _call_ai(messages, ai_conf)
+        raw_response, finish_reason = _call_ai(messages, ai_conf)
     except HTTPException:
         raise
     except Exception as e:
@@ -1729,12 +2163,17 @@ async def generate_jmx_from_file(
     if not jmx:
         # Sprint 2.7a — a truncated HAR/PeopleSoft generation is the common
         # failure here; give the size/model hint instead of "revisa el archivo".
-        is_truncated, partial_samplers, trunc_msg = _detect_truncation(raw_response)
+        # HF18a — finish_reason also catches the "stop mentiroso" case.
+        is_truncated, partial_samplers, truncation_type = _detect_truncation(
+            raw_response, finish_reason=finish_reason,
+        )
+        trunc_msg = _truncation_hint_message(partial_samplers)
         if is_truncated:
             # Sprint 2.7b — try ONE auto-continuation before surfacing the error.
             logger.info(
-                "AI Script Designer /generate-from-file: JMX truncado, "
-                "intentando auto-continuacion (samplers=%d)", partial_samplers,
+                "AI Script Designer /generate-from-file: JMX truncado (tipo=%s), "
+                "intentando auto-continuacion (samplers=%d)",
+                truncation_type, partial_samplers,
             )
             assembled_jmx, cont_ok, cont_err = _try_continue_truncated_generation(
                 partial_raw_text=raw_response,
@@ -1859,7 +2298,7 @@ async def refine_jmx(
     )
 
     try:
-        raw_text = _call_ai(messages, ai_conf, max_tokens_override=max_tokens_refine)
+        raw_text, _ = _call_ai(messages, ai_conf, max_tokens_override=max_tokens_refine)
     except HTTPException:
         raise
     except Exception as e:
@@ -2109,7 +2548,7 @@ async def refine_jmx_surgical(
 
     # 5. Call the AI. The operations JSON is small, 4096 is plenty.
     try:
-        raw_response = _call_ai(messages, ai_conf, max_tokens_override=4096)
+        raw_response, _ = _call_ai(messages, ai_conf, max_tokens_override=4096)
     except HTTPException:
         raise
     except Exception as e:

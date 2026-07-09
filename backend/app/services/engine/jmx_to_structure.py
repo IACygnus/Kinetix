@@ -185,6 +185,28 @@ def _parse_arguments_collection(elem) -> List[UserDefinedVariable]:
     return result
 
 
+def _parse_embedded_test_plan_udv(test_plan_elem) -> List[UserDefinedVariable]:
+    """
+    HF16: extrae UDV del slot inline del TestPlan (Patrón B):
+
+        <TestPlan ...>
+          <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"> ... </collectionProp>
+          </elementProp>
+        </TestPlan>
+
+    La IA a veces genera este patrón embebido en vez del bloque <Arguments>
+    hermano del TestPlan (Patrón A). Antes de HF16 estas variables no se
+    detectaban → el editor reportaba "N variables sin definir" en falso.
+    """
+    embedded = test_plan_elem.find(
+        "./elementProp[@name='TestPlan.user_defined_variables']"
+    )
+    if embedded is None:
+        return []
+    return _parse_arguments_collection(embedded)
+
+
 def _parse_http_defaults(elem) -> HttpDefaultsModel:
     return HttpDefaultsModel(
         domain=_string_prop(elem, "HTTPSampler.domain") or None,
@@ -798,6 +820,10 @@ def parse_jmx_to_structure(jmx_text: str) -> AIScriptStructure:
     test_plan_elem, test_plan_ht = pairs[0]
     test_plan = _parse_test_plan(test_plan_elem)
 
+    # HF16: UDV embebido en el slot inline del TestPlan (Patrón B). Se fusiona más
+    # abajo con el Patrón A (bloque <Arguments> hermano) sin duplicar por nombre.
+    embedded_udv = _parse_embedded_test_plan_udv(test_plan_elem)
+
     # Recorrer hijos del TestPlan
     structure_data: Dict[str, Any] = {
         "test_plan": test_plan,
@@ -861,6 +887,15 @@ def parse_jmx_to_structure(jmx_text: str) -> AIScriptStructure:
                 severity="info" if "Recording" in guiclass or "Proxy" in guiclass else "warning",
                 raw_xml=_raw_xml(elem),
             ))
+
+    # HF16: fusionar UDV del Patrón B (embebido) sin duplicar las del Patrón A
+    # (bloque <Arguments> hermano, ya recolectadas en el loop). El Patrón A gana
+    # en caso de colisión de nombre por ser el bloque canónico.
+    existing_udv_names = {v.name for v in structure_data["user_defined_variables"]}
+    for v in embedded_udv:
+        if v.name not in existing_udv_names:
+            structure_data["user_defined_variables"].append(v)
+            existing_udv_names.add(v.name)
 
     structure = AIScriptStructure(**structure_data)
     structure.metadata = _compute_metadata(structure, jmx_text, warnings)
