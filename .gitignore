@@ -201,3 +201,7 @@ backend/media/
 
 # Temp/diagnostic scratch
 tmp/
+
+# HF20 housekeeping: backups locales del snapshot pre-Sprint 3.0
+# (db_full_*.sql, codigo_snapshot_*.tar.gz) — se mantienen en disco, NO se versionan
+backups/
