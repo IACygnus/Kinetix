@@ -94,9 +94,10 @@ regresión, los 208 pasan todos.
 
 ## Git
 
-- Commit: `<hash>`
-- Push a **github**: `<estado>`
-- **origin (Azure): NO tocado** ✅
+- Commit: **`7335f8f`** — "HF21: fix consolidado de file upload en Diseñador IA"
+- Push a **github** (`IACygnus/Kinetix`, branch `backup-trabajo-local`): **OK**
+  (`30a0807..7335f8f`). Verificado: `github/backup-trabajo-local == HEAD`.
+- **origin (Azure DevOps): NO tocado** ✅ — `origin/main` sigue en `2cfe0ea`.
 
 ## Siguiente paso
 

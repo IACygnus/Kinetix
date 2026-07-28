@@ -170,3 +170,9 @@ frontend/Dockerfile.bak_hf21_20260728_170718
 
 **LISTO** para validación end-to-end del Sprint 3.0 con el HAR real de Pideky.
 Criterio de éxito = validación visual de Fredy (regla 9 del proyecto).
+
+## Git
+
+- Commit: `7335f8f`
+- Push a github (IACygnus/Kinetix, branch backup-trabajo-local): OK (30a0807..7335f8f)
+- origin (Azure DevOps): NO tocado — origin/main sigue en 2cfe0ea
