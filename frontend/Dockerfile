@@ -24,6 +24,10 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # HF21: uploads de HAR enterprise hasta 500 MB. Este server sirve solo la
+    # SPA (no proxea /api), pero se deja alineado con el limite del backend.
+    client_max_body_size 500m;
+
     # Gzip
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;

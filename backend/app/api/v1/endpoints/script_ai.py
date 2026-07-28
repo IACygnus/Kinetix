@@ -86,10 +86,17 @@ from app.services.engine.refine_operations_applier import (
 from app.services.engine.structure_to_jmx import regenerate_jmx_from_structure
 
 # Max bytes of an uploaded reference file (Postman / Swagger / text / HAR).
-# Anything bigger gets truncated to keep OpenAI token usage bounded.
 # HF6: subido a 50 MB para HARs reales (Croydonistas-class ~45 MB). HAR
 # detectado se comprime antes de mandarlo a la IA con el modulo har_compressor.
-MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB (Sprint 2.4-HF6, antes 5 MB en HF3)
+# HF21: subido a 500 MB para HARs enterprise (qa_pideky_com5.har y similares).
+MAX_FILE_BYTES = 500 * 1024 * 1024  # 500 MB (Sprint HF21, antes 50 MB en HF6)
+
+# HF21: el tope de CONTEXTO para la IA se separa del tope de UPLOAD. Antes ambos
+# eran MAX_FILE_BYTES; subir el upload a 500 MB sin separarlos habria dejado que
+# un archivo no-HAR de 500 MB entrara entero al prompt (coste/OOM). El upload
+# ahora acepta 500 MB, pero lo que ve el modelo sigue topado en 50 MB — igual
+# que antes de HF21.
+MAX_CONTEXT_CHARS = 50 * 1024 * 1024  # 50 MB de texto hacia el prompt
 
 # Sprint 2.9 — multi-HAR: tope de archivos por request de /generate-from-file.
 _MAX_UPLOAD_FILES = 5
@@ -1397,7 +1404,7 @@ def _build_refine_messages(
 # ===================== FILE PARSING =====================
 
 
-def _truncate(text: str, limit: int = MAX_FILE_BYTES) -> str:
+def _truncate(text: str, limit: int = MAX_CONTEXT_CHARS) -> str:
     """Cap a text blob so we don't blow the AI context."""
     if len(text) <= limit:
         return text

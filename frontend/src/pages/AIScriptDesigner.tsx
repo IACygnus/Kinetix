@@ -42,6 +42,8 @@ const aiApi = axios.create({
   baseURL: `${API_BASE_URL}/script-designer/ai`,
   // HF5: refine con JMX grande puede tardar más de 3 min — subido a 5 min.
   // HF6: subido a 10 min para upload + compresión + análisis IA de HARs ≤ 50 MB.
+  // HF21: el tope de upload sube a 500 MB; el timeout sigue en 10 min — un HAR
+  // muy grande sobre red lenta puede agotarlo antes de terminar de subir.
   timeout: 600000,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
@@ -96,8 +98,15 @@ interface AIResponse {
   partial_samplers?: number | null;
 }
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB — matches backend MAX_FILE_BYTES (Sprint 2.4-HF6)
-const ACCEPT_UPLOAD = '.json,.yaml,.yml,.txt,.postman_collection,application/json,text/yaml,text/plain';
+// HF21: 500 MB — matches backend MAX_FILE_BYTES (antes 50 MB en Sprint 2.4-HF6)
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+// HF21: se agrega .har (faltaba, por eso el picker no mostraba los HAR) y
+// application/octet-stream, que es el MIME con el que Chrome/Windows reporta
+// los .har — sin el, el dialogo filtraba el archivo aunque la extension este.
+const ACCEPT_UPLOAD =
+  '.har,.json,.yaml,.yml,.txt,.postman_collection,application/json,application/octet-stream,text/yaml,text/plain';
+// HF21: extensiones aceptadas al soltar archivos (drag & drop no pasa por accept).
+const ACCEPTED_EXTENSIONS = ['.har', '.json', '.yaml', '.yml', '.txt', '.postman_collection'];
 
 const EXAMPLE_PROMPT =
   'Genera un script de prueba de carga para un API REST de login con 100 usuarios concurrentes, ramp-up de 30 segundos, contra https://api.example.com/auth con metodo POST y body JSON {username, password}.';
@@ -115,6 +124,8 @@ export default function AIScriptDesigner() {
   // Sprint 2.9 — multi-HAR: lista de archivos pendientes (antes era 1 solo).
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const MAX_FILES = 5;
+  // HF21 — feedback visual mientras se arrastra un archivo sobre el chat.
+  const [isDragging, setIsDragging] = useState(false);
   // Persisted file context — sent on /refine so the AI keeps the reference
   const [refFileName, setRefFileName] = useState<string | null>(null);
   const [refFileContent, setRefFileContent] = useState<string | null>(null);
@@ -460,9 +471,8 @@ export default function AIScriptDesigner() {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files ? Array.from(e.target.files) : [];
-    e.target.value = ''; // allow re-selecting the same file later
+  // HF21: logica compartida entre el picker manual y el drag & drop.
+  const addFiles = (selected: File[]) => {
     if (selected.length === 0) return;
     const oversize = selected.find((f) => f.size > MAX_UPLOAD_BYTES);
     if (oversize) {
@@ -480,6 +490,57 @@ export default function AIScriptDesigner() {
       }
       return combined;
     });
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ''; // allow re-selecting the same file later
+    addFiles(selected);
+  };
+
+  // HF21 — drag & drop. El picker filtra por `accept`; al soltar no hay filtro,
+  // asi que la extension se valida aqui.
+  const handleDragOver = (e: React.DragEvent) => {
+    // preventDefault SIEMPRE, incluso con isLoading: si no se cancela el
+    // dragover el navegador abre el archivo soltado y se pierde la sesion.
+    e.preventDefault();
+    e.stopPropagation();
+    if (isLoading) return;
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Ignorar el leave hacia un hijo del propio contenedor.
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isLoading) return;
+
+    const dropped = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    if (dropped.length === 0) return;
+
+    const accepted = dropped.filter((f) =>
+      ACCEPTED_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+
+    if (accepted.length === 0) {
+      setError(`Formato no soportado. Usa ${ACCEPTED_EXTENSIONS.join(', ')}.`);
+      return;
+    }
+    if (accepted.length < dropped.length) {
+      setError(
+        `${dropped.length - accepted.length} archivo(s) ignorado(s) por extension no soportada. ` +
+          `Aceptadas: ${ACCEPTED_EXTENSIONS.join(', ')}.`
+      );
+    }
+    addFiles(accepted);
   };
 
   const removePendingFile = (index: number) => {
@@ -868,8 +929,22 @@ export default function AIScriptDesigner() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Input area */}
-          <div className="border-t border-gray-200 p-3 bg-gray-50">
+          {/* Input area — HF21: zona de drop para adjuntar archivos arrastrando */}
+          <div
+            className={`relative border-t p-3 transition-colors ${
+              isDragging ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {isDragging && (
+              <div className="absolute inset-1 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-indigo-500 bg-indigo-100/85 pointer-events-none">
+                <p className="text-sm font-medium text-indigo-700">
+                  Suelta el archivo aqui (.har, .json, .yaml, .txt)
+                </p>
+              </div>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -949,12 +1024,14 @@ export default function AIScriptDesigner() {
                   onClick={handlePickFile}
                   disabled={isLoading}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Adjuntar Postman / Swagger / archivo"
+                  title="Adjuntar HAR / Postman / Swagger / archivo"
                 >
                   <Paperclip className="w-4 h-4" />
                   Adjuntar archivo
                 </button>
-                <span className="text-xs text-gray-400">Máx. 50 MB · HAR comprimido automáticamente</span>
+                <span className="text-xs text-gray-400">
+                  Arrastra o adjunta · Máx. 500 MB · HAR comprimido automáticamente
+                </span>
                 <span className="text-xs text-gray-400">·</span>
                 <span className="text-xs text-gray-400">Ctrl+Enter para enviar</span>
               </div>
