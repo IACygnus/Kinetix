@@ -56,6 +56,13 @@ from app.services.ai.gemini import (
     OPENAI_MAX_TOKENS,
     load_ai_config_from_db,
 )
+from app.services.ai.har_flow_analyzer import (
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    HarAnalysisError,
+    analyze_har_flow,
+    source_fingerprint,
+)
 from app.schemas.smoke import SmokeSamplerResult, SmokeTestResult
 from app.services.engine.har_compressor import compress_har
 from app.services.engine.execution_tracker import execution_tracker
@@ -2886,6 +2893,136 @@ async def upsert_ai_design(
     await db.commit()
     await db.refresh(design)
     return design
+
+
+class HarAnalysisResponse(BaseModel):
+    """Resumen del analisis multi-fase del HAR de un diseno (Sprint 3.0 F1)."""
+
+    design_id: UUID
+    status: str  # completed | skipped | failed
+    total_entries: int = 0
+    analyzed_entries: int = 0
+    counts: dict = Field(default_factory=dict)
+    dependencies_found: int = 0
+    reused: bool = False
+    error: Optional[str] = None
+
+
+@router.post("/designs/{design_id}/analyze-har", response_model=HarAnalysisResponse)
+async def analyze_design_har(
+    design_id: UUID,
+    force: bool = Query(False, description="Re-analiza aunque ya haya un analisis vigente"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Analisis multi-fase del HAR de un diseno (Sprint 3.0 — Fundacion 1).
+
+    Design-aware a proposito: ``/generate-from-file`` y ``/refine`` son
+    stateless y no tienen donde persistir el resultado. Aca el HAR se lee de la
+    fila, se analiza en dos llamadas al modelo (clasificacion + dependencias) y
+    las tres columnas ``har_analysis_*`` quedan escritas.
+
+    Nada de esto bloquea la generacion de JMX: un analisis fallido persiste
+    ``status='failed'`` y devuelve 200 con el detalle en ``error``, para que un
+    fire-and-forget del frontend no explote en la cara del usuario.
+    """
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    if design is None:
+        raise HTTPException(status_code=404, detail="Diseno AI no encontrado")
+
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+
+    if (design.reference_file_type or "").lower() != "har":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El analisis multi-fase solo aplica a disenos con archivo de "
+                f"referencia HAR (este es '{design.reference_file_type or 'ninguno'}')."
+            ),
+        )
+
+    # Idempotencia: el auto-save dispara upsert en cada turno de la conversacion.
+    # Sin esta guarda, un fire-and-forget gastaria 2 llamadas al modelo por
+    # turno. El hash del HAR vive dentro del JSON de clasificacion para no
+    # sumar una cuarta columna a la tabla.
+    fingerprint = source_fingerprint(design.reference_file_content)
+    previous = design.har_analysis_classification or {}
+    if (
+        not force
+        and design.har_analysis_status == STATUS_COMPLETED
+        and isinstance(previous, dict)
+        and previous.get("source_sha1") == fingerprint
+    ):
+        deps_blob = design.har_analysis_dependencies or {}
+        return HarAnalysisResponse(
+            design_id=design.id,
+            status=design.har_analysis_status,
+            total_entries=previous.get("total_entries", 0),
+            analyzed_entries=previous.get("analyzed_entries", 0),
+            counts=previous.get("counts", {}),
+            dependencies_found=len(deps_blob.get("dependencies", []) or []),
+            reused=True,
+        )
+
+    ai_conf = await load_ai_config_from_db(db)
+    if ai_conf.get("limit_reached"):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
+        )
+    if not ai_conf.get("api_key"):
+        raise HTTPException(
+            status_code=503,
+            detail="No hay API key de IA configurada. Configurala en Administracion > Configuracion IA.",
+        )
+
+    def _analysis_call_ai(messages: List[dict]) -> str:
+        # Igual que el resto de los endpoints de este modulo: _call_ai es
+        # sincrono y se invoca directo (no hay wrapper a threadpool en el repo).
+        text, _finish = _call_ai(messages, ai_conf, max_tokens_override=8192)
+        return text
+
+    try:
+        outcome = analyze_har_flow(design.reference_file_content, _analysis_call_ai)
+    except HarAnalysisError as e:
+        # HAR ilegible: se registra el fallo, no se rompe el flujo del usuario.
+        logger.warning("analyze-har: HAR ilegible en diseno %s — %s", design_id, e)
+        design.har_analysis_status = STATUS_FAILED
+        await db.commit()
+        return HarAnalysisResponse(
+            design_id=design.id, status=STATUS_FAILED, error=str(e)
+        )
+
+    design.har_analysis_status = outcome["status"]
+    if outcome["classification"] is not None:
+        design.har_analysis_classification = outcome["classification"]
+    if outcome["dependencies"] is not None:
+        design.har_analysis_dependencies = outcome["dependencies"]
+    await db.commit()
+
+    classification = outcome["classification"] or {}
+    dependencies = outcome["dependencies"] or {}
+    logger.info(
+        "analyze-har: diseno %s status=%s counts=%s deps=%d",
+        design_id,
+        outcome["status"],
+        classification.get("counts"),
+        len(dependencies.get("dependencies", []) or []),
+    )
+
+    return HarAnalysisResponse(
+        design_id=design.id,
+        status=outcome["status"],
+        total_entries=classification.get("total_entries", 0),
+        analyzed_entries=classification.get("analyzed_entries", 0),
+        counts=classification.get("counts", {}),
+        dependencies_found=len(dependencies.get("dependencies", []) or []),
+        error=outcome.get("error"),
+    )
 
 
 @router.patch("/designs/{design_id}/save-as", response_model=AIScriptDesignDetail)

@@ -55,6 +55,25 @@ class AIScriptDesign(Base):
     reference_file_content = Column(Text, nullable=True)
     reference_file_type = Column(String(50), nullable=True)  # postman | openapi | swagger | har | jmx | text
 
+    # --- Sprint 3.0 / Fundacion 1 — analisis multi-fase del HAR ---------------
+    # Solo aplican cuando reference_file_type == 'har'. Las tres son nullable:
+    # el schema NO se migra con Alembic (regla #10), se agregaron con ALTER
+    # TABLE manual reversible — ver
+    # docs/reports/repo/sprint-3.0-fundacion-1-analisis-har.md.
+
+    # Fase 1: clasificacion por categoria de cada entry funcional del HAR.
+    # {version, source_sha1, total_entries, counts{navigation|xhr|auth|write|
+    #  config}, entries[{idx, method, url, category, reason}], phase2_error}
+    har_analysis_classification = Column(JSONB, nullable=True)
+
+    # Fase 2: dependencias entre entries (tokens, IDs, csrf).
+    # {version, analyzed_entries, dependencies[{source_idx, target_idx,
+    #  data_name, locations[], extractor_hint, confidence}]}
+    har_analysis_dependencies = Column(JSONB, nullable=True)
+
+    # completed | skipped | failed  (failed retiene la Fase 1 si existe)
+    har_analysis_status = Column(String(32), nullable=True)
+
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

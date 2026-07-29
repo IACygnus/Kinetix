@@ -477,6 +477,13 @@ export const aiScriptDesignsAPI = {
     return response.data;
   },
 
+  // Sprint 3.0 F1 — analisis multi-fase del HAR. El backend es idempotente
+  // (salta si ya analizo el mismo HAR), asi que es seguro llamarlo por cada
+  // auto-save. Fire-and-forget: nunca debe romper el flujo del disenador.
+  analyzeHar: async (id: string): Promise<void> => {
+    await api.post(`/script-designer/ai/designs/${id}/analyze-har`);
+  },
+
   saveAs: async (
     id: string,
     payload: AIScriptDesignSaveAsPayload

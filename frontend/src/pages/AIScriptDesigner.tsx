@@ -360,6 +360,12 @@ export default function AIScriptDesigner() {
       setIsDraft(saved.is_draft);
       if (saved.name) setDesignName(saved.name);
       setLastSavedAt(new Date());
+
+      // Sprint 3.0 F1 — dispara el analisis multi-fase del HAR sin bloquear
+      // el auto-save. El backend salta el re-analisis si el HAR no cambio.
+      if (payload.reference_file_type === 'har' && payload.reference_file_content) {
+        void aiScriptDesignsAPI.analyzeHar(saved.id).catch(() => undefined);
+      }
     } catch (e) {
       const detailMsg =
         (axios.isAxiosError(e) && (e.response?.data?.detail || e.message)) ||
