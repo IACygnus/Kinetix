@@ -12,16 +12,20 @@ import pytest
 
 from app.services.ai.har_chunk_router import (
     _CHUNK_SIZE,
+    _MAX_SPLIT_DEPTH,
     _MIN_FUNCTIONAL_FOR_CHUNKING,
     CHUNK_COMPLETED,
     CHUNK_PENDING,
     build_first_chunk_prompt,
     build_next_chunk_prompt,
+    can_split_chunk,
     count_functional_entries,
     digests_for_chunk,
     get_dependencies_for_chunk,
     group_entries_into_chunks,
+    next_free_chunk_id,
     should_use_chunked_generation,
+    split_chunk,
     variables_available_from,
 )
 
@@ -223,6 +227,141 @@ def test_chunk_size_configurable():
     c = _classification(_mix(auth=1, xhr=20))
     plan = group_entries_into_chunks(c, None, chunk_size=5)
     assert [len(ch["entry_idxs"]) for ch in plan] == [1, 5, 5, 5, 5]
+
+
+# ---------------------------------------------------------------------------
+# Auto-split (Sprint 3.0 F2.1)
+# ---------------------------------------------------------------------------
+
+
+def _chunk(idxs, chunk_id=4, depth=0, skeleton=False, name=None):
+    return {
+        "chunk_id": chunk_id,
+        "name": name or f"Chunk {chunk_id} - Transacciones 3/6",
+        "entry_idxs": list(idxs),
+        "categories": ["xhr", "write"],
+        "status": CHUNK_PENDING,
+        "is_skeleton": skeleton,
+        "failure_reason": None,
+        "split_depth": depth,
+        "parent_chunk_id": None,
+    }
+
+
+def test_profundidad_maxima_de_split_es_2():
+    assert _MAX_SPLIT_DEPTH == 2
+
+
+def test_next_free_chunk_id_es_el_siguiente_entero():
+    plan = group_entries_into_chunks(_classification(_mix(auth=2, xhr=30)), None)
+    assert next_free_chunk_id(plan) == len(plan) + 1
+    assert next_free_chunk_id([]) == 1
+
+
+def test_split_parte_por_la_mitad_preservando_el_orden():
+    a, b = split_chunk(_chunk(range(10, 25)), next_chunk_id=8)
+    assert a["entry_idxs"] == list(range(10, 17))   # 7
+    assert b["entry_idxs"] == list(range(17, 25))   # 8
+    assert a["entry_idxs"] == sorted(a["entry_idxs"])
+    assert b["entry_idxs"] == sorted(b["entry_idxs"])
+
+
+def test_la_union_de_los_hijos_es_exactamente_el_padre():
+    padre = _chunk([3, 1, 9, 7, 5])  # desordenado a proposito
+    a, b = split_chunk(padre, next_chunk_id=8)
+    union = a["entry_idxs"] + b["entry_idxs"]
+    assert sorted(union) == sorted(padre["entry_idxs"])
+    assert len(union) == len(set(union))  # sin duplicados
+
+
+def test_split_de_un_par_da_mitades_iguales():
+    a, b = split_chunk(_chunk(range(8)), next_chunk_id=20)
+    assert len(a["entry_idxs"]) == len(b["entry_idxs"]) == 4
+
+
+def test_los_hijos_reciben_ids_nuevos_consecutivos():
+    a, b = split_chunk(_chunk(range(6), chunk_id=4), next_chunk_id=12)
+    assert (a["chunk_id"], b["chunk_id"]) == (12, 13)
+    assert a["parent_chunk_id"] == b["parent_chunk_id"] == 4
+
+
+def test_los_hijos_incrementan_la_profundidad():
+    a, b = split_chunk(_chunk(range(8), depth=0), next_chunk_id=9)
+    assert a["split_depth"] == b["split_depth"] == 1
+    nieto_a, nieto_b = split_chunk(a, next_chunk_id=11)
+    assert nieto_a["split_depth"] == nieto_b["split_depth"] == 2
+
+
+def test_los_hijos_arrancan_pending_y_sin_motivo_de_fallo():
+    for hijo in split_chunk(_chunk(range(6)), next_chunk_id=8):
+        assert hijo["status"] == CHUNK_PENDING
+        assert hijo["failure_reason"] is None
+
+
+def test_el_nombre_del_hijo_referencia_al_padre():
+    a, b = split_chunk(_chunk(range(6), chunk_id=4), next_chunk_id=8)
+    assert "mitad 1/2 de C4" in a["name"]
+    assert "mitad 2/2 de C4" in b["name"]
+    assert "Transacciones 3/6" in a["name"]
+
+
+def test_solo_el_primer_hijo_hereda_el_rol_de_esqueleto():
+    a, b = split_chunk(_chunk(range(6), skeleton=True), next_chunk_id=8)
+    assert a["is_skeleton"] is True   # sigue teniendo que generar el JMX
+    assert b["is_skeleton"] is False  # se ensambla dentro de lo que genero A
+
+
+def test_un_chunk_de_un_solo_entry_no_se_parte():
+    assert split_chunk(_chunk([7]), next_chunk_id=8) is None
+    ok, motivo = can_split_chunk(_chunk([7]))
+    assert ok is False
+    assert "un solo request" in motivo
+    assert "revision manual" in motivo
+
+
+def test_un_chunk_vacio_no_se_parte():
+    assert split_chunk(_chunk([]), next_chunk_id=8) is None
+
+
+def test_no_se_parte_mas_alla_de_la_profundidad_maxima():
+    hondo = _chunk(range(4), depth=_MAX_SPLIT_DEPTH)
+    assert split_chunk(hondo, next_chunk_id=8) is None
+    ok, motivo = can_split_chunk(hondo)
+    assert ok is False
+    assert f"se partio {_MAX_SPLIT_DEPTH} veces" in motivo
+
+
+def test_a_profundidad_uno_todavia_se_puede_partir():
+    assert can_split_chunk(_chunk(range(8), depth=1))[0] is True
+    assert split_chunk(_chunk(range(8), depth=1), next_chunk_id=8) is not None
+
+
+def test_cadena_completa_15_a_8_a_4_no_pierde_entries():
+    padre = _chunk(range(15))
+    a, b = split_chunk(padre, 8)
+    a1, a2 = split_chunk(a, 10)
+    todos = a1["entry_idxs"] + a2["entry_idxs"] + b["entry_idxs"]
+    assert sorted(todos) == list(range(15))
+    assert len(todos) == len(set(todos))
+
+
+def test_los_chunks_frescos_traen_linaje_vacio():
+    plan = group_entries_into_chunks(_classification(_mix(auth=2, xhr=30)), None)
+    assert all(c["split_depth"] == 0 for c in plan)
+    assert all(c["parent_chunk_id"] is None for c in plan)
+
+
+def test_variables_disponibles_con_hijos_de_split_intercalados():
+    """Los hijos tienen IDs altos pero van antes en el plan: cuenta la posicion."""
+    plan = [
+        {"chunk_id": 1, "entry_idxs": [0], "status": CHUNK_COMPLETED},
+        {"chunk_id": 8, "entry_idxs": [1], "status": CHUNK_COMPLETED},   # hijo
+        {"chunk_id": 9, "entry_idxs": [2], "status": CHUNK_COMPLETED},   # hijo
+        {"chunk_id": 5, "entry_idxs": [3], "status": CHUNK_PENDING},
+    ]
+    deps = _deps((1, 3, "token_del_hijo"))
+    disponibles = variables_available_from(plan, deps, up_to_chunk_id=5)
+    assert [v["data_name"] for v in disponibles] == ["token_del_hijo"]
 
 
 # ---------------------------------------------------------------------------

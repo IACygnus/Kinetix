@@ -63,6 +63,15 @@ _TRANSACTION_CATEGORIES = ("xhr", "write")
 CHUNK_PENDING = "pending"
 CHUNK_COMPLETED = "completed"
 CHUNK_FAILED = "failed"
+# Sprint 3.0 F2.1 — el chunk se partio en dos por truncacion. No se genera ni
+# se cuenta: queda en el plan solo como rastro de linaje. Sus entries viven
+# ahora en los hijos.
+CHUNK_SPLIT = "split"
+
+# Sprint 3.0 F2.1 — cuantas veces se puede partir un chunk original.
+# 2 niveles: 15 -> ~8 -> ~4. Mas profundidad no arregla el problema de fondo
+# (un request individual demasiado pesado) y multiplica el costo en llamadas.
+_MAX_SPLIT_DEPTH = 2
 
 MODE_CHUNKED = "chunked"
 MODE_SINGLE = "single"
@@ -189,6 +198,8 @@ def group_entries_into_chunks(
                 "status": CHUNK_PENDING,
                 "is_skeleton": True,
                 "failure_reason": None,
+                "split_depth": 0,
+                "parent_chunk_id": None,
             }
         )
         chunk_id += 1
@@ -209,11 +220,116 @@ def group_entries_into_chunks(
                 "status": CHUNK_PENDING,
                 "is_skeleton": is_first,
                 "failure_reason": None,
+                "split_depth": 0,
+                "parent_chunk_id": None,
             }
         )
         chunk_id += 1
 
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Auto-split de chunks truncados (Sprint 3.0 F2.1)
+# ---------------------------------------------------------------------------
+
+
+def next_free_chunk_id(plan: List[Dict[str, Any]]) -> int:
+    """Primer ``chunk_id`` entero libre del plan.
+
+    Los hijos de un split reciben IDs NUEVOS, nunca reciclados: el prefijo
+    ``[Cn]`` ya esta escrito en los ``testname`` del JMX persistido de los
+    chunks completados. Renumerar romperia esa trazabilidad de forma silenciosa.
+    """
+    ids = [
+        int(c.get("chunk_id", 0))
+        for c in plan
+        if isinstance(c, dict) and isinstance(c.get("chunk_id"), int)
+    ]
+    return (max(ids) + 1) if ids else 1
+
+
+def can_split_chunk(chunk: Dict[str, Any]) -> Tuple[bool, str]:
+    """Decide si un chunk truncado se puede partir, y explica por que no.
+
+    El motivo vuelve en el ``failure_reason`` del chunk, asi que esta escrito
+    para que lo lea una persona, no un parser.
+    """
+    idxs = chunk.get("entry_idxs") or []
+    depth = int(chunk.get("split_depth") or 0)
+
+    if len(idxs) < 2:
+        return False, (
+            "El bloque ya es de un solo request: un entry individual excede la "
+            "capacidad de salida del modelo y requiere revision manual "
+            "(acortar el body/URL de ese request o usar un modelo con mayor "
+            "limite de salida)."
+        )
+    if depth >= _MAX_SPLIT_DEPTH:
+        return False, (
+            f"El bloque ya se partio {depth} veces (maximo {_MAX_SPLIT_DEPTH}) "
+            f"y sigue truncando; requiere revision manual."
+        )
+    return True, ""
+
+
+def split_chunk(
+    chunk: Dict[str, Any], next_chunk_id: int
+) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Parte un chunk truncado en dos mitades. Funcion pura.
+
+    Args:
+        chunk: el chunk que trunco.
+        next_chunk_id: primer ID libre del plan (ver ``next_free_chunk_id``).
+
+    Returns:
+        ``(hijo_a, hijo_b)`` o ``None`` si el chunk no es divisible.
+
+    Garantias:
+
+    - **El orden del HAR se preserva**: ``hijo_a`` lleva la primera mitad y
+      ``hijo_b`` la segunda, ambas ordenadas. La correlacion depende de que un
+      token se extraiga antes de usarse, asi que reordenar romperia el plan.
+    - **La union de los hijos es exactamente el padre**, sin duplicados.
+    - **IDs nuevos**, nunca reciclados (ver ``next_free_chunk_id``).
+    - Si el padre era el esqueleto, ``hijo_a`` hereda ese rol —sigue teniendo
+      que generar el JMX completo— y ``hijo_b`` pasa a ser un bloque normal
+      que se ensambla dentro de lo que genero su hermano.
+    """
+    ok, _reason = can_split_chunk(chunk)
+    if not ok:
+        return None
+
+    idxs = sorted(int(i) for i in (chunk.get("entry_idxs") or []))
+    half = len(idxs) // 2  # con impares, la primera mitad es la mas chica
+    first, second = idxs[:half], idxs[half:]
+
+    parent_id = chunk.get("chunk_id")
+    depth = int(chunk.get("split_depth") or 0) + 1
+    base_name = str(chunk.get("name") or f"Chunk {parent_id}")
+    # El nombre conserva el del padre para que el plan siga siendo legible
+    # despues de dos niveles de split.
+    short_name = base_name.split(" - ", 1)[-1]
+    categories = list(chunk.get("categories") or [])
+    was_skeleton = bool(chunk.get("is_skeleton"))
+
+    def _child(child_id: int, child_idxs: List[int], half_no: int, skeleton: bool):
+        return {
+            "chunk_id": child_id,
+            "name": f"Chunk {child_id} - {short_name} (mitad {half_no}/2 de C{parent_id})",
+            "entry_idxs": child_idxs,
+            "categories": categories,
+            "status": CHUNK_PENDING,
+            "is_skeleton": skeleton,
+            "failure_reason": None,
+            "split_depth": depth,
+            "parent_chunk_id": parent_id,
+        }
+
+    return (
+        _child(next_chunk_id, first, 1, was_skeleton),
+        _child(next_chunk_id + 1, second, 2, False),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -270,10 +386,18 @@ def variables_available_from(
     Es lo que el prompt del chunk N recibe como "esto ya existe, usalo": sin
     esta lista el modelo re-inventa el login en cada bloque.
     """
+    # F2.1 — el corte es por POSICION en el plan, no por chunk_id. Tras un
+    # split los hijos reciben IDs altos pero se insertan en el lugar del padre,
+    # asi que comparar IDs escondia variables ya extraidas de los bloques
+    # posteriores.
+    cutoff = len(plan)
+    for pos, chunk in enumerate(plan):
+        if chunk.get("chunk_id") == up_to_chunk_id:
+            cutoff = pos
+            break
+
     done_idxs: set = set()
-    for chunk in plan:
-        if chunk.get("chunk_id", 0) >= up_to_chunk_id:
-            continue
+    for chunk in plan[:cutoff]:
         if chunk.get("status") != CHUNK_COMPLETED:
             continue
         done_idxs |= set(chunk.get("entry_idxs") or [])

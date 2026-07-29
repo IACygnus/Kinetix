@@ -68,16 +68,20 @@ from app.services.ai.har_chunk_router import (
     CHUNK_COMPLETED,
     CHUNK_FAILED,
     CHUNK_PENDING,
+    CHUNK_SPLIT,
     GENERATION_COMPLETED,
     GENERATION_PARTIAL,
     MODE_CHUNKED,
     MODE_SINGLE,
     build_first_chunk_prompt,
     build_next_chunk_prompt,
+    can_split_chunk,
     digests_for_chunk,
     get_dependencies_for_chunk,
     group_entries_into_chunks,
+    next_free_chunk_id,
     should_use_chunked_generation,
+    split_chunk,
     variables_available_from,
 )
 from app.services.ai.jmx_chunk_assembler import (
@@ -3056,10 +3060,13 @@ async def analyze_design_har(
 class ChunkSummary(BaseModel):
     chunk_id: int
     name: str
-    status: str
+    status: str  # pending | completed | failed | split
     entries: int
     is_skeleton: bool = False
     failure_reason: Optional[str] = None
+    # F2.1 — linaje del auto-split.
+    split_depth: int = 0
+    parent_chunk_id: Optional[int] = None
 
 
 class ChunkedGenerationResponse(BaseModel):
@@ -3090,6 +3097,8 @@ def _chunk_summaries(plan: List[dict]) -> List[ChunkSummary]:
             entries=len(c.get("entry_idxs") or []),
             is_skeleton=bool(c.get("is_skeleton")),
             failure_reason=c.get("failure_reason"),
+            split_depth=int(c.get("split_depth") or 0),
+            parent_chunk_id=c.get("parent_chunk_id"),
         )
         for c in plan
     ]
@@ -3119,7 +3128,9 @@ async def process_pending_chunks(
     - **Persiste despues de CADA chunk exitoso**: si el proceso se cae en el
       chunk 5, los 4 anteriores ya estan en la base.
     - **Corta al primer fallo** y deja los siguientes en ``pending``, con el
-      motivo en ``failure_reason`` del chunk que fallo.
+      motivo en ``failure_reason`` del chunk que fallo. **Unica excepcion
+      (F2.1):** si el fallo fue por truncacion del modelo, el chunk se parte en
+      dos y las mitades se procesan en el mismo ciclo — ver ``_try_auto_split``.
     - **Nunca persiste un JMX invalido**: si el ensamblado no valida, el JMX
       previo queda intacto y el chunk se marca ``failed``.
 
@@ -3128,7 +3139,6 @@ async def process_pending_chunks(
     classification = design.har_analysis_classification or {}
     dependencies = design.har_analysis_dependencies or {}
     plan = _plan_copy(design.chunks_plan or [])
-    total = len(plan)
 
     try:
         entries = extract_entries(design.reference_file_content)
@@ -3138,16 +3148,24 @@ async def process_pending_chunks(
     plan_name = design.name or "Plan de carga generado desde HAR"
     failure: Optional[str] = None
 
-    for chunk in plan:
-        if chunk.get("status") == CHUNK_COMPLETED:
+    # Indice explicito en vez de `for ... in plan`: un split inserta los hijos
+    # dentro del plan mientras se lo recorre, y iterar una lista que crece por
+    # el medio con un for es una fuente clasica de saltos silenciosos.
+    i = 0
+    while i < len(plan):
+        chunk = plan[i]
+        if chunk.get("status") in (CHUNK_COMPLETED, CHUNK_SPLIT):
+            i += 1
             continue
 
         chunk_id = chunk.get("chunk_id", 0)
+        total = _generable_chunks(plan)
         digests = digests_for_chunk(entries, chunk, classification)
         if not digests:
             chunk["status"] = CHUNK_COMPLETED
             chunk["failure_reason"] = None
             logger.info("chunked gen: chunk %d sin entries utiles, se omite", chunk_id)
+            i += 1
             continue
 
         deps = get_dependencies_for_chunk(chunk, dependencies)
@@ -3163,56 +3181,73 @@ async def process_pending_chunks(
                 chunk, digests, deps, available, total_chunks=total
             )
 
+        raw: Optional[str] = None
+        new_jmx: Optional[str] = None
+        failed_reason: Optional[str] = None
+
         try:
             raw = call_ai(messages)
         except Exception as e:  # noqa: BLE001 — el proveedor falla de mil formas
             logger.warning("chunked gen: chunk %d fallo la llamada a la IA — %s", chunk_id, e)
+            failed_reason = f"Fallo la llamada a la IA: {e}"
+
+        if failed_reason is None:
+            if is_skeleton:
+                jmx, _explanation = _extract_jmx_and_explanation(raw or "")
+                # Mismo saneo de '&' sin escapar que reciben los fragmentos.
+                jmx = sanitize_generated_jmx(jmx)
+                ok, reason = validate_assembled_jmx(jmx)
+                if ok:
+                    new_jmx = jmx
+                else:
+                    failed_reason = _enrich_failure_reason(
+                        f"El esqueleto generado no es un JMX valido: {reason}", call_ai
+                    )
+            else:
+                ok, assembled, reason = assemble_chunk_into_jmx(
+                    design.current_jmx, raw, chunk_id
+                )
+                if ok:
+                    new_jmx = assembled
+                else:
+                    failed_reason = _enrich_failure_reason(reason, call_ai)
+
+        if failed_reason is not None:
+            # F2.1 — la truncacion es el unico fallo que NO corta el flujo.
+            absorbido, failed_reason = _try_auto_split(
+                plan, i, chunk, failed_reason, call_ai
+            )
+            if absorbido:
+                design.chunks_plan = _plan_copy(plan)
+                design.chunks_completed_count = _completed_chunks(plan)
+                await db.commit()
+                # Sin i += 1: la guarda de arriba salta al padre (ahora
+                # 'split') y aterriza en el primer hijo.
+                continue
+
             chunk["status"] = CHUNK_FAILED
-            chunk["failure_reason"] = f"Fallo la llamada a la IA: {e}"
-            failure = chunk["failure_reason"]
+            chunk["failure_reason"] = failed_reason
+            failure = failed_reason
             break
 
-        if is_skeleton:
-            jmx, _explanation = _extract_jmx_and_explanation(raw or "")
-            # Mismo saneo de '&' sin escapar que reciben los fragmentos.
-            jmx = sanitize_generated_jmx(jmx)
-            ok, reason = validate_assembled_jmx(jmx)
-            if not ok:
-                chunk["status"] = CHUNK_FAILED
-                chunk["failure_reason"] = _enrich_failure_reason(
-                    f"El esqueleto generado no es un JMX valido: {reason}", call_ai
-                )
-                failure = chunk["failure_reason"]
-                break
-            design.current_jmx = jmx
-        else:
-            ok, new_jmx, reason = assemble_chunk_into_jmx(design.current_jmx, raw, chunk_id)
-            if not ok:
-                chunk["status"] = CHUNK_FAILED
-                chunk["failure_reason"] = _enrich_failure_reason(reason, call_ai)
-                failure = chunk["failure_reason"]
-                break
-            design.current_jmx = new_jmx
-
+        design.current_jmx = new_jmx
         chunk["status"] = CHUNK_COMPLETED
         chunk["failure_reason"] = None
 
         # Persistencia incremental: lo ganado hasta aca ya no se pierde.
         design.chunks_plan = _plan_copy(plan)
-        design.chunks_completed_count = sum(
-            1 for c in plan if c.get("status") == CHUNK_COMPLETED
-        )
+        design.chunks_completed_count = _completed_chunks(plan)
         await db.commit()
         logger.info(
-            "chunked gen: chunk %d/%d OK — %d samplers acumulados",
-            chunk_id, total, count_samplers(design.current_jmx),
+            "chunked gen: chunk %d OK (%d/%d bloques) — %d samplers acumulados",
+            chunk_id, _completed_chunks(plan), _generable_chunks(plan),
+            count_samplers(design.current_jmx),
         )
+        i += 1
 
     generation_status = GENERATION_PARTIAL if failure else GENERATION_COMPLETED
     design.chunks_plan = _plan_copy(plan)
-    design.chunks_completed_count = sum(
-        1 for c in plan if c.get("status") == CHUNK_COMPLETED
-    )
+    design.chunks_completed_count = _completed_chunks(plan)
     design.generation_status = generation_status
     await db.commit()
 
@@ -3249,6 +3284,10 @@ async def _build_chunk_call_ai(db: AsyncSession):
         )
 
     def _call(messages: List[dict]) -> str:
+        # F2.1 — limpiar ANTES de llamar. Si _call_ai levanta, el
+        # finish_reason de la llamada anterior no puede quedar colgado y
+        # hacer pasar un error de red por una truncacion.
+        _call.last_finish_reason = None
         text, finish = _call_ai(messages, ai_conf, max_tokens_override=_CHUNK_MAX_TOKENS)
         # El contrato del callback sigue siendo messages -> str (asi el modulo
         # se testea con un doble trivial). El finish_reason se deja adjunto
@@ -3260,6 +3299,85 @@ async def _build_chunk_call_ai(db: AsyncSession):
 
     _call.last_finish_reason = None
     return _call
+
+
+def _completed_chunks(plan: List[dict]) -> int:
+    return sum(1 for c in plan if c.get("status") == CHUNK_COMPLETED)
+
+
+def _generable_chunks(plan: List[dict]) -> int:
+    """Bloques que producen samplers.
+
+    Los chunks con status ``split`` quedan en el plan solo como rastro de
+    linaje: sus entries ya viven en los hijos, asi que contarlos duplicaria el
+    total y haria ver como 'partial' una generacion completa.
+    """
+    return sum(1 for c in plan if c.get("status") != CHUNK_SPLIT)
+
+
+def _is_truncation_failure(reason: Optional[str], call_ai) -> bool:
+    """True si el fallo fue porque el modelo se quedo sin tokens de salida.
+
+    Dos fuentes, en ese orden: el ``finish_reason`` que dejo adjunto el
+    callback, y el marcador que ``_enrich_failure_reason`` ya escribe en el
+    texto (util cuando el motivo viaja desde un plan persistido).
+    """
+    if getattr(call_ai, "last_finish_reason", None) == "length":
+        return True
+    return bool(reason) and "finish_reason=length" in reason
+
+
+def _try_auto_split(
+    plan: List[dict], position: int, chunk: dict, failed_reason: str, call_ai
+) -> tuple[bool, str]:
+    """Sprint 3.0 F2.1 — parte en dos un chunk que trunco y sigue.
+
+    Reintentar un bloque truncado tal cual es matematicamente inutil: el
+    modelo va a volver a quedarse sin tokens sobre la misma entrada. Partirlo
+    es lo unico que cambia el resultado.
+
+    Muta ``plan`` en su lugar: marca al padre como ``split`` e inserta los dos
+    hijos JUSTO DESPUES de el, para que el orden del HAR —y por lo tanto el
+    orden de los samplers en el JMX— no se altere.
+
+    Returns:
+        ``(absorbido, motivo)``. Si ``absorbido`` es True el caller sigue el
+        ciclo; si es False hay que cortar y ``motivo`` es el texto —quiza
+        ampliado con el limite de split— que va al ``failure_reason``.
+        El motivo se DEVUELVE en vez de escribirse aca: el caller lo asigna
+        despues, y escribirlo en los dos lados hacia que el suyo lo pisara.
+    """
+    if not _is_truncation_failure(failed_reason, call_ai):
+        return False, failed_reason
+
+    children = split_chunk(chunk, next_free_chunk_id(plan))
+    if children is None:
+        # Trunco, pero ya no se puede partir mas: el motivo del limite se suma
+        # al del fallo para que quede claro por que no se reintenta.
+        _ok, why = can_split_chunk(chunk)
+        logger.warning(
+            "chunked gen: chunk %s trunco y no es divisible — %s",
+            chunk.get("chunk_id"), why,
+        )
+        return False, f"{failed_reason} {why}"
+
+    child_a, child_b = children
+    chunk["status"] = CHUNK_SPLIT
+    chunk["failure_reason"] = (
+        f"{failed_reason} Se partio automaticamente en los bloques "
+        f"C{child_a['chunk_id']} ({len(child_a['entry_idxs'])} requests) y "
+        f"C{child_b['chunk_id']} ({len(child_b['entry_idxs'])} requests)."
+    )
+    plan[position + 1 : position + 1] = [child_a, child_b]
+
+    logger.info(
+        "chunked gen: chunk %s trunco -> auto-split en C%s (%d) + C%s (%d), nivel %s",
+        chunk.get("chunk_id"),
+        child_a["chunk_id"], len(child_a["entry_idxs"]),
+        child_b["chunk_id"], len(child_b["entry_idxs"]),
+        child_a["split_depth"],
+    )
+    return True, chunk["failure_reason"]
 
 
 def _enrich_failure_reason(reason: str, call_ai) -> str:
@@ -3342,8 +3460,8 @@ async def generate_jmx_chunked(
         mode=MODE_CHUNKED,
         generation_status=outcome["generation_status"],
         reason=reason,
-        total_chunks=len(final_plan),
-        chunks_completed=sum(1 for c in final_plan if c.get("status") == CHUNK_COMPLETED),
+        total_chunks=_generable_chunks(final_plan),
+        chunks_completed=_completed_chunks(final_plan),
         samplers_total=count_samplers(design.current_jmx),
         chunks=_chunk_summaries(final_plan),
         error=outcome["error"],
@@ -3382,8 +3500,12 @@ async def retry_failed_chunks(
             chunk["failure_reason"] = None
             reset += 1
 
-    pending = sum(1 for c in plan if c.get("status") != CHUNK_COMPLETED)
-    completed = sum(1 for c in plan if c.get("status") == CHUNK_COMPLETED)
+    # Los chunks con status 'split' (F2.1) no son pendientes: sus entries ya
+    # viven en los hijos. Contarlos dejaria el retry en un bucle sin trabajo.
+    pending = sum(
+        1 for c in plan if c.get("status") not in (CHUNK_COMPLETED, CHUNK_SPLIT)
+    )
+    completed = _completed_chunks(plan)
 
     # Recalculo explicito: el contador se deriva del plan, nunca al reves.
     design.chunks_plan = _plan_copy(plan)
@@ -3396,7 +3518,7 @@ async def retry_failed_chunks(
             mode=MODE_CHUNKED,
             generation_status=design.generation_status or GENERATION_COMPLETED,
             reason="No hay bloques pendientes ni fallidos; nada que reintentar.",
-            total_chunks=len(plan),
+            total_chunks=_generable_chunks(plan),
             chunks_completed=completed,
             samplers_total=count_samplers(design.current_jmx),
             chunks=_chunk_summaries(plan),
@@ -3415,8 +3537,8 @@ async def retry_failed_chunks(
         mode=MODE_CHUNKED,
         generation_status=outcome["generation_status"],
         reason=f"{reset} bloque(s) fallido(s) reintentado(s).",
-        total_chunks=len(final_plan),
-        chunks_completed=sum(1 for c in final_plan if c.get("status") == CHUNK_COMPLETED),
+        total_chunks=_generable_chunks(final_plan),
+        chunks_completed=_completed_chunks(final_plan),
         samplers_total=count_samplers(design.current_jmx),
         chunks=_chunk_summaries(final_plan),
         error=outcome["error"],
