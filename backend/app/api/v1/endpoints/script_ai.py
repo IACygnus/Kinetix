@@ -61,7 +61,32 @@ from app.services.ai.har_flow_analyzer import (
     STATUS_FAILED,
     HarAnalysisError,
     analyze_har_flow,
+    extract_entries,
     source_fingerprint,
+)
+from app.services.ai.har_chunk_router import (
+    CHUNK_COMPLETED,
+    CHUNK_FAILED,
+    CHUNK_PENDING,
+    GENERATION_COMPLETED,
+    GENERATION_PARTIAL,
+    MODE_CHUNKED,
+    MODE_SINGLE,
+    build_first_chunk_prompt,
+    build_next_chunk_prompt,
+    digests_for_chunk,
+    get_dependencies_for_chunk,
+    group_entries_into_chunks,
+    should_use_chunked_generation,
+    variables_available_from,
+)
+from app.services.ai.jmx_chunk_assembler import (
+    assemble_chunk_into_jmx,
+    count_samplers,
+    sanitize_generated_jmx,
+    # Alias obligatorio: este modulo ya define un endpoint llamado validate_jmx
+    # (POST /validate), que ensombreceria el import.
+    validate_jmx as validate_assembled_jmx,
 )
 from app.schemas.smoke import SmokeSamplerResult, SmokeTestResult
 from app.services.engine.har_compressor import compress_har
@@ -3022,6 +3047,379 @@ async def analyze_design_har(
         counts=classification.get("counts", {}),
         dependencies_found=len(dependencies.get("dependencies", []) or []),
         error=outcome.get("error"),
+    )
+
+
+# ===================== GENERACION POR CHUNKS (Sprint 3.0 F2) =====================
+
+
+class ChunkSummary(BaseModel):
+    chunk_id: int
+    name: str
+    status: str
+    entries: int
+    is_skeleton: bool = False
+    failure_reason: Optional[str] = None
+
+
+class ChunkedGenerationResponse(BaseModel):
+    """Contrato compartido por /generate-chunked y /retry-failed-chunks."""
+
+    design_id: UUID
+    mode: str  # chunked | single
+    generation_status: Optional[str] = None  # completed | partial
+    reason: Optional[str] = None
+    total_chunks: int = 0
+    chunks_completed: int = 0
+    samplers_total: int = 0
+    chunks: List[ChunkSummary] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+# Techo de salida por chunk. Un bloque de ~15 samplers completos entra holgado;
+# se topa igual contra el maximo real del modelo dentro de _call_ai.
+_CHUNK_MAX_TOKENS = 32768
+
+
+def _chunk_summaries(plan: List[dict]) -> List[ChunkSummary]:
+    return [
+        ChunkSummary(
+            chunk_id=c.get("chunk_id", 0),
+            name=c.get("name", ""),
+            status=c.get("status", CHUNK_PENDING),
+            entries=len(c.get("entry_idxs") or []),
+            is_skeleton=bool(c.get("is_skeleton")),
+            failure_reason=c.get("failure_reason"),
+        )
+        for c in plan
+    ]
+
+
+def _plan_copy(plan: List[dict]) -> List[dict]:
+    """Copia superficial por chunk.
+
+    SQLAlchemy detecta el cambio de una columna JSONB solo si se le ASIGNA un
+    objeto nuevo; mutar la lista en su lugar no marca la fila como sucia y el
+    plan no se persistiria.
+    """
+    return [dict(c) for c in plan]
+
+
+async def process_pending_chunks(
+    design: AIScriptDesign,
+    db: AsyncSession,
+    call_ai,
+) -> dict:
+    """Procesa los chunks pendientes en orden, uno por llamada al modelo.
+
+    Contrato:
+
+    - **Secuencial y no concurrente**: el chunk N puede necesitar variables que
+      extrajo el chunk N-1.
+    - **Persiste despues de CADA chunk exitoso**: si el proceso se cae en el
+      chunk 5, los 4 anteriores ya estan en la base.
+    - **Corta al primer fallo** y deja los siguientes en ``pending``, con el
+      motivo en ``failure_reason`` del chunk que fallo.
+    - **Nunca persiste un JMX invalido**: si el ensamblado no valida, el JMX
+      previo queda intacto y el chunk se marca ``failed``.
+
+    Devuelve ``{plan, generation_status, error}``.
+    """
+    classification = design.har_analysis_classification or {}
+    dependencies = design.har_analysis_dependencies or {}
+    plan = _plan_copy(design.chunks_plan or [])
+    total = len(plan)
+
+    try:
+        entries = extract_entries(design.reference_file_content)
+    except HarAnalysisError as e:
+        return {"plan": plan, "generation_status": GENERATION_PARTIAL, "error": str(e)}
+
+    plan_name = design.name or "Plan de carga generado desde HAR"
+    failure: Optional[str] = None
+
+    for chunk in plan:
+        if chunk.get("status") == CHUNK_COMPLETED:
+            continue
+
+        chunk_id = chunk.get("chunk_id", 0)
+        digests = digests_for_chunk(entries, chunk, classification)
+        if not digests:
+            chunk["status"] = CHUNK_COMPLETED
+            chunk["failure_reason"] = None
+            logger.info("chunked gen: chunk %d sin entries utiles, se omite", chunk_id)
+            continue
+
+        deps = get_dependencies_for_chunk(chunk, dependencies)
+        is_skeleton = bool(chunk.get("is_skeleton"))
+
+        if is_skeleton:
+            messages = build_first_chunk_prompt(
+                chunk, digests, deps, plan_name=plan_name, total_chunks=total
+            )
+        else:
+            available = variables_available_from(plan, dependencies, chunk_id)
+            messages = build_next_chunk_prompt(
+                chunk, digests, deps, available, total_chunks=total
+            )
+
+        try:
+            raw = call_ai(messages)
+        except Exception as e:  # noqa: BLE001 — el proveedor falla de mil formas
+            logger.warning("chunked gen: chunk %d fallo la llamada a la IA — %s", chunk_id, e)
+            chunk["status"] = CHUNK_FAILED
+            chunk["failure_reason"] = f"Fallo la llamada a la IA: {e}"
+            failure = chunk["failure_reason"]
+            break
+
+        if is_skeleton:
+            jmx, _explanation = _extract_jmx_and_explanation(raw or "")
+            # Mismo saneo de '&' sin escapar que reciben los fragmentos.
+            jmx = sanitize_generated_jmx(jmx)
+            ok, reason = validate_assembled_jmx(jmx)
+            if not ok:
+                chunk["status"] = CHUNK_FAILED
+                chunk["failure_reason"] = _enrich_failure_reason(
+                    f"El esqueleto generado no es un JMX valido: {reason}", call_ai
+                )
+                failure = chunk["failure_reason"]
+                break
+            design.current_jmx = jmx
+        else:
+            ok, new_jmx, reason = assemble_chunk_into_jmx(design.current_jmx, raw, chunk_id)
+            if not ok:
+                chunk["status"] = CHUNK_FAILED
+                chunk["failure_reason"] = _enrich_failure_reason(reason, call_ai)
+                failure = chunk["failure_reason"]
+                break
+            design.current_jmx = new_jmx
+
+        chunk["status"] = CHUNK_COMPLETED
+        chunk["failure_reason"] = None
+
+        # Persistencia incremental: lo ganado hasta aca ya no se pierde.
+        design.chunks_plan = _plan_copy(plan)
+        design.chunks_completed_count = sum(
+            1 for c in plan if c.get("status") == CHUNK_COMPLETED
+        )
+        await db.commit()
+        logger.info(
+            "chunked gen: chunk %d/%d OK — %d samplers acumulados",
+            chunk_id, total, count_samplers(design.current_jmx),
+        )
+
+    generation_status = GENERATION_PARTIAL if failure else GENERATION_COMPLETED
+    design.chunks_plan = _plan_copy(plan)
+    design.chunks_completed_count = sum(
+        1 for c in plan if c.get("status") == CHUNK_COMPLETED
+    )
+    design.generation_status = generation_status
+    await db.commit()
+
+    return {"plan": plan, "generation_status": generation_status, "error": failure}
+
+
+async def _load_design_for_chunking(
+    design_id: UUID, db: AsyncSession, current_user: User
+) -> AIScriptDesign:
+    """Carga + guardas de acceso comunes a los dos endpoints de chunking."""
+    stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+    result = await db.execute(stmt)
+    design = result.scalar_one_or_none()
+
+    if design is None:
+        raise HTTPException(status_code=404, detail="Diseno AI no encontrado")
+    if not _is_admin(current_user) and design.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes acceso a este diseno")
+    return design
+
+
+async def _build_chunk_call_ai(db: AsyncSession):
+    """Callback sincrono hacia el proveedor de IA, igual patron que F1."""
+    ai_conf = await load_ai_config_from_db(db)
+    if ai_conf.get("limit_reached"):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Limite {ai_conf['limit_reached']} de uso de IA alcanzado.",
+        )
+    if not ai_conf.get("api_key"):
+        raise HTTPException(
+            status_code=503,
+            detail="No hay API key de IA configurada. Configurala en Administracion > Configuracion IA.",
+        )
+
+    def _call(messages: List[dict]) -> str:
+        text, finish = _call_ai(messages, ai_conf, max_tokens_override=_CHUNK_MAX_TOKENS)
+        # El contrato del callback sigue siendo messages -> str (asi el modulo
+        # se testea con un doble trivial). El finish_reason se deja adjunto
+        # para que un fallo de ensamblado pueda distinguir "el modelo se quedo
+        # sin tokens" de "el modelo genero XML mal formado": los dos llegan
+        # como un ParseError identico, pero se resuelven distinto.
+        _call.last_finish_reason = finish
+        return text
+
+    _call.last_finish_reason = None
+    return _call
+
+
+def _enrich_failure_reason(reason: str, call_ai) -> str:
+    """Agrega la causa real cuando el fragmento se corto por limite de tokens."""
+    if getattr(call_ai, "last_finish_reason", None) != "length":
+        return reason
+    return (
+        f"{reason}. Causa: el modelo agoto su limite de tokens de salida y "
+        f"corto el XML a mitad (finish_reason=length). Reintentar tal cual "
+        f"probablemente falle igual: conviene un bloque mas chico o un modelo "
+        f"con mayor capacidad de salida."
+    )
+
+
+@router.post("/designs/{design_id}/generate-chunked", response_model=ChunkedGenerationResponse)
+async def generate_jmx_chunked(
+    design_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Genera el JMX de un HAR grande en bloques (Sprint 3.0 — Fundacion 2).
+
+    Requiere que ``/analyze-har`` haya corrido con exito: el plan de chunks se
+    arma sobre la clasificacion y las dependencias que dejo la Fundacion 1.
+
+    Contrato de codigos, alineado con ``/analyze-har``:
+
+    - **404 / 403** acceso; **429 / 503** configuracion de IA.
+    - **400** precondicion estructural: sin analisis completado no hay nada que
+      partir (equivalente al 400 de analyze-har ante un archivo no-HAR).
+    - **200 con ``mode='single'``** cuando el HAR no llega al umbral: no es un
+      error, es la respuesta correcta — el flujo normal lo cubre.
+    - **200 con ``generation_status='partial'``** cuando un bloque falla. Los
+      bloques ya generados quedan persistidos y ``/retry-failed-chunks``
+      reanuda desde ahi.
+    """
+    design = await _load_design_for_chunking(design_id, db, current_user)
+
+    if design.har_analysis_status != STATUS_COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El diseno no tiene un analisis de HAR completado "
+                f"(status actual: '{design.har_analysis_status or 'ninguno'}'). "
+                "Corre POST /designs/{id}/analyze-har primero."
+            ),
+        )
+
+    use_chunks, reason = should_use_chunked_generation(design.har_analysis_classification)
+    if not use_chunks:
+        # No es un error: el flujo clasico de 1 llamada es la via correcta.
+        design.generation_mode = MODE_SINGLE
+        await db.commit()
+        return ChunkedGenerationResponse(
+            design_id=design.id, mode=MODE_SINGLE, reason=reason
+        )
+
+    plan = group_entries_into_chunks(
+        design.har_analysis_classification, design.har_analysis_dependencies
+    )
+    if not plan:
+        raise HTTPException(
+            status_code=400,
+            detail="La clasificacion del HAR no produjo ningun bloque generable.",
+        )
+
+    call_ai = await _build_chunk_call_ai(db)
+
+    design.generation_mode = MODE_CHUNKED
+    design.chunks_plan = _plan_copy(plan)
+    design.chunks_completed_count = 0
+    design.generation_status = None
+    await db.commit()
+
+    outcome = await process_pending_chunks(design, db, call_ai)
+    final_plan = outcome["plan"]
+
+    return ChunkedGenerationResponse(
+        design_id=design.id,
+        mode=MODE_CHUNKED,
+        generation_status=outcome["generation_status"],
+        reason=reason,
+        total_chunks=len(final_plan),
+        chunks_completed=sum(1 for c in final_plan if c.get("status") == CHUNK_COMPLETED),
+        samplers_total=count_samplers(design.current_jmx),
+        chunks=_chunk_summaries(final_plan),
+        error=outcome["error"],
+    )
+
+
+@router.post("/designs/{design_id}/retry-failed-chunks", response_model=ChunkedGenerationResponse)
+async def retry_failed_chunks(
+    design_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Reanuda una generacion por chunks que quedo ``partial``.
+
+    Pasa los chunks ``failed`` de vuelta a ``pending``, **recalcula
+    ``chunks_completed_count`` desde el plan** (no confia en el contador
+    guardado) y reanuda desde el primer pendiente. Los chunks ya completados
+    no se re-generan ni se re-cobran.
+    """
+    design = await _load_design_for_chunking(design_id, db, current_user)
+
+    if design.generation_mode != MODE_CHUNKED or not design.chunks_plan:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El diseno no tiene una generacion por chunks en curso. "
+                "Corre POST /designs/{id}/generate-chunked primero."
+            ),
+        )
+
+    plan = _plan_copy(design.chunks_plan)
+    reset = 0
+    for chunk in plan:
+        if chunk.get("status") == CHUNK_FAILED:
+            chunk["status"] = CHUNK_PENDING
+            chunk["failure_reason"] = None
+            reset += 1
+
+    pending = sum(1 for c in plan if c.get("status") != CHUNK_COMPLETED)
+    completed = sum(1 for c in plan if c.get("status") == CHUNK_COMPLETED)
+
+    # Recalculo explicito: el contador se deriva del plan, nunca al reves.
+    design.chunks_plan = _plan_copy(plan)
+    design.chunks_completed_count = completed
+    await db.commit()
+
+    if not pending:
+        return ChunkedGenerationResponse(
+            design_id=design.id,
+            mode=MODE_CHUNKED,
+            generation_status=design.generation_status or GENERATION_COMPLETED,
+            reason="No hay bloques pendientes ni fallidos; nada que reintentar.",
+            total_chunks=len(plan),
+            chunks_completed=completed,
+            samplers_total=count_samplers(design.current_jmx),
+            chunks=_chunk_summaries(plan),
+        )
+
+    call_ai = await _build_chunk_call_ai(db)
+    logger.info(
+        "retry chunks: diseno %s — %d failed->pending, %d pendientes en total",
+        design_id, reset, pending,
+    )
+    outcome = await process_pending_chunks(design, db, call_ai)
+    final_plan = outcome["plan"]
+
+    return ChunkedGenerationResponse(
+        design_id=design.id,
+        mode=MODE_CHUNKED,
+        generation_status=outcome["generation_status"],
+        reason=f"{reset} bloque(s) fallido(s) reintentado(s).",
+        total_chunks=len(final_plan),
+        chunks_completed=sum(1 for c in final_plan if c.get("status") == CHUNK_COMPLETED),
+        samplers_total=count_samplers(design.current_jmx),
+        chunks=_chunk_summaries(final_plan),
+        error=outcome["error"],
     )
 
 

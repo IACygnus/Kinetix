@@ -6,7 +6,7 @@ un script JMeter. Puede estar en estado borrador (auto-guardado tras cada
 turno) o guardado formalmente con nombre.
 """
 import uuid
-from sqlalchemy import Column, String, Boolean, ForeignKey, Text, DateTime
+from sqlalchemy import Column, String, Boolean, ForeignKey, Integer, Text, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 
@@ -73,6 +73,25 @@ class AIScriptDesign(Base):
 
     # completed | skipped | failed  (failed retiene la Fase 1 si existe)
     har_analysis_status = Column(String(32), nullable=True)
+
+    # --- Sprint 3.0 / Fundacion 2 — generacion de JMX por chunks -------------
+    # Solo se pueblan cuando el diseno pasa por /generate-chunked. Un diseno
+    # generado por el flujo clasico de 1 sola llamada las deja en NULL.
+    # ALTER TABLE manual reversible — ver
+    # docs/reports/repo/sprint-3.0-fundacion-2-chunking.md.
+
+    # single | chunked
+    generation_mode = Column(String(32), nullable=True)
+
+    # [{chunk_id, name, entry_idxs[], categories[], status, is_skeleton,
+    #   failure_reason}] — status: pending | completed | failed
+    chunks_plan = Column(JSONB, nullable=True)
+
+    # Chunks con status=completed. Se recalcula desde chunks_plan en cada retry.
+    chunks_completed_count = Column(Integer, nullable=True)
+
+    # completed | partial | failed
+    generation_status = Column(String(32), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
