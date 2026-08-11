@@ -64,6 +64,7 @@ export default function IntegratedReportPage() {
   const [executions, setExecutions] = useState<any[]>([]);
   const [sections, setSections] = useState<ReportSection[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState('');
   const [reportHtml, setReportHtml] = useState('');
   const [conclusions, setConclusions] = useState('');
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<Record<string, any>>({});
@@ -185,20 +186,36 @@ export default function IntegratedReportPage() {
   const handleGenerate = async () => {
     if (sections.length === 0) return;
     setGenerating(true);
+    setGenerateError('');
     try {
       const res = await fetch(`${apiBase}/reports/integrated`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          // F1: si el informe se reabrio del historial ya tiene id — no crear duplicado
+          report_id: persistedId,
+          name: reportName || null,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setReportHtml(data.report_html || '');
         setConclusions(data.unified_conclusions || '');
+        // F1: guardar el id del registro para que persistEdit deje de ser no-op
+        if (data.report_id) {
+          if (!persistedId) setPersistedId(data.report_id);
+          if (data.report_name && !reportName) setReportName(data.report_name);
+        } else {
+          setGenerateError('El informe se genero, pero no se pudo crear su registro en el historial. Los cambios que edite NO se guardaran.');
+        }
+      } else {
+        setGenerateError('Error al generar el informe integrado. Intente de nuevo.');
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      setGenerateError('Error de conexion al generar el informe integrado.');
+    }
     setGenerating(false);
   };
 
@@ -357,11 +374,15 @@ export default function IntegratedReportPage() {
           )}
 
           {sections.length > 0 && (
-            <div className="mt-6 flex gap-3 justify-center">
+            <div className="mt-6 flex flex-col items-center gap-3">
               <button onClick={handleGenerate} disabled={generating}
                 className="px-8 py-3 bg-[#f5a623] text-[#0a1628] rounded-xl font-bold text-lg hover:bg-[#f5a623]/90 disabled:opacity-50 transition-colors">
                 {generating ? 'Generando...' : 'Generar Informe Integrado'}
               </button>
+              {/* F1: error de creacion del registro — visible, no solo en consola */}
+              {generateError && (
+                <p className="text-red-600 text-base text-center max-w-xl">{generateError}</p>
+              )}
             </div>
           )}
         </div>

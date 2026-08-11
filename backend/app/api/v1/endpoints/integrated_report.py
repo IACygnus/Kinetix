@@ -973,6 +973,9 @@ class SectionInput(BaseModel):
 class IntegratedReportRequest(BaseModel):
     sections: List[SectionInput]
     unified_conclusions: str = ""
+    # F1: identidad del registro en integrated_reports (reusar si el informe ya existe)
+    report_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 async def _get_attachments(db: AsyncSession, execution_id: uuid.UUID, att_type: str):
@@ -1328,10 +1331,57 @@ Instrucciones:
             logger.error(f"Unified conclusions AI failed: {e}")
             unified = "Conclusiones unificadas no disponibles."
 
+    # F1: crear (o reusar) el registro en integrated_reports apenas se genera el
+    # informe, para que las ediciones tengan una fila destino desde el minuto cero.
+    # No se toca consolidated_analysis: lo escribe generate-consolidated.
+    from app.db.models.integrated_report import IntegratedReport
+    from sqlalchemy.orm.attributes import flag_modified
+
+    report_id = None
+    report_name = None
+    try:
+        sections_json = [s.dict() for s in sorted(request.sections, key=lambda s: s.order)]
+        existing = None
+        if request.report_id:
+            try:
+                existing = await db.get(IntegratedReport, uuid.UUID(request.report_id))
+            except (ValueError, AttributeError):
+                existing = None
+
+        if existing:
+            existing.sections = sections_json
+            flag_modified(existing, "sections")
+            if request.name:
+                existing.name = request.name
+            await db.commit()
+            await db.refresh(existing)
+            report_id, report_name = str(existing.id), existing.name
+        else:
+            default_name = request.name or (
+                f"Informe Integrado - {datetime.now(ZoneInfo('America/Bogota')).strftime('%d/%m/%Y %H:%M')}"
+            )
+            new_report = IntegratedReport(
+                name=default_name,
+                sections=sections_json,
+                consolidated_analysis={},
+                created_by=current_user.id,
+            )
+            db.add(new_report)
+            await db.commit()
+            await db.refresh(new_report)
+            report_id, report_name = str(new_report.id), new_report.name
+    except Exception as e:
+        # El informe generado se devuelve igual; el frontend avisa que no hay
+        # registro donde persistir las ediciones.
+        logger.exception(f"F1: no se pudo crear el registro del informe integrado: {e}")
+        await db.rollback()
+
     return {
         "report_html": "\n".join(sections_html),
         "unified_conclusions": unified,
         "sections_count": len(sections_html),
+        "report_id": report_id,
+        "report_name": report_name,
     }
 
 
