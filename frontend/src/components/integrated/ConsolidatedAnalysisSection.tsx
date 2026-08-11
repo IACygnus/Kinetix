@@ -2,7 +2,7 @@
  * HF9 — Consolidated Analysis Section for Integrated Report.
  * Supports dual Load/Stress blocks. Editable textareas with onBlur persistence.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface ConsolidatedData {
   conclusions: string;
@@ -31,6 +31,12 @@ export default function ConsolidatedAnalysisSection({
 }: Props) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
+
+  // F7: espejo controlado de lo que muestran las cajas. Se resincroniza cuando
+  // el padre cambia consolidatedAnalysis (regenerar), asi la pantalla nunca
+  // queda mostrando texto viejo. La persistencia sigue en onBlur (sin cambios).
+  const [draft, setDraft] = useState<Record<string, ConsolidatedData>>(consolidatedAnalysis || {});
+  useEffect(() => { setDraft(consolidatedAnalysis || {}); }, [consolidatedAnalysis]);
 
   const hasAnalysis = Object.keys(consolidatedAnalysis || {}).length > 0;
 
@@ -102,7 +108,7 @@ export default function ConsolidatedAnalysisSection({
         </button>
       </div>
 
-      {Object.entries(consolidatedAnalysis).map(([testType, data]) => (
+      {Object.entries(draft).map(([testType, data]) => (
         <div key={testType} className="mb-8">
           <h4 className="text-xl font-semibold text-gray-700 mb-4">
             {TEST_TYPE_LABELS[testType] || testType}
@@ -116,7 +122,8 @@ export default function ConsolidatedAnalysisSection({
               <div className="p-4 bg-white">
                 <textarea
                   className="w-full min-h-[220px] p-3 border border-slate-200 rounded text-base text-slate-800 leading-relaxed focus:outline-none focus:border-[#f5a623] resize-y"
-                  defaultValue={data.conclusions}
+                  value={data.conclusions ?? ''}
+                  onChange={(e) => setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], conclusions: e.target.value } }))}
                   onBlur={(e) => onEdit(testType, 'conclusions', e.target.value)}
                   placeholder="Click para editar conclusiones..."
                 />
@@ -131,7 +138,8 @@ export default function ConsolidatedAnalysisSection({
               <div className="p-4 bg-white">
                 <textarea
                   className="w-full min-h-[220px] p-3 border border-slate-200 rounded text-base text-slate-800 leading-relaxed focus:outline-none focus:border-[#f5a623] resize-y"
-                  defaultValue={data.recommendations}
+                  value={data.recommendations ?? ''}
+                  onChange={(e) => setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], recommendations: e.target.value } }))}
                   onBlur={(e) => onEdit(testType, 'recommendations', e.target.value)}
                   placeholder="Click para editar recomendaciones..."
                 />
