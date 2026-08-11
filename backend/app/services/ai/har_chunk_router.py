@@ -80,6 +80,12 @@ GENERATION_COMPLETED = "completed"
 GENERATION_PARTIAL = "partial"
 GENERATION_FAILED = "failed"
 
+# F3.1 — unico estado NO terminal. Lo escribe el endpoint al lanzar la tarea de
+# fondo y lo pisa la propia tarea al cerrar; ver el `finally` de
+# `_run_chunked_generation_background` en script_ai.py, que garantiza que nadie
+# se quede aca colgado.
+GENERATION_IN_PROGRESS = "in_progress"
+
 
 # ---------------------------------------------------------------------------
 # Decision de modo

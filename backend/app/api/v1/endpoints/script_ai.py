@@ -62,6 +62,7 @@ from app.services.ai.har_flow_analyzer import (
     HarAnalysisError,
     analyze_har_flow,
     extract_entries,
+    response_body_coverage,
     source_fingerprint,
 )
 from app.services.ai.har_chunk_router import (
@@ -70,6 +71,8 @@ from app.services.ai.har_chunk_router import (
     CHUNK_PENDING,
     CHUNK_SPLIT,
     GENERATION_COMPLETED,
+    GENERATION_FAILED,
+    GENERATION_IN_PROGRESS,
     GENERATION_PARTIAL,
     MODE_CHUNKED,
     MODE_SINGLE,
@@ -3083,6 +3086,59 @@ class ChunkedGenerationResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ===================== ESTADO POLLABLE (Sprint 3.0 F3.1) =====================
+
+
+class ChunkStatusItem(BaseModel):
+    """Un bloque visto desde el endpoint de polling.
+
+    Deliberadamente NO trae ``entry_idxs``: en un HAR de 106 requests esa lista
+    multiplica el payload por nada, y la UI solo necesita el conteo.
+    """
+
+    chunk_id: int
+    name: str
+    status: str  # pending | completed | failed | split
+    n_entries: int
+    is_skeleton: bool = False
+    split_depth: int = 0
+    parent_chunk_id: Optional[int] = None
+    failure_reason: Optional[str] = None  # truncado, ver _FAILURE_REASON_POLL_LIMIT
+
+
+class HarBodyCoverage(BaseModel):
+    """Cuantos requests del HAR traen el body de la respuesta (hallazgo F1)."""
+
+    entries_with_response_body: int
+    total_entries: int
+    ratio: float  # 0.0 - 1.0; 0 si el HAR esta vacio
+
+
+class GenerationStatusResponse(BaseModel):
+    """Contrato de GET /designs/{id}/generation-status — lo consume F3.2.
+
+    Barato a proposito: sin JMX, sin entry_idxs, sin conversacion. Pensado para
+    un poll cada 3-5s mientras ``generation_status == 'in_progress'``.
+    """
+
+    design_id: UUID
+    generation_mode: Optional[str] = None  # single | chunked | None (nunca generado)
+    generation_status: Optional[str] = None  # in_progress | completed | partial | failed
+    chunks_completed_count: int = 0
+    # Semantica F2.1: los bloques 'split' NO cuentan (sus entries viven en los
+    # hijos), asi que chunks_completed_count == total_chunks significa terminado.
+    total_chunks: int = 0
+    samplers_total: int = 0
+    generation_started_at: Optional[str] = None  # ISO-8601 UTC del ultimo lanzamiento
+    chunks: List[ChunkStatusItem] = Field(default_factory=list)
+    har_body_coverage: Optional[HarBodyCoverage] = None  # None si no se pudo calcular
+
+
+# El motivo de fallo completo puede traer el XML que el modelo corto a mitad.
+# En un endpoint que se consulta cada 3s eso no viaja.
+_FAILURE_REASON_POLL_LIMIT = 400
+
+
 # Techo de salida por chunk. Un bloque de ~15 samplers completos entra holgado;
 # se topa igual contra el maximo real del modelo dentro de _call_ai.
 _CHUNK_MAX_TOKENS = 32768
@@ -3186,7 +3242,16 @@ async def process_pending_chunks(
         failed_reason: Optional[str] = None
 
         try:
-            raw = call_ai(messages)
+            # F3.1 — `call_ai` es SINCRONO (todo el modulo llama a `_call_ai`
+            # directo). Invocarlo sin ceder el hilo bloquea el event loop entero
+            # durante los ~40s que tarda cada bloque, y con la generacion movida
+            # a background eso dejaria al backend sin atender NADA —incluido el
+            # polling de /generation-status, que es justo lo que la UI necesita
+            # mientras esto corre. El offload al threadpool es lo unico que hace
+            # viable el modo de fondo. El contrato del callback no cambia: sigue
+            # siendo un sync `messages -> str`, asi que los dobles de los tests
+            # funcionan igual y `last_finish_reason` se lee despues del await.
+            raw = await asyncio.to_thread(call_ai, messages)
         except Exception as e:  # noqa: BLE001 — el proveedor falla de mil formas
             logger.warning("chunked gen: chunk %d fallo la llamada a la IA — %s", chunk_id, e)
             failed_reason = f"Fallo la llamada a la IA: {e}"
@@ -3392,6 +3457,191 @@ def _enrich_failure_reason(reason: str, call_ai) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# F3.1 — ejecucion en background
+# ---------------------------------------------------------------------------
+
+# asyncio guarda solo una referencia DEBIL a las tasks: sin este set, una
+# generacion de 400s puede ser recolectada a mitad de camino y desaparecer sin
+# dejar rastro (el diseno quedaria in_progress hasta que lo rescate el
+# `finally`). Mantener la referencia fuerte es lo que hace que la tarea viva.
+_CHUNK_TASKS: set = set()
+
+
+def _stamp_run_start(plan: List[dict]) -> str:
+    """Marca el inicio del run en el plan y devuelve el timestamp ISO.
+
+    ``chunks_plan`` es un ARRAY JSON, no un objeto: no hay donde colgar un
+    bloque de metadatos sin cambiarle la forma y romper a los consumidores de
+    F2 (``_generable_chunks``, ``_chunk_summaries``, el ciclo de
+    ``process_pending_chunks``) y a las filas ya persistidas. Por eso el sello
+    va como una clave mas de cada chunk, repetida: cuesta ~30 bytes por bloque
+    y evita una migracion. Se pisa en cada lanzamiento — es diagnostico, no
+    historial.
+    """
+    started = datetime.utcnow().isoformat() + "Z"
+    for chunk in plan:
+        chunk["run_started_at"] = started
+    return started
+
+
+def _run_started_at(plan: List[dict]) -> Optional[str]:
+    """Sello de inicio del plan. Los hijos de un split nacen sin el."""
+    for chunk in plan:
+        value = chunk.get("run_started_at")
+        if value:
+            return str(value)
+    return None
+
+
+async def _ensure_terminal_generation_status(
+    design_id: UUID,
+    error: Optional[str],
+    session_factory=AsyncSessionLocal,
+) -> None:
+    """Red de seguridad: ningun diseno se queda en ``in_progress`` colgado.
+
+    Corre en el ``finally`` de la tarea de fondo y SIEMPRE con una sesion nueva:
+    si la tarea murio por una excepcion, la sesion que traia puede estar en una
+    transaccion abortada y cualquier commit sobre ella fallaria tambien.
+
+    No pisa un estado ya terminal — el camino feliz lo escribe
+    ``process_pending_chunks`` y este metodo no tiene nada que corregir.
+    """
+    try:
+        async with session_factory() as db:
+            result = await db.execute(
+                select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+            )
+            design = result.scalar_one_or_none()
+            if design is None or design.generation_status != GENERATION_IN_PROGRESS:
+                return
+
+            plan = _plan_copy(design.chunks_plan or [])
+            if error:
+                # El motivo se deja en el primer bloque no terminado: es el que
+                # estaba en curso cuando todo se cayo.
+                for chunk in plan:
+                    if chunk.get("status") not in (CHUNK_COMPLETED, CHUNK_SPLIT):
+                        chunk["status"] = CHUNK_FAILED
+                        chunk["failure_reason"] = f"La tarea de fondo aborto: {error}"
+                        break
+
+            completed = _completed_chunks(plan)
+            design.chunks_plan = _plan_copy(plan)
+            design.chunks_completed_count = completed
+            # Con algo generado el trabajo es recuperable por /retry-failed-chunks;
+            # sin nada generado no hay parcial que reanudar.
+            design.generation_status = (
+                GENERATION_PARTIAL if completed else GENERATION_FAILED
+            )
+            await db.commit()
+            logger.error(
+                "chunked gen: diseno %s rescatado de in_progress -> %s (%d bloques ok)",
+                design_id, design.generation_status, completed,
+            )
+    except Exception:  # noqa: BLE001 — la red de seguridad no puede levantar
+        logger.exception(
+            "chunked gen: fallo el rescate de estado terminal del diseno %s", design_id
+        )
+
+
+async def _run_chunked_generation_background(
+    design_id: UUID,
+    session_factory=AsyncSessionLocal,
+) -> None:
+    """Tarea de fondo que corre la generacion por bloques completa.
+
+    Abre **su propia sesion de DB**: la de la request se cierra en el teardown
+    del ``Depends(get_db)`` en cuanto el endpoint responde, y esta tarea vive
+    varios minutos despues de eso. Por lo mismo recarga el diseno por id en vez
+    de recibir el objeto ORM del endpoint, que ya estaria desligado.
+
+    La logica de negocio NO se duplica: reusa ``process_pending_chunks`` tal
+    cual. Lo unico que agrega es el ciclo de vida.
+
+    ``session_factory`` esta parametrizado para que los tests inyecten un doble
+    y puedan ejercitar esta funcion en sincronico, sin base de datos.
+    """
+    error: Optional[str] = None
+    try:
+        async with session_factory() as db:
+            result = await db.execute(
+                select(AIScriptDesign).where(AIScriptDesign.id == design_id)
+            )
+            design = result.scalar_one_or_none()
+            if design is None:
+                logger.error(
+                    "chunked gen bg: el diseno %s ya no existe; se aborta", design_id
+                )
+                return
+
+            call_ai = await _build_chunk_call_ai(db)
+            outcome = await process_pending_chunks(design, db, call_ai)
+            logger.info(
+                "chunked gen bg: diseno %s termino con status=%s (%d/%d bloques, %d samplers)",
+                design_id,
+                outcome["generation_status"],
+                _completed_chunks(outcome["plan"]),
+                _generable_chunks(outcome["plan"]),
+                count_samplers(design.current_jmx),
+            )
+    except Exception as e:  # noqa: BLE001 — nada puede escaparse de una task suelta
+        error = str(e)
+        logger.exception("chunked gen bg: diseno %s aborto por excepcion", design_id)
+    finally:
+        # Se ejecuta SIEMPRE, incluso en el camino feliz (donde no encuentra
+        # nada que corregir y sale de inmediato).
+        await _ensure_terminal_generation_status(design_id, error, session_factory)
+
+
+def _launch_chunked_generation(design_id: UUID) -> None:
+    """Dispara la tarea de fondo y vuelve en el acto.
+
+    Se eligio ``asyncio.create_task`` sobre ``BackgroundTasks`` de FastAPI por
+    dos razones concretas de este repo:
+
+    1. Es el patron que el modulo ya usa para lo mismo (``/designs/{id}/execute``
+       -> ``_run_full_execution_background``). Una segunda mecanica para el
+       mismo problema seria deuda gratis.
+    2. ``BackgroundTasks`` corre DENTRO del ciclo de vida de la request: se
+       ejecuta despues de emitir la respuesta pero antes de cerrar las
+       dependencias, con lo cual la sesion del ``Depends(get_db)`` seguiria
+       viva y atada a una request de 400s. La task suelta corta ese vinculo por
+       completo, que es lo que un trabajo de varios minutos necesita.
+
+    Seam de test: los tests reemplazan esta funcion y evitan crear tasks reales.
+    """
+    task = asyncio.create_task(_run_chunked_generation_background(design_id))
+    _CHUNK_TASKS.add(task)
+    task.add_done_callback(_CHUNK_TASKS.discard)
+
+
+def _in_progress_response(design: AIScriptDesign) -> ChunkedGenerationResponse:
+    """Rechazo del guard anti-concurrencia.
+
+    200 con el estado actual, NO 409: F2 fijo que los errores de negocio de este
+    flujo viajan en el cuerpo (``mode='single'``, ``generation_status='partial'``)
+    y solo acceso y configuracion usan codigos HTTP. Un 409 aca obligaria a la UI
+    a tener dos caminos de lectura para la misma informacion.
+    """
+    plan = design.chunks_plan or []
+    return ChunkedGenerationResponse(
+        design_id=design.id,
+        mode=design.generation_mode or MODE_CHUNKED,
+        generation_status=GENERATION_IN_PROGRESS,
+        reason=(
+            "Ya hay una generacion por bloques en curso para este diseno. "
+            "Segui su avance en GET /designs/{id}/generation-status; no se "
+            "lanzo una segunda."
+        ),
+        total_chunks=_generable_chunks(plan),
+        chunks_completed=_completed_chunks(plan),
+        samplers_total=count_samplers(design.current_jmx),
+        chunks=_chunk_summaries(plan),
+    )
+
+
 @router.post("/designs/{design_id}/generate-chunked", response_model=ChunkedGenerationResponse)
 async def generate_jmx_chunked(
     design_id: UUID,
@@ -3413,8 +3663,21 @@ async def generate_jmx_chunked(
     - **200 con ``generation_status='partial'``** cuando un bloque falla. Los
       bloques ya generados quedan persistidos y ``/retry-failed-chunks``
       reanuda desde ahi.
+
+    **F3.1 — este endpoint ya NO espera a que la generacion termine.** Valida,
+    persiste el plan, lanza la tarea de fondo y responde en el acto con
+    ``generation_status='in_progress'``. El avance se sigue por
+    ``GET /designs/{id}/generation-status``. El motivo es medido, no teorico:
+    una corrida real sobre un HAR de 106 requests tarda 327-412s, muy por
+    encima de lo que cualquier browser o proxy mantiene abierto.
     """
     design = await _load_design_for_chunking(design_id, db, current_user)
+
+    # Guard anti-concurrencia ANTES de cualquier otra validacion: si ya hay una
+    # corrida en curso, nada de lo que siga tiene sentido evaluarlo — el plan
+    # que leeriamos lo esta mutando la tarea de fondo en este mismo instante.
+    if design.generation_status == GENERATION_IN_PROGRESS:
+        return _in_progress_response(design)
 
     if design.har_analysis_status != STATUS_COMPLETED:
         raise HTTPException(
@@ -3444,27 +3707,40 @@ async def generate_jmx_chunked(
             detail="La clasificacion del HAR no produjo ningun bloque generable.",
         )
 
-    call_ai = await _build_chunk_call_ai(db)
+    # Pre-vuelo de la configuracion de IA. Se hace ACA, con la sesion de la
+    # request, para que un 429/503 le llegue al usuario como codigo HTTP en vez
+    # de morir sin testigos dentro de la tarea de fondo. La tarea vuelve a
+    # construir su propio callback con su propia sesion.
+    await _build_chunk_call_ai(db)
 
     design.generation_mode = MODE_CHUNKED
     design.chunks_plan = _plan_copy(plan)
+    started_at = _stamp_run_start(design.chunks_plan)
     design.chunks_completed_count = 0
-    design.generation_status = None
+    design.generation_status = GENERATION_IN_PROGRESS
     await db.commit()
 
-    outcome = await process_pending_chunks(design, db, call_ai)
-    final_plan = outcome["plan"]
+    # El commit va ANTES del lanzamiento: la tarea de fondo lee el diseno de la
+    # base en su propia sesion, y si arrancara antes del commit no encontraria
+    # el plan.
+    _launch_chunked_generation(design.id)
+    logger.info(
+        "chunked gen: diseno %s lanzado en background — %d bloques, inicio %s",
+        design_id, _generable_chunks(plan), started_at,
+    )
 
     return ChunkedGenerationResponse(
         design_id=design.id,
         mode=MODE_CHUNKED,
-        generation_status=outcome["generation_status"],
-        reason=reason,
-        total_chunks=_generable_chunks(final_plan),
-        chunks_completed=_completed_chunks(final_plan),
+        generation_status=GENERATION_IN_PROGRESS,
+        reason=(
+            f"{reason} Generacion lanzada en segundo plano; segui el avance en "
+            f"GET /designs/{{id}}/generation-status."
+        ),
+        total_chunks=_generable_chunks(plan),
+        chunks_completed=0,
         samplers_total=count_samplers(design.current_jmx),
-        chunks=_chunk_summaries(final_plan),
-        error=outcome["error"],
+        chunks=_chunk_summaries(plan),
     )
 
 
@@ -3480,8 +3756,14 @@ async def retry_failed_chunks(
     ``chunks_completed_count`` desde el plan** (no confia en el contador
     guardado) y reanuda desde el primer pendiente. Los chunks ya completados
     no se re-generan ni se re-cobran.
+
+    **F3.1 — igual que ``/generate-chunked``, responde de inmediato** con
+    ``generation_status='in_progress'`` y deja el trabajo a la tarea de fondo.
     """
     design = await _load_design_for_chunking(design_id, db, current_user)
+
+    if design.generation_status == GENERATION_IN_PROGRESS:
+        return _in_progress_response(design)
 
     if design.generation_mode != MODE_CHUNKED or not design.chunks_plan:
         raise HTTPException(
@@ -3524,24 +3806,132 @@ async def retry_failed_chunks(
             chunks=_chunk_summaries(plan),
         )
 
-    call_ai = await _build_chunk_call_ai(db)
+    # Mismo pre-vuelo que /generate-chunked: 429/503 en la request, no en la task.
+    await _build_chunk_call_ai(db)
+
+    design.chunks_plan = _plan_copy(plan)
+    started_at = _stamp_run_start(design.chunks_plan)
+    design.generation_status = GENERATION_IN_PROGRESS
+    await db.commit()
+
+    _launch_chunked_generation(design.id)
     logger.info(
-        "retry chunks: diseno %s — %d failed->pending, %d pendientes en total",
-        design_id, reset, pending,
+        "retry chunks: diseno %s lanzado en background — %d failed->pending, "
+        "%d pendientes en total, inicio %s",
+        design_id, reset, pending, started_at,
     )
-    outcome = await process_pending_chunks(design, db, call_ai)
-    final_plan = outcome["plan"]
 
     return ChunkedGenerationResponse(
         design_id=design.id,
         mode=MODE_CHUNKED,
-        generation_status=outcome["generation_status"],
-        reason=f"{reset} bloque(s) fallido(s) reintentado(s).",
-        total_chunks=_generable_chunks(final_plan),
-        chunks_completed=_completed_chunks(final_plan),
+        generation_status=GENERATION_IN_PROGRESS,
+        reason=(
+            f"{reset} bloque(s) fallido(s) reintentado(s). Reanudacion lanzada "
+            f"en segundo plano; segui el avance en "
+            f"GET /designs/{{id}}/generation-status."
+        ),
+        total_chunks=_generable_chunks(plan),
+        chunks_completed=completed,
         samplers_total=count_samplers(design.current_jmx),
-        chunks=_chunk_summaries(final_plan),
-        error=outcome["error"],
+        chunks=_chunk_summaries(plan),
+    )
+
+
+def _body_coverage_for(design: AIScriptDesign) -> Optional[HarBodyCoverage]:
+    """Cobertura de response bodies del HAR, con fallback on-demand.
+
+    Preferencia 1: la clave que ``/analyze-har`` deja dentro de
+    ``har_analysis_classification`` (F3.1). Preferencia 2 —para los disenos ya
+    analizados ANTES de F3.1, que no la tienen— recalcularla leyendo el HAR
+    persistido: es puro parseo de JSON, **no re-corre la IA** ni escribe nada.
+
+    Devuelve ``None`` (nunca levanta) si el diseno no tiene HAR o el HAR es
+    ilegible: este endpoint se consulta cada 3s y un aviso ausente no puede
+    tumbar el polling del progreso.
+    """
+    blob = design.har_analysis_classification
+    raw = blob.get("response_body_coverage") if isinstance(blob, dict) else None
+
+    if not isinstance(raw, dict) or "entries_with_response_body" not in raw:
+        try:
+            raw = response_body_coverage(extract_entries(design.reference_file_content))
+        except Exception:  # noqa: BLE001 — HarAnalysisError incluido; dato opcional
+            return None
+
+    try:
+        total = int(raw.get("total_entries") or 0)
+        with_body = int(raw.get("entries_with_response_body") or 0)
+    except (TypeError, ValueError):
+        return None
+
+    return HarBodyCoverage(
+        entries_with_response_body=with_body,
+        total_entries=total,
+        ratio=round(with_body / total, 4) if total else 0.0,
+    )
+
+
+@router.get(
+    "/designs/{design_id}/generation-status",
+    response_model=GenerationStatusResponse,
+)
+async def get_generation_status(
+    design_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """Estado de la generacion por bloques (Sprint 3.0 — F3.1).
+
+    Endpoint de **polling**: pensado para que la UI lo consulte cada 3-5s
+    mientras ``generation_status == 'in_progress'``. Por eso NO devuelve el
+    JMX, ni los ``entry_idxs`` de cada bloque, ni la conversacion: solo lo que
+    hace falta para dibujar una barra de progreso y una lista de bloques.
+
+    Codigos: **404/403** de acceso, igual que el resto del modulo. Un diseno que
+    nunca paso por ``/generate-chunked`` NO es un error — responde 200 con los
+    campos en ``None`` y ``total_chunks=0``, que es lo que la UI necesita para
+    decidir que no muestra el panel.
+
+    Estados posibles de ``generation_status``:
+
+    - ``None``     — nunca se genero por bloques.
+    - ``in_progress`` — hay una tarea de fondo corriendo (unico NO terminal).
+    - ``completed``   — todos los bloques generables terminaron OK.
+    - ``partial``     — al menos un bloque quedo failed/pending; recuperable con
+      ``/retry-failed-chunks``.
+    - ``failed``      — la corrida aborto sin ningun bloque completado.
+    """
+    design = await _load_design_for_chunking(design_id, db, current_user)
+    plan = design.chunks_plan or []
+
+    chunks = [
+        ChunkStatusItem(
+            chunk_id=c.get("chunk_id", 0),
+            name=c.get("name", ""),
+            status=c.get("status", CHUNK_PENDING),
+            n_entries=len(c.get("entry_idxs") or []),
+            is_skeleton=bool(c.get("is_skeleton")),
+            split_depth=int(c.get("split_depth") or 0),
+            parent_chunk_id=c.get("parent_chunk_id"),
+            failure_reason=_truncate(
+                c["failure_reason"], _FAILURE_REASON_POLL_LIMIT
+            ) if c.get("failure_reason") else None,
+        )
+        for c in plan
+    ]
+
+    return GenerationStatusResponse(
+        design_id=design.id,
+        generation_mode=design.generation_mode,
+        generation_status=design.generation_status,
+        # Se cuenta desde el plan en vez de leer la columna: F2 ya fijo que el
+        # contador se deriva del plan y nunca al reves.
+        chunks_completed_count=_completed_chunks(plan),
+        total_chunks=_generable_chunks(plan),
+        samplers_total=count_samplers(design.current_jmx),
+        generation_started_at=_run_started_at(plan),
+        chunks=chunks,
+        har_body_coverage=_body_coverage_for(design),
     )
 
 

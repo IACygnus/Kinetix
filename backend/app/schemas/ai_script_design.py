@@ -70,6 +70,15 @@ class AIScriptDesignDetail(BaseModel):
     reference_file_name: Optional[str]
     reference_file_content: Optional[str]
     reference_file_type: Optional[str]
+
+    # Sprint 3.0 F3.1 — lo MINIMO para que la pagina decida si muestra el panel
+    # de generacion por bloques. El detalle del plan (chunks, linaje, motivos de
+    # fallo) NO viaja aca: vive en GET /designs/{id}/generation-status, que es el
+    # endpoint pensado para poll cada 3-5s. Meterlo en el detalle obligaria a
+    # recargar la conversacion y el JMX entero en cada tick del polling.
+    generation_mode: Optional[str] = None    # single | chunked
+    generation_status: Optional[str] = None  # in_progress | completed | partial | failed
+
     created_at: datetime
     updated_at: datetime
 

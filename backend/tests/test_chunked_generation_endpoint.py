@@ -26,6 +26,7 @@ from app.services.ai.har_chunk_router import (
     CHUNK_PENDING,
     CHUNK_SPLIT,
     GENERATION_COMPLETED,
+    GENERATION_IN_PROGRESS,
     GENERATION_PARTIAL,
     MODE_CHUNKED,
     MODE_SINGLE,
@@ -206,6 +207,43 @@ def _stub_ai(monkeypatch):
     async def _conf(_db):
         return {"provider": "openai", "model_name": "gpt-4o", "api_key": "k"}
     monkeypatch.setattr(script_ai, "load_ai_config_from_db", _conf)
+
+
+# --- F3.1: background ------------------------------------------------------
+
+
+class _FakeSessionFactory:
+    """Imita ``async with AsyncSessionLocal() as db`` devolviendo un _FakeDB.
+
+    La tarea de fondo abre su PROPIA sesion; inyectarle esta fabrica es lo que
+    permite ejercitarla en sincronico, sin base de datos.
+    """
+
+    def __init__(self, db):
+        self.db = db
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _no_launch(monkeypatch):
+    """Desactiva el lanzamiento real de tasks; devuelve los ids lanzados."""
+    launched = []
+    monkeypatch.setattr(script_ai, "_launch_chunked_generation", launched.append)
+    return launched
+
+
+def _run_bg(design, db):
+    """Corre la tarea de fondo tal cual, contra el mismo doble de sesion."""
+    _run(script_ai._run_chunked_generation_background(
+        design.id, session_factory=_FakeSessionFactory(db)
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +576,7 @@ def test_error_de_red_no_se_confunde_con_truncacion():
 
 def test_retry_reanuda_un_plan_que_ya_tiene_chunks_partidos(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI()
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
 
@@ -564,12 +603,18 @@ def test_retry_reanuda_un_plan_que_ya_tiene_chunks_partidos(monkeypatch):
 
     resp = _run(retry_failed_chunks(design.id, db=db, current_user=_user()))
 
-    assert resp.generation_status == GENERATION_COMPLETED
-    assert ai.calls == 1  # solo el hijo fallido
+    # F3.1 — el endpoint solo lanza; el trabajo lo hace la tarea de fondo.
+    assert resp.generation_status == GENERATION_IN_PROGRESS
+    assert ai.calls == 0
     # El padre 'split' no se cuenta como bloque generable ni como pendiente.
     assert resp.total_chunks == 3
-    assert resp.chunks_completed == 3
     assert len(resp.chunks) == 4  # el linaje sigue visible en la respuesta
+
+    _run_bg(design, db)
+
+    assert design.generation_status == GENERATION_COMPLETED
+    assert ai.calls == 1  # solo el hijo fallido
+    assert design.chunks_completed_count == 3
 
 
 def test_retry_no_reintenta_un_padre_partido(monkeypatch):
@@ -593,8 +638,15 @@ def test_retry_no_reintenta_un_padre_partido(monkeypatch):
     assert resp.chunks_completed == 1
 
 
-def test_el_split_expone_linaje_en_la_respuesta_del_endpoint(monkeypatch):
+def test_el_split_expone_linaje_en_el_plan_tras_el_background(monkeypatch):
+    """El auto-split ocurre DENTRO de la tarea de fondo (F3.1).
+
+    Antes el linaje volvia en la respuesta del POST; ahora el POST responde
+    antes de que exista, asi que el linaje se verifica sobre el plan
+    persistido — que es lo que /generation-status le va a servir a la UI.
+    """
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI(truncate_on=2)
     # El finish_reason del doble tiene que llegar al wrapper real: es la señal
     # que dispara el auto-split. Devolver "stop" fijo la taparia.
@@ -606,14 +658,18 @@ def test_el_split_expone_linaje_en_la_respuesta_del_endpoint(monkeypatch):
     db = _FakeDB(design)
 
     resp = _run(generate_jmx_chunked(design.id, db=db, current_user=_user()))
+    assert resp.generation_status == GENERATION_IN_PROGRESS
+    assert not any(c.status == CHUNK_SPLIT for c in resp.chunks)  # aun no paso nada
 
-    partidos = [c for c in resp.chunks if c.status == CHUNK_SPLIT]
-    hijos = [c for c in resp.chunks if c.parent_chunk_id is not None]
+    _run_bg(design, db)
+
+    plan = design.chunks_plan
+    partidos = [c for c in plan if c["status"] == CHUNK_SPLIT]
+    hijos = [c for c in plan if c.get("parent_chunk_id") is not None]
     assert len(partidos) == 1
     assert len(hijos) == 2
-    assert all(h.split_depth == 1 for h in hijos)
-    assert resp.total_chunks == len(resp.chunks) - 1  # el padre no cuenta
-    assert resp.generation_status == GENERATION_COMPLETED
+    assert all(h["split_depth"] == 1 for h in hijos)
+    assert design.generation_status == GENERATION_COMPLETED
 
 
 def test_har_ilegible_devuelve_partial_sin_llamar_a_la_ia():
@@ -671,6 +727,7 @@ def test_har_chico_responde_single_no_error(monkeypatch):
 
 def test_generate_chunked_arma_el_plan_y_genera(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI()
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
     design = _design()
@@ -678,29 +735,38 @@ def test_generate_chunked_arma_el_plan_y_genera(monkeypatch):
 
     resp = _run(generate_jmx_chunked(design.id, db=db, current_user=_user()))
 
+    # El plan queda armado y persistido ANTES de responder: si la tarea de
+    # fondo arrancara sin plan no tendria nada que procesar.
     assert resp.mode == MODE_CHUNKED
-    assert resp.generation_status == GENERATION_COMPLETED
-    assert resp.total_chunks == resp.chunks_completed == len(design.chunks_plan)
-    assert resp.samplers_total == count_samplers(design.current_jmx)
-    assert resp.error is None
+    assert resp.generation_status == GENERATION_IN_PROGRESS
+    assert resp.total_chunks == len(design.chunks_plan)
+    assert resp.chunks_completed == 0
     assert len(resp.chunks) == resp.total_chunks
     assert resp.chunks[0].is_skeleton is True
+    assert ai.calls == 0
+
+    _run_bg(design, db)
+
+    assert design.generation_status == GENERATION_COMPLETED
+    assert design.chunks_completed_count == len(design.chunks_plan)
+    assert count_samplers(design.current_jmx) > 0
 
 
 def test_generate_chunked_reporta_partial_al_fallar(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI(fail_on=2)
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
     design = _design()
     db = _FakeDB(design)
 
-    resp = _run(generate_jmx_chunked(design.id, db=db, current_user=_user()))
+    _run(generate_jmx_chunked(design.id, db=db, current_user=_user()))
+    _run_bg(design, db)
 
-    assert resp.generation_status == GENERATION_PARTIAL
-    assert resp.chunks_completed == 1
-    assert resp.error
-    assert resp.chunks[1].status == CHUNK_FAILED
-    assert resp.chunks[1].failure_reason
+    assert design.generation_status == GENERATION_PARTIAL
+    assert design.chunks_completed_count == 1
+    assert design.chunks_plan[1]["status"] == CHUNK_FAILED
+    assert design.chunks_plan[1]["failure_reason"]
 
 
 def test_sin_api_key_devuelve_503(monkeypatch):
@@ -742,20 +808,26 @@ def _partial_design():
 
 def test_retry_recalcula_el_contador_desde_el_plan(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI()
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
     design = _partial_design()
     db = _FakeDB(design)
 
+    # El recalculo ocurre en el endpoint, ANTES de lanzar: el 99 se descarta ya
+    # en la respuesta inmediata, sin esperar a la tarea de fondo.
     resp = _run(retry_failed_chunks(design.id, db=db, current_user=_user()))
+    assert design.chunks_completed_count == 1
+    assert resp.chunks_completed == 1
 
-    # El 99 se descarta: el contador sale de contar los chunks completados.
+    _run_bg(design, db)
+
     assert design.chunks_completed_count == len(design.chunks_plan)
-    assert resp.chunks_completed == len(design.chunks_plan)
 
 
 def test_retry_reanuda_y_completa(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI()
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
     design = _partial_design()
@@ -763,21 +835,25 @@ def test_retry_reanuda_y_completa(monkeypatch):
     db = _FakeDB(design)
 
     resp = _run(retry_failed_chunks(design.id, db=db, current_user=_user()))
-
-    assert resp.generation_status == GENERATION_COMPLETED
-    assert all(c.status == CHUNK_COMPLETED for c in resp.chunks)
-    assert ai.calls == total - 1  # el chunk 1 no se re-genero
     assert "1 bloque(s) fallido(s)" in resp.reason
+
+    _run_bg(design, db)
+
+    assert design.generation_status == GENERATION_COMPLETED
+    assert all(c["status"] == CHUNK_COMPLETED for c in design.chunks_plan)
+    assert ai.calls == total - 1  # el chunk 1 no se re-genero
 
 
 def test_retry_no_regenera_el_esqueleto_completado(monkeypatch):
     _stub_ai(monkeypatch)
+    _no_launch(monkeypatch)
     ai = _AI()
     monkeypatch.setattr(script_ai, "_call_ai", lambda m, c, **kw: (ai(m), "stop"))
     design = _partial_design()
     db = _FakeDB(design)
 
     _run(retry_failed_chunks(design.id, db=db, current_user=_user()))
+    _run_bg(design, db)
 
     # La primera llamada del retry ya es de un bloque, no del esqueleto.
     assert "NO generes jmeterTestPlan" in ai.prompts[0]

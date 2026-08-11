@@ -121,6 +121,27 @@ def source_fingerprint(reference_file_content: Optional[str]) -> str:
     ).hexdigest()
 
 
+def response_body_coverage(entries: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Cuantos entries del HAR traen realmente el body de la respuesta.
+
+    Sprint 3.0 F3.1 — dato barato y puramente estructural (cero llamadas al
+    modelo) que condiciona la calidad de la Fase 2: sin body de respuesta no
+    hay de donde inferir que valor produce un request y consume otro, asi que
+    una cobertura baja explica de antemano una correlacion pobre. Chrome graba
+    sin bodies salvo que se exporte con "Preserve log" + contenido, y la UI
+    necesita poder avisarlo ANTES de que el usuario gaste una generacion.
+    """
+    total = len(entries)
+    with_body = 0
+    for entry in entries:
+        response = entry.get("response") or {}
+        content = response.get("content") if isinstance(response, dict) else None
+        text = content.get("text") if isinstance(content, dict) else None
+        if isinstance(text, str) and text.strip():
+            with_body += 1
+    return {"entries_with_response_body": with_body, "total_entries": total}
+
+
 # ---------------------------------------------------------------------------
 # Digest de entries para el prompt
 # ---------------------------------------------------------------------------
@@ -508,6 +529,10 @@ def analyze_har_flow(
         "counts": phase1["counts"],
         "entries": phase1["entries"],
         "phase2_error": None,
+        # F3.1 — se persiste junto a la clasificacion en vez de en una columna
+        # propia: es un atributo del MISMO HAR que describe el resto del blob,
+        # y asi queda invalidado por el mismo `source_sha1` sin logica extra.
+        "response_body_coverage": response_body_coverage(entries),
     }
 
     # ---- Fase 2 ----
