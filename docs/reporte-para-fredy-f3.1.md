@@ -250,6 +250,6 @@ de que alguien gaste una generación.
 
 ## 9. Commit y push
 
-- **Commit:** `PENDIENTE_COMMIT_HASH`
-- **Push:** `github` / `backup-trabajo-local` — **PENDIENTE_PUSH**
+- **Commit:** `5b4f622` — *Sprint 3.0 F3.1: generacion por chunks en background + estado pollable*
+- **Push:** `github` / `backup-trabajo-local` — **hecho** (`49d9100..5b4f622`)
 - **`origin` (Azure DevOps / producción): NO se tocó.**
