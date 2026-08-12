@@ -712,7 +712,7 @@ tbody tr:nth-child(even) {{
             <td style="border:none;padding:0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
         </tr></table>
         <div class="cover-info-footer">
-            Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']} &nbsp;|&nbsp; Generado: {now_str}{criteria_str}
+            Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}{criteria_str}
         </div>
     </div>
 
@@ -729,7 +729,7 @@ tbody tr:nth-child(even) {{
     </tr></table>
 
     <div style="margin-top:5mm;text-align:center;font-size:9pt;color:rgba(255,255,255,0.4)">
-        Celula de Performance SQA | Generado: {now_str}
+        Celula de Performance SQA
     </div>
 </div>
 
@@ -816,8 +816,7 @@ tbody tr:nth-child(even) {{
 <!-- ===== FOOTER ===== -->
 <div class="report-footer">
     <strong>sqa &mdash; Software Quality Assurance</strong><br>
-    Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-    <span style="font-size:7pt">Generado: {now_str}</span>
+    Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
 </div>
 
 </body>
@@ -1030,7 +1029,7 @@ tr:hover{{background:#f8fafc}}
 <div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
-Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']} &nbsp;|&nbsp; Generado: {now_str}
+Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
 </div>
 </div>
 </div>
@@ -1138,8 +1137,7 @@ Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fi
 
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
-sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-<span style="font-size:.75rem">Generado: {now_str}</span>
+sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
 </div>
 
 </div>

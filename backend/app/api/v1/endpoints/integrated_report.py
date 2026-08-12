@@ -578,7 +578,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div><div class="plotly-meta-label">Tipo de Prueba</div><div class="plotly-meta-value">{meta['testTypeLabel']}</div></div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
-Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']} &nbsp;|&nbsp; Generado: {now_str}
+Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
 </div>
 </div>
 </div>
@@ -1465,8 +1465,7 @@ img {{ max-width: 100%; height: auto; }}
 {conclusions_html}
 <div style="text-align:center;margin-top:30px;padding:12px;border-top:0.5mm solid #4f46e5;font-size:8px;color:#666">
 <strong style="color:#0a1628">sqa &mdash; Software Quality Assurance</strong><br>
-Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-Generado: {now_str}
+Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
 </div>
 </body></html>"""
 
@@ -1551,8 +1550,7 @@ img {{ max-width: 100%; height: auto; }}
 </div>
 <div class="integrated-footer">
     <strong>sqa &mdash; Software Quality Assurance</strong><br>
-    Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-    <span style="font-size:10px">Generado: {now_str}</span>
+    Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
 </div>
 </body></html>"""
 
