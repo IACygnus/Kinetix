@@ -612,7 +612,7 @@ export default function IntegratedReportPage() {
                 : saveState === 'saving' ? 'Guardando...'
                 : saveState === 'saved' ? `Guardado ${savedAt}`
                 : saveState === 'error' ? 'Error al guardar'
-                : 'Cambios sin guardar se guardan solos'}
+                : 'Autoguardado activo solo en Análisis Consolidado'}
             </span>
             <button
               onClick={() => saveNow(true)}
