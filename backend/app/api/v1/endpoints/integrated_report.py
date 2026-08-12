@@ -86,11 +86,14 @@ def _build_codes_series(dataframes):
     return series
 
 
-async def _generate_full_execution_pdf_html(execution, db: AsyncSession) -> str:
-    """Generate FULL PDF HTML for one execution — same quality as individual export."""
+async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrides=None) -> str:
+    """Generate FULL PDF HTML for one execution — same quality as individual export.
+
+    F6: `overrides` trae el texto editado en el informe integrado y pisa al de la IA.
+    """
     jtl_paths = _find_jtl_files(execution)
     if not jtl_paths:
-        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name))
+        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name), overrides)
 
     try:
         if len(jtl_paths) == 1:
@@ -165,6 +168,7 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession) -> str:
             'redirects': execution.ai_analysis_redirects or '',
             'conclusions': execution.ai_conclusions or '', 'recommendations': execution.ai_recommendations or '',
         }
+        _apply_ia_overrides(ia, overrides)   # F6
 
         test_type_info = TEST_TYPE_LABELS.get(execution.test_type or 'load', TEST_TYPE_LABELS['load'])
 
@@ -195,7 +199,7 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession) -> str:
 
     except Exception as e:
         logger.error(f"Error generating full PDF for execution {execution.id}: {e}")
-        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name))
+        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name), overrides)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -761,14 +765,14 @@ Plotly.newPlot('{id_pie}', [{{
 '''
 
 
-async def _generate_full_execution_plotly_html(execution, db: AsyncSession, prefix: str = "") -> str:
+async def _generate_full_execution_plotly_html(execution, db: AsyncSession, prefix: str = "", overrides=None) -> str:
     """HF10h: Generate interactive Plotly HTML fragment for ONE execution.
     Mirrors _generate_full_execution_pdf_html but builds Plotly traces instead of matplotlib base64.
     Returns a body fragment (no <html>/<head>) ready to be concatenated in an integrated report."""
     jtl_paths = _find_jtl_files(execution)
     if not jtl_paths:
         logger.warning(f"No JTL files for execution {execution.id}, falling back to basic exec HTML")
-        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name))
+        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name), overrides)
 
     try:
         if len(jtl_paths) == 1:
@@ -822,6 +826,7 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'redirects': execution.ai_analysis_redirects or '',
             'conclusions': execution.ai_conclusions or '', 'recommendations': execution.ai_recommendations or '',
         }
+        _apply_ia_overrides(ia, overrides)   # F6
 
         test_type_info = TEST_TYPE_LABELS.get(execution.test_type or 'load', TEST_TYPE_LABELS['load'])
         meta = {
@@ -960,7 +965,7 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
 
     except Exception as e:
         logger.error(f"Error generating Plotly HTML for execution {execution.id}: {e}")
-        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name))
+        return _build_exec_html(execution, SectionInput(order=0, type="load_test", source_id=str(execution.id), source_name=execution.name), overrides)
 
 
 class SectionInput(BaseModel):
@@ -976,6 +981,65 @@ class IntegratedReportRequest(BaseModel):
     # F1: identidad del registro en integrated_reports (reusar si el informe ya existe)
     report_id: Optional[str] = None
     name: Optional[str] = None
+
+
+# F6: columna de test_executions -> clave del dict `ia` que consumen las plantillas
+_IA_KEY_BY_COLUMN = {
+    "ai_analysis_summary": "summary",
+    "ai_analysis_errors": "errors",
+    "ai_analysis_response_times": "responseTimes",
+    "ai_analysis_response_time_over_time": "responseTimeOverTime",
+    "ai_analysis_throughput": "throughput",
+    "ai_analysis_latency": "latency",
+    "ai_analysis_error_rate": "errorRate",
+    "ai_analysis_codes_per_second": "codesPerSecond",
+    "ai_analysis_transactions_per_second": "tps",
+    "ai_analysis_active_threads": "activeThreads",
+    "ai_analysis_redirects": "redirects",
+    "ai_conclusions": "conclusions",
+    "ai_recommendations": "recommendations",
+}
+
+
+def _apply_ia_overrides(ia: dict, overrides) -> dict:
+    """F6: pisa el texto de la IA con lo editado en el informe integrado.
+
+    Solo modifica el dict en memoria que se va a renderizar; la ejecucion
+    original NUNCA se toca (Opcion B).
+    """
+    for column, text in ((overrides or {}).get("analysis") or {}).items():
+        key = _IA_KEY_BY_COLUMN.get(column)
+        if key and text is not None:
+            ia[key] = text
+    return ia
+
+
+async def _load_section_overrides(db: AsyncSession, report_id) -> dict:
+    """F6: overrides guardados, leidos de la DB: {source_id: {analysis, images}}.
+
+    Se lee del registro y no del request, para que exportar desde el historial
+    (sin haber editado en esta sesion) salga igual de correcto.
+    """
+    if not report_id:
+        return {}
+    from app.db.models.integrated_report import IntegratedReport
+    try:
+        report = await db.get(IntegratedReport, uuid.UUID(str(report_id)))
+    except (ValueError, AttributeError):
+        return {}
+    if not report:
+        return {}
+    # Una misma ejecucion puede aparecer en varias secciones (reporte + monitoreo
+    # + evidencias): se FUSIONAN sus overrides en vez de quedarse con el ultimo.
+    out: dict = {}
+    for s in (report.sections or []):
+        if not isinstance(s, dict) or not s.get("overrides"):
+            continue
+        ov = s["overrides"]
+        dst = out.setdefault(s.get("source_id"), {"analysis": {}, "images": {}})
+        dst["analysis"].update(ov.get("analysis") or {})
+        dst["images"].update(ov.get("images") or {})
+    return out
 
 
 def _merge_overrides(prev_sections, new_sections):
@@ -1015,8 +1079,15 @@ def _img_to_b64(filepath: str, file_type: str) -> str:
     return ""
 
 
-def _build_exec_html(execution, section: SectionInput) -> str:
+def _build_exec_html(execution, section: SectionInput, overrides=None) -> str:
     label = "Prueba de Carga" if section.type == "load_test" else "Prueba de Estres"
+    # F6: fallback sin JTL — tambien respeta el texto editado (solo en memoria)
+    _ov = (overrides or {}).get("analysis") or {}
+    _summary = _ov.get("ai_analysis_summary", execution.ai_analysis_summary)
+    _errors = _ov.get("ai_analysis_errors", execution.ai_analysis_errors)
+    _rt = _ov.get("ai_analysis_response_times", execution.ai_analysis_response_times)
+    _concl = _ov.get("ai_conclusions", execution.ai_conclusions)
+    _recs = _ov.get("ai_recommendations", execution.ai_recommendations)
     er = execution.error_rate or 0
     er_color = '#4caf50' if er < 1 else '#ff9800' if er < 5 else '#f44336'
     verdict = ''
@@ -1047,12 +1118,12 @@ def _build_exec_html(execution, section: SectionInput) -> str:
         </table>
         <div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0">
             <h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Analisis General</h3>
-            <p style="font-size:13px;line-height:1.6;color:#334155">{execution.ai_analysis_summary or 'Sin analisis disponible.'}</p>
+            <p style="font-size:13px;line-height:1.6;color:#334155">{_summary or 'Sin analisis disponible.'}</p>
         </div>
-        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Analisis de Errores</h3><p style="font-size:13px;line-height:1.6;color:#334155">{execution.ai_analysis_errors}</p></div>' if execution.ai_analysis_errors else ''}
-        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Tiempos de Respuesta</h3><p style="font-size:13px;line-height:1.6;color:#334155">{execution.ai_analysis_response_times}</p></div>' if execution.ai_analysis_response_times else ''}
-        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Conclusiones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{execution.ai_conclusions}</p></div>' if execution.ai_conclusions else ''}
-        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Recomendaciones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{execution.ai_recommendations}</p></div>' if execution.ai_recommendations else ''}
+        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Analisis de Errores</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_errors}</p></div>' if _errors else ''}
+        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Tiempos de Respuesta</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_rt}</p></div>' if _rt else ''}
+        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Conclusiones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_concl}</p></div>' if _concl else ''}
+        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Recomendaciones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_recs}</p></div>' if _recs else ''}
     </div>"""
 
 
@@ -1142,7 +1213,7 @@ def _extract_style_from_individual_report(full_html: str) -> str:
     return ""
 
 
-def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_prefix: str, for_pdf: bool = False) -> str:
+def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_prefix: str, for_pdf: bool = False, image_overrides=None) -> str:
     """Build HTML for monitoring/evidence sections.
     Works for both HTML (browser, Plotly integrated) and PDF (WeasyPrint).
     - B4.1: title_prefix is used as-is (no duplicated source_name)
@@ -1221,11 +1292,13 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
                     f'</div>'
                 )
         per_img_ai = ""
-        if hasattr(att, 'ai_analysis') and att.ai_analysis:
+        # F6: el texto editado en el informe integrado gana sobre el de la IA
+        att_text = (image_overrides or {}).get(str(att.id)) or getattr(att, 'ai_analysis', None)
+        if att_text:
             per_img_ai = (
                 f'<div style="{ai_box_style}">'
                 f'<div style="{ai_title_style}">Analisis</div>'
-                f'<div style="{ai_text_style}">{att.ai_analysis}</div>'
+                f'<div style="{ai_text_style}">{att_text}</div>'
                 f'</div>'
             )
         items += (
@@ -1420,6 +1493,8 @@ async def export_integrated_pdf(
     exec_info_list = []
     html_parts = []
     extracted_style = ""  # HF10g: collected once from first build_pdf_html call
+    # F6: texto editado, leido de la DB (no del request)
+    overrides_by_exec = await _load_section_overrides(db, request.report_id)
 
     for section in sorted(request.sections, key=lambda s: s.order):
         try:
@@ -1439,7 +1514,7 @@ async def export_integrated_pdf(
                 'test_type': (execution.test_type or 'load').upper(),
                 'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
-            full_html = await _generate_full_execution_pdf_html(execution, db)
+            full_html = await _generate_full_execution_pdf_html(execution, db, overrides_by_exec.get(section.source_id))
             # HF10g: extract <style> ONCE from first individual report
             if not extracted_style:
                 extracted_style = _extract_style_from_individual_report(full_html)
@@ -1453,11 +1528,13 @@ async def export_integrated_pdf(
 
         elif section.type == "monitoring":
             atts = await _get_attachments(db, exec_id, "monitoring")
-            html_parts.append(_build_att_html(section, atts, "", "Metricas de Monitoreo", for_pdf=True))
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
+            html_parts.append(_build_att_html(section, atts, "", "Metricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
 
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence")
-            html_parts.append(_build_att_html(section, atts, "", "Evidencias y Hallazgos", for_pdf=True))
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
+            html_parts.append(_build_att_html(section, atts, "", "Evidencias y Hallazgos", for_pdf=True, image_overrides=_imgs))
 
     # B2: integrated PDF header removed. PDF starts directly with the first
     # execution's compact cover (from build_pdf_html via _generate_full_execution_pdf_html).
@@ -1511,6 +1588,8 @@ async def export_integrated_html(
 
     exec_info_list = []
     html_parts = []
+    # F6: texto editado, leido de la DB (no del request)
+    overrides_by_exec = await _load_section_overrides(db, request.report_id)
 
     for idx, section in enumerate(sorted(request.sections, key=lambda s: s.order)):
         try:
@@ -1530,14 +1609,16 @@ async def export_integrated_html(
                 'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
             # HF10h: Use Plotly interactive fragment with unique prefix per execution
-            fragment = await _generate_full_execution_plotly_html(execution, db, prefix=f"sec{idx}_")
+            fragment = await _generate_full_execution_plotly_html(execution, db, prefix=f"sec{idx}_", overrides=overrides_by_exec.get(section.source_id))
             html_parts.append(f'<div style="border-top:3px solid #f5a623;margin-top:40px;padding-top:20px">{fragment}</div>')
         elif section.type == "monitoring":
             atts = await _get_attachments(db, exec_id, "monitoring")
-            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Metricas de Monitoreo")}</div>')
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
+            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Metricas de Monitoreo", image_overrides=_imgs)}</div>')
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence")
-            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Evidencias y Hallazgos")}</div>')
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
+            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Evidencias y Hallazgos", image_overrides=_imgs)}</div>')
 
     # HF10h BLOQUE A.1: Integrated header removed. Report starts directly with
     # the yellow separator + individual execution cover (restored in _build_plotly_html_isolated).

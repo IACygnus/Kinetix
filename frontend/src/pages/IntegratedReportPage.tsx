@@ -399,6 +399,7 @@ export default function IntegratedReportPage() {
         body: JSON.stringify({
           sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
           unified_conclusions: conclusions,
+          report_id: persistedId,   // F6: el backend lee los overrides de este registro
         }),
       });
       if (res.ok) {
@@ -422,6 +423,7 @@ export default function IntegratedReportPage() {
         body: JSON.stringify({
           sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
           unified_conclusions: conclusions,
+          report_id: persistedId,   // F6: el backend lee los overrides de este registro
         }),
       });
       if (res.ok) {
