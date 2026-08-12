@@ -16,6 +16,9 @@ interface Props {
   sections: Array<{ type: string; source_id: string; source_name: string }>;
   onGenerated: (data: Record<string, ConsolidatedData>) => void;
   onEdit: (testType: string, field: 'conclusions' | 'recommendations', value: string) => void;
+  // F3: notifica cada tecla al padre para el autosave con debounce. Opcional:
+  // sin esta prop el componente se comporta exactamente igual que en F7.
+  onDraftChange?: (testType: string, field: 'conclusions' | 'recommendations', value: string) => void;
 }
 
 const TEST_TYPE_LABELS: Record<string, string> = {
@@ -28,6 +31,7 @@ export default function ConsolidatedAnalysisSection({
   sections,
   onGenerated,
   onEdit,
+  onDraftChange,
 }: Props) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -123,7 +127,10 @@ export default function ConsolidatedAnalysisSection({
                 <textarea
                   className="w-full min-h-[220px] p-3 border border-slate-200 rounded text-base text-slate-800 leading-relaxed focus:outline-none focus:border-[#f5a623] resize-y"
                   value={data.conclusions ?? ''}
-                  onChange={(e) => setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], conclusions: e.target.value } }))}
+                  onChange={(e) => {
+                    setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], conclusions: e.target.value } }));
+                    onDraftChange?.(testType, 'conclusions', e.target.value);
+                  }}
                   onBlur={(e) => onEdit(testType, 'conclusions', e.target.value)}
                   placeholder="Click para editar conclusiones..."
                 />
@@ -139,7 +146,10 @@ export default function ConsolidatedAnalysisSection({
                 <textarea
                   className="w-full min-h-[220px] p-3 border border-slate-200 rounded text-base text-slate-800 leading-relaxed focus:outline-none focus:border-[#f5a623] resize-y"
                   value={data.recommendations ?? ''}
-                  onChange={(e) => setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], recommendations: e.target.value } }))}
+                  onChange={(e) => {
+                    setDraft(prev => ({ ...prev, [testType]: { ...prev[testType], recommendations: e.target.value } }));
+                    onDraftChange?.(testType, 'recommendations', e.target.value);
+                  }}
                   onBlur={(e) => onEdit(testType, 'recommendations', e.target.value)}
                   placeholder="Click para editar recomendaciones..."
                 />
