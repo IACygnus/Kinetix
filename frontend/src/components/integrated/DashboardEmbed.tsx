@@ -7,9 +7,11 @@ import Dashboard from '../dashboard/Dashboard';
 
 interface DashboardEmbedProps {
   executionId: string;
+  // F2: canal de ediciones hacia IntegratedReportPage
+  onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
 }
 
-export default function DashboardEmbed({ executionId }: DashboardEmbedProps) {
+export default function DashboardEmbed({ executionId, onAnalysisEdit }: DashboardEmbedProps) {
   return (
     <div className="border-b-2 pb-4 mb-4" style={{ borderColor: '#f5a623' }}>
       <Dashboard
@@ -17,6 +19,7 @@ export default function DashboardEmbed({ executionId }: DashboardEmbedProps) {
         onLogout={() => {}}
         onBack={() => {}}
         embedded={true}
+        onAnalysisEdit={onAnalysisEdit}
       />
     </div>
   );

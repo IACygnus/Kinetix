@@ -26,6 +26,9 @@ interface DashboardProps {
   onLogout: () => void;
   onBack: () => void;
   embedded?: boolean;
+  // F2: canal OPCIONAL hacia el informe integrado. Sin esta prop el
+  // comportamiento es identico al de siempre (reporte individual).
+  onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
 }
 
 // ===== CUSTOM TOOLTIP COMPONENT =====
@@ -181,7 +184,7 @@ const EditableTextArea = memo(function EditableTextArea({
   );
 });
 
-export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false }: DashboardProps) {
+export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false, onAnalysisEdit }: DashboardProps) {
   const [execution, setExecution] = useState<any>(null);
   const [charts, setCharts] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -275,6 +278,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     } finally {
       setLoading(false);
     }
+  };
+
+  // F2: guarda en el estado local (como siempre) y ademas avisa al padre si hay canal.
+  const emitEdit = (field: string, setter: (v: string) => void) => (value: string) => {
+    setter(value);
+    onAnalysisEdit?.(executionId!, field, value);
   };
 
   const handleSaveChanges = async () => {
@@ -771,7 +780,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
             <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
             <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-            <EditableTextArea initialValue={analysisSummary} onSave={setAnalysisSummary} placeholder="El analisis aparecera aqui..." />
+            <EditableTextArea initialValue={analysisSummary} onSave={emitEdit('ai_analysis_summary', setAnalysisSummary)} placeholder="El analisis aparecera aqui..." />
           </div>
 
           {/* TABLA DE REDIRECCIONES */}
@@ -829,7 +838,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
                 <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Redirecciones</h3>
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-                <EditableTextArea initialValue={analysisRedirects} onSave={setAnalysisRedirects} placeholder="Analisis de redirecciones..." />
+                <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Analisis de redirecciones..." />
               </div>
             </div>
           )}
@@ -927,7 +936,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
               <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Errores</h3>
               <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-              <EditableTextArea initialValue={analysisErrors} onSave={setAnalysisErrors} placeholder="Analisis de errores..." />
+              <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Analisis de errores..." />
             </div>
           </div>
         )}
@@ -970,7 +979,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(responseTimesByLabel.data, responseTimesByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('rtByLabel', mn, mx)} />
-              <AnalysisBox value={analysisResponseTimes} onChange={setAnalysisResponseTimes} />
+              <AnalysisBox value={analysisResponseTimes} onChange={emitEdit('ai_analysis_response_times', setAnalysisResponseTimes)} />
             </div>
 
             {/* 2. Response Time Over Time */}
@@ -987,7 +996,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(timelineData, ['avg_response_time'])} onRangeChange={(mn, mx) => handleYRange('rtOverTime', mn, mx)} />
-              <AnalysisBox value={analysisResponseTimeOverTime} onChange={setAnalysisResponseTimeOverTime} />
+              <AnalysisBox value={analysisResponseTimeOverTime} onChange={emitEdit('ai_analysis_response_time_over_time', setAnalysisResponseTimeOverTime)} />
             </div>
 
             {/* 3. Throughput */}
@@ -1004,7 +1013,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(throughputData, ['value'])} onRangeChange={(mn, mx) => handleYRange('throughput', mn, mx)} />
-              <AnalysisBox value={analysisThroughput} onChange={setAnalysisThroughput} />
+              <AnalysisBox value={analysisThroughput} onChange={emitEdit('ai_analysis_throughput', setAnalysisThroughput)} />
             </div>
 
             {/* 4. Latency */}
@@ -1021,7 +1030,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(latencyData, ['value'])} onRangeChange={(mn, mx) => handleYRange('latency', mn, mx)} />
-              <AnalysisBox value={analysisLatency} onChange={setAnalysisLatency} />
+              <AnalysisBox value={analysisLatency} onChange={emitEdit('ai_analysis_latency', setAnalysisLatency)} />
             </div>
 
             {/* 5. Error Rate */}
@@ -1038,7 +1047,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(errorRateData, ['value'])} onRangeChange={(mn, mx) => handleYRange('errorRate', mn, mx)} />
-              <AnalysisBox value={analysisErrorRate} onChange={setAnalysisErrorRate} />
+              <AnalysisBox value={analysisErrorRate} onChange={emitEdit('ai_analysis_error_rate', setAnalysisErrorRate)} />
             </div>
 
             {/* 6. Response Codes per Second */}
@@ -1058,7 +1067,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(codesPerSecond.data, codesPerSecond.labels)} onRangeChange={(mn, mx) => handleYRange('codes', mn, mx)} />
-              <AnalysisBox value={analysisCodesPerSecond} onChange={setAnalysisCodesPerSecond} />
+              <AnalysisBox value={analysisCodesPerSecond} onChange={emitEdit('ai_analysis_codes_per_second', setAnalysisCodesPerSecond)} />
             </div>
 
             {/* 7. TPS */}
@@ -1077,7 +1086,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(tpsByLabel.data, tpsByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('tps', mn, mx)} />
-              <AnalysisBox value={analysisTransactionsPerSecond} onChange={setAnalysisTransactionsPerSecond} />
+              <AnalysisBox value={analysisTransactionsPerSecond} onChange={emitEdit('ai_analysis_transactions_per_second', setAnalysisTransactionsPerSecond)} />
             </div>
 
             {/* 8. Active Threads */}
@@ -1094,7 +1103,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(activeThreadsData, ['value'])} onRangeChange={(mn, mx) => handleYRange('threads', mn, mx)} />
-              <AnalysisBox value={analysisActiveThreads} onChange={setAnalysisActiveThreads} />
+              <AnalysisBox value={analysisActiveThreads} onChange={emitEdit('ai_analysis_active_threads', setAnalysisActiveThreads)} />
             </div>
           </div>
           )}
