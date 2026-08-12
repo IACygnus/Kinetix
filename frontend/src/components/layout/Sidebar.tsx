@@ -118,6 +118,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <FileBarChart className="w-6 h-6" />,
         },
         {
+          label: 'Historial Reporte',
+          path: '/performance/history',
+          icon: <ClipboardList className="w-6 h-6" />,
+        },
+        {
           label: 'Metricas Monitoreo',
           path: '/performance/monitoring',
           icon: <Monitor className="w-6 h-6" />,
@@ -135,11 +140,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {
           label: 'Historial Integrado',
           path: '/performance/integrated/history',
-          icon: <ClipboardList className="w-6 h-6" />,
-        },
-        {
-          label: 'Historial',
-          path: '/performance/history',
           icon: <ClipboardList className="w-6 h-6" />,
         },
       ],
