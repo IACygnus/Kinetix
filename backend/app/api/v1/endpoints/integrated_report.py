@@ -978,6 +978,26 @@ class IntegratedReportRequest(BaseModel):
     name: Optional[str] = None
 
 
+def _merge_overrides(prev_sections, new_sections):
+    """F4: conserva los overrides ya guardados al reescribir `sections`.
+
+    Regenerar el informe o el consolidado manda solo punteros; sin esto el
+    texto editado por el usuario se perderia en silencio.
+    """
+    prev = {
+        s.get("source_id"): s.get("overrides")
+        for s in (prev_sections or [])
+        if isinstance(s, dict) and s.get("overrides")
+    }
+    if not prev:
+        return new_sections
+    for s in new_sections:
+        ov = prev.get(s.get("source_id"))
+        if ov and not s.get("overrides"):
+            s["overrides"] = ov
+    return new_sections
+
+
 async def _get_attachments(db: AsyncSession, execution_id: uuid.UUID, att_type: str):
     result = await db.execute(
         select(ExecutionAttachment)
@@ -1349,7 +1369,8 @@ Instrucciones:
                 existing = None
 
         if existing:
-            existing.sections = sections_json
+            # F4: regenerar NO puede borrar el texto editado ya guardado
+            existing.sections = _merge_overrides(existing.sections, sections_json)
             flag_modified(existing, "sections")
             if request.name:
                 existing.name = request.name
@@ -1784,7 +1805,8 @@ INSTRUCCIONES:
         # Update existing
         existing = await db.get(IntegratedReport, uuid.UUID(request.report_id))
         if existing:
-            existing.sections = sections_json
+            # F4: idem — el consolidado tampoco puede llevarse los overrides
+            existing.sections = _merge_overrides(existing.sections, sections_json)
             existing.consolidated_analysis = consolidated
             flag_modified(existing, "sections")
             flag_modified(existing, "consolidated_analysis")

@@ -100,6 +100,7 @@ export default function IntegratedReportPage() {
   const consolidatedRef = useRef<Record<string, any>>({});
   const persistedIdRef = useRef<string | null>(null);
   const reportNameRef = useRef('');
+  const sectionsRef = useRef<ReportSection[]>([]);   // F4: para armar el payload de sections
 
   const getCsrfToken = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '';
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
@@ -109,14 +110,17 @@ export default function IntegratedReportPage() {
     consolidatedRef.current = consolidatedAnalysis;
     persistedIdRef.current = persistedId;
     reportNameRef.current = reportName;
-  }, [consolidatedAnalysis, persistedId, reportName]);
+    sectionsRef.current = sections;
+  }, [consolidatedAnalysis, persistedId, reportName, sections]);
 
   // F2: ediciones de las cajas de SECCION (dashboards e imagenes). Viven en un
   // ref para no re-renderizar nada por tecla. Forma — contrato para F4:
   //   { [executionId]: { analysis: { <campo_db>: texto }, images: { [attachmentId]: texto } } }
   // que en F4 se persiste dentro de cada entrada de `sections` como `overrides`.
-  const sectionOverridesRef = useRef<Record<string, { analysis: Record<string, string>; images: Record<string, string> }>>({});
-  const [hasSectionEdits, setHasSectionEdits] = useState(false);
+  type SectionOverride = { analysis: Record<string, string>; images: Record<string, string> };
+  const sectionOverridesRef = useRef<Record<string, SectionOverride>>({});
+  // F4: copia en estado SOLO para hidratar los hijos al abrir (nunca por tecla)
+  const [sectionOverrides, setSectionOverrides] = useState<Record<string, SectionOverride>>({});
 
   const touchSection = useCallback((execId: string) => {
     if (!sectionOverridesRef.current[execId]) {
@@ -125,17 +129,18 @@ export default function IntegratedReportPage() {
     return sectionOverridesRef.current[execId];
   }, []);
 
-  // F2: una caja de analisis del dashboard embebido cambio (se emite en el blur)
-  const handleSectionAnalysisEdit = useCallback((execId: string, field: string, value: string) => {
-    touchSection(execId).analysis[field] = value;
-    setHasSectionEdits(true);   // un solo setState: false -> true
-  }, [touchSection]);
-
-  // F2: un analisis de imagen cambio (se emite por tecla — solo refs)
-  const handleSectionImageEdit = useCallback((execId: string, attachmentId: string, value: string) => {
-    touchSection(execId).images[attachmentId] = value;
-    setHasSectionEdits(true);
-  }, [touchSection]);
+  // F4: sections con sus overrides, listo para el PATCH
+  const buildSectionsPayload = useCallback(() => {
+    const ov = sectionOverridesRef.current;
+    return sectionsRef.current.map((s, idx) => {
+      const base: Record<string, any> = { order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName };
+      const o = ov[s.sourceId];
+      if (o && (Object.keys(o.analysis).length || Object.keys(o.images).length)) {
+        base.overrides = { analysis: o.analysis, images: o.images };
+      }
+      return base;
+    });
+  }, []);
 
   // F3: base (estado de la pagina) + ediciones pendientes por tecla
   const buildMergedConsolidated = useCallback((): Record<string, any> => {
@@ -171,22 +176,24 @@ export default function IntegratedReportPage() {
     }
   }, [apiBase]);
 
-  // F3: guardado efectivo del consolidado (cancela cualquier debounce en vuelo)
+  // F3 + F4: guardado efectivo — consolidado Y overrides de seccion en el mismo
+  // PATCH (cancela cualquier debounce en vuelo)
   const saveNow = useCallback(async (includeName = false) => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
     const merged = buildMergedConsolidated();
     const payload: Record<string, any> = { consolidated_analysis: merged };
+    // Guarda: nunca mandar una lista vacia — borraria las secciones guardadas.
+    const secs = buildSectionsPayload();
+    if (secs.length) payload.sections = secs;
     if (includeName) payload.name = reportNameRef.current;
     const ok = await persistEdit(payload);
     // El texto plano de los exports se sincroniza con lo que quedo guardado.
     if (ok) setConclusions(flattenConsolidated(merged));
     return ok;
-  }, [buildMergedConsolidated, persistEdit]);
+  }, [buildMergedConsolidated, buildSectionsPayload, persistEdit]);
 
-  // F3: una tecla — solo refs y rearme del timer, CERO setState
-  const handleDraftChange = useCallback((testType: string, field: string, value: string) => {
-    const pend = pendingEditsRef.current;
-    pend[testType] = { ...(pend[testType] || {}), [field]: value };
+  // F3 + F4: rearma el debounce. Lo comparten el consolidado y las secciones.
+  const scheduleSave = useCallback(() => {
     dirtyRef.current = true;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
@@ -194,6 +201,25 @@ export default function IntegratedReportPage() {
       if (dirtyRef.current) saveNow();
     }, SAVE_DEBOUNCE_MS);
   }, [saveNow]);
+
+  // F3: una tecla — solo refs y rearme del timer, CERO setState
+  const handleDraftChange = useCallback((testType: string, field: string, value: string) => {
+    const pend = pendingEditsRef.current;
+    pend[testType] = { ...(pend[testType] || {}), [field]: value };
+    scheduleSave();
+  }, [scheduleSave]);
+
+  // F2 + F4: caja de analisis del dashboard embebido (se emite en el blur)
+  const handleSectionAnalysisEdit = useCallback((execId: string, field: string, value: string) => {
+    touchSection(execId).analysis[field] = value;
+    scheduleSave();
+  }, [touchSection, scheduleSave]);
+
+  // F2 + F4: analisis de imagen (se emite por tecla — solo refs)
+  const handleSectionImageEdit = useCallback((execId: string, attachmentId: string, value: string) => {
+    touchSection(execId).images[attachmentId] = value;
+    scheduleSave();
+  }, [touchSection, scheduleSave]);
 
   // F3: vacia el debounce pendiente antes de acciones que leen lo guardado
   const flushPending = useCallback(async () => {
@@ -237,6 +263,17 @@ export default function IntegratedReportPage() {
             sourceDate: '',
           }));
           setSections(savedSections);
+          // F4: recuperar los overrides guardados. Los informes anteriores a F4
+          // no traen `overrides`: se toleran con defaults y quedan vacios.
+          const savedOverrides: Record<string, SectionOverride> = {};
+          (data.sections || []).forEach((s: any) => {
+            const ov = s?.overrides;
+            if (ov && (ov.analysis || ov.images)) {
+              savedOverrides[s.source_id] = { analysis: ov.analysis || {}, images: ov.images || {} };
+            }
+          });
+          sectionOverridesRef.current = savedOverrides;
+          setSectionOverrides(savedOverrides);
           // Set reportHtml to trigger the report view
           if (savedSections.length > 0) setReportHtml('hydrated');
           // Flatten consolidated for exports
@@ -411,6 +448,7 @@ export default function IntegratedReportPage() {
           attachmentType={s.type === 'monitoring' ? 'monitoring' : 'evidence'}
           sectionTitle={s.type === 'monitoring' ? 'Metricas de Monitoreo' : 'Evidencias y Hallazgos'}
           onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
+          imageOverrides={sectionOverrides[s.sourceId]?.images}
         />
       );
     }
@@ -420,14 +458,17 @@ export default function IntegratedReportPage() {
     return (
       <div key={s.id}>
         {idx > 0 && <hr className="my-6 border-2 border-[#0a1628]" />}
-        <DashboardEmbed executionId={s.sourceId} onAnalysisEdit={handleSectionAnalysisEdit} />
+        <DashboardEmbed executionId={s.sourceId} onAnalysisEdit={handleSectionAnalysisEdit}
+          analysisOverrides={sectionOverrides[s.sourceId]?.analysis} />
         {!hasMonitoring && <MonitoringReportSection executionId={s.sourceId} attachmentType="monitoring" sectionTitle="Metricas de Monitoreo"
-          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)} />}
+          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
+          imageOverrides={sectionOverrides[s.sourceId]?.images} />}
         {!hasEvidence && <MonitoringReportSection executionId={s.sourceId} attachmentType="evidence" sectionTitle="Evidencias y Hallazgos"
-          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)} />}
+          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
+          imageOverrides={sectionOverrides[s.sourceId]?.images} />}
       </div>
     );
-  }), [sections, handleSectionAnalysisEdit, handleSectionImageEdit]);
+  }), [sections, sectionOverrides, handleSectionAnalysisEdit, handleSectionImageEdit]);
 
   const typeMap: Record<string, ReportSection['type']> = { load: 'load_test', stress: 'stress_test', spike: 'stress_test', endurance: 'load_test', scalability: 'load_test', smoke: 'load_test' };
 
@@ -631,15 +672,7 @@ export default function IntegratedReportPage() {
           </div>
 
           {/* F3: barra fija de guardado — visible con cualquier scroll */}
-          <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
-            {/* F2: las ediciones de seccion ya llegan al estado de la pagina, pero
-                todavia NO se persisten (F4). El aviso lo dice sin adornos. */}
-            {hasSectionEdits && (
-              <span className="text-xs font-semibold text-amber-700 max-w-[16rem] text-right">
-                Ediciones en cajas de seccion detectadas — aun NO se guardan (pendiente F4)
-              </span>
-            )}
-            <div className="flex items-center gap-3">
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
             <span className={`text-sm font-medium ${
               saveState === 'error' ? 'text-red-600'
               : saveState === 'saving' ? 'text-gray-500'
@@ -649,7 +682,7 @@ export default function IntegratedReportPage() {
                 : saveState === 'saving' ? 'Guardando...'
                 : saveState === 'saved' ? `Guardado ${savedAt}`
                 : saveState === 'error' ? 'Error al guardar'
-                : 'Autoguardado activo solo en Análisis Consolidado'}
+                : 'Autoguardado activo'}
             </span>
             <button
               onClick={() => saveNow(true)}
@@ -658,7 +691,6 @@ export default function IntegratedReportPage() {
                 saveState === 'error' ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-800'}`}>
               {saveState === 'error' ? 'Reintentar' : 'Guardar cambios'}
             </button>
-            </div>
           </div>
 
           {/* HF9.2: Footer SQA — LAST element of the report */}

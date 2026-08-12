@@ -20,12 +20,15 @@ interface Props {
   attachmentType: 'monitoring' | 'evidence';
   sectionTitle: string;
   onImageAnalysisEdit?: (attachmentId: string, value: string) => void;
+  // F4: analisis por imagen ya editados y guardados en el informe integrado
+  imageOverrides?: Record<string, string>;
 }
 
-export default function MonitoringReportSection({ executionId, attachmentType, sectionTitle, onImageAnalysisEdit }: Props) {
+export default function MonitoringReportSection({ executionId, attachmentType, sectionTitle, onImageAnalysisEdit, imageOverrides }: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editedAnalyses, setEditedAnalyses] = useState<Record<string, string>>({});
+  // F4: arranca con lo guardado en el informe integrado (si lo hay)
+  const [editedAnalyses, setEditedAnalyses] = useState<Record<string, string>>(imageOverrides || {});
 
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
   const mediaBase = apiBase.replace('/api/v1', '');

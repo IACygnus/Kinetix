@@ -29,6 +29,9 @@ interface DashboardProps {
   // F2: canal OPCIONAL hacia el informe integrado. Sin esta prop el
   // comportamiento es identico al de siempre (reporte individual).
   onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
+  // F4: texto editado guardado en el informe integrado. Se aplica encima de lo
+  // que trae la DB. El reporte individual no la pasa y no se ve afectado.
+  analysisOverrides?: Record<string, string>;
 }
 
 // ===== CUSTOM TOOLTIP COMPONENT =====
@@ -184,7 +187,7 @@ const EditableTextArea = memo(function EditableTextArea({
   );
 });
 
-export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false, onAnalysisEdit }: DashboardProps) {
+export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false, onAnalysisEdit, analysisOverrides }: DashboardProps) {
   const [execution, setExecution] = useState<any>(null);
   const [charts, setCharts] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -270,6 +273,20 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
       setAnalysisRedirects(execData.ai_analysis_redirects || '');
       setConclusions(execData.ai_conclusions || '');
       setRecommendations(execData.ai_recommendations || '');
+
+      // F4: overrides del informe integrado — se aplican ENCIMA del texto de la
+      // DB. Solo afectan a esta vista embebida; la ejecucion no se modifica.
+      if (analysisOverrides) {
+        const setters: Record<string, (v: string) => void> = {
+          ai_analysis_summary: setAnalysisSummary, ai_analysis_errors: setAnalysisErrors,
+          ai_analysis_response_times: setAnalysisResponseTimes, ai_analysis_response_time_over_time: setAnalysisResponseTimeOverTime,
+          ai_analysis_throughput: setAnalysisThroughput, ai_analysis_latency: setAnalysisLatency,
+          ai_analysis_error_rate: setAnalysisErrorRate, ai_analysis_codes_per_second: setAnalysisCodesPerSecond,
+          ai_analysis_transactions_per_second: setAnalysisTransactionsPerSecond, ai_analysis_active_threads: setAnalysisActiveThreads,
+          ai_analysis_redirects: setAnalysisRedirects,
+        };
+        Object.entries(analysisOverrides).forEach(([k, v]) => setters[k]?.(v));
+      }
     } catch (error: any) {
       console.error('Error loading data:', error);
       setLoadError(error?.response?.status === 401
