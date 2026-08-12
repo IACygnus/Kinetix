@@ -786,7 +786,7 @@ tr:hover{{background:#f8fafc}}
 <div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
-Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']} &nbsp;|&nbsp; Generado: {now_str}
+Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
 </div>
 </div>
 </div>
@@ -905,8 +905,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
-sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos<br>
-<span style="font-size:.75rem">Generado: {now_str}</span>
+sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
 </div>
 
 </div>
