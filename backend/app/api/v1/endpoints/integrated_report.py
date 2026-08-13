@@ -571,10 +571,29 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # N1.5: logo del cliente. Sin logo -> cadena vacia y la cabecera queda
     # exactamente igual que antes (ni un hueco de mas).
     _logo_uri = meta.get('client_logo')
-    client_logo_html = (
-        f'<img src="{_logo_uri}" alt="Logo del cliente" '
-        f'style="max-height:48px;max-width:150px;display:block;margin:.35rem 0 .15rem 0" />'
-    ) if _logo_uri else ''
+    # N1.8: con logo, la cabecera reorganiza: el logo ocupa en grande la celda
+    # de la derecha (la de Tipo de Prueba) y el tipo se integra al bloque
+    # Cliente. Sin logo, todo queda EXACTAMENTE como antes.
+    if _logo_uri:
+        celda_cliente = (
+            f'<div class="plotly-meta-label">Cliente</div>'
+            f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
+            f'<div class="plotly-meta-label" style="margin-top:.6rem">Tipo de Prueba</div>'
+            f'<div class="plotly-meta-value">{meta["testTypeLabel"]}</div>'
+        )
+        celda_derecha = (
+            f'<img src="{_logo_uri}" alt="Logo del cliente" '
+            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin-left:auto" />'
+        )
+    else:
+        celda_cliente = (
+            f'<div class="plotly-meta-label">Cliente</div>'
+            f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
+        )
+        celda_derecha = (
+            f'<div class="plotly-meta-label">Tipo de Prueba</div>'
+            f'<div class="plotly-meta-value">{meta["testTypeLabel"]}</div>'
+        )
 
     # Body fragment (HF10h BLOQUE A.1: cover restored)
     return f'''
@@ -588,10 +607,10 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
 <div class="plotly-meta-grid">
-<div><div class="plotly-meta-label">Cliente</div>{client_logo_html}<div class="plotly-meta-value">{meta['client'] or 'N/A'}</div></div>
+<div>{celda_cliente}</div>
 <div><div class="plotly-meta-label">Nombre del Proyecto</div><div class="plotly-meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
-<div><div class="plotly-meta-label">Tipo de Prueba</div><div class="plotly-meta-value">{meta['testTypeLabel']}</div></div>
+<div>{celda_derecha}</div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
 Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}

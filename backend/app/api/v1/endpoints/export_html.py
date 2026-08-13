@@ -714,10 +714,29 @@ def _build_plotly_html(
     # plantilla queda exactamente igual que antes. Aca sí se permiten px:
     # es HTML para navegador, no la rama PDF.
     _client_logo = meta.get('client_logo')
-    client_logo_html = (
-        f'<img src="{_client_logo}" alt="Logo del cliente" '
-        f'style="max-height:48px;max-width:150px;display:block;margin:.35rem 0 .15rem 0" />'
-    ) if _client_logo else ''
+    # N1.8: con logo, la cabecera reorganiza: el logo ocupa en grande la celda
+    # de la derecha (la de Tipo de Prueba) y el tipo se integra al bloque
+    # Cliente. Sin logo, todo queda EXACTAMENTE como antes.
+    if _client_logo:
+        celda_cliente = (
+            f'<div class="meta-label">Cliente</div>'
+            f'<div class="meta-value">{meta["client"] or "N/A"}</div>'
+            f'<div class="meta-label" style="margin-top:.6rem">Tipo de Prueba</div>'
+            f'<div class="meta-value">{meta["testTypeLabel"]}</div>'
+        )
+        celda_derecha = (
+            f'<img src="{_client_logo}" alt="Logo del cliente" '
+            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin-left:auto" />'
+        )
+    else:
+        celda_cliente = (
+            f'<div class="meta-label">Cliente</div>'
+            f'<div class="meta-value">{meta["client"] or "N/A"}</div>'
+        )
+        celda_derecha = (
+            f'<div class="meta-label">Tipo de Prueba</div>'
+            f'<div class="meta-value">{meta["testTypeLabel"]}</div>'
+        )
 
     # ---- Full HTML ----
     return f'''<!DOCTYPE html>
@@ -793,10 +812,10 @@ tr:hover{{background:#f8fafc}}
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge}</div>
 <div class="project-name">{meta['name']}</div>
 <div class="meta-grid">
-<div><div class="meta-label">Cliente</div>{client_logo_html}<div class="meta-value">{meta['client'] or 'N/A'}</div></div>
+<div>{celda_cliente}</div>
 <div><div class="meta-label">Nombre del Proyecto</div><div class="meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
-<div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
+<div>{celda_derecha}</div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
 Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}

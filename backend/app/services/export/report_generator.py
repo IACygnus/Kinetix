@@ -220,10 +220,33 @@ def build_pdf_html(
     # (regla 17: nunca rem en PDF) y dentro de la celda de la tabla existente
     # (regla 11: WeasyPrint no maneja flex/grid).
     _client_logo = meta.get('client_logo')
-    client_logo_html = (
-        f'<img src="{_client_logo}" alt="Logo del cliente" '
-        f'style="max-height:12mm;max-width:34mm;display:block;margin:1mm 0 0.5mm 0" />'
-    ) if _client_logo else ''
+
+    # N1.8: CON logo, la portada reorganiza la fila de metadatos — el logo pasa
+    # a la celda derecha (la de TIPO DE PRUEBA) en grande, y el tipo de prueba
+    # se integra al bloque CLIENTE. SIN logo, todo queda EXACTAMENTE como antes,
+    # para que un cliente sin logo no deje un hueco enorme a la derecha.
+    if _client_logo:
+        cover_cell_cliente = (
+            f'<div class="cover-meta-label">CLIENTE</div>'
+            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
+            f'<div class="cover-meta-label" style="margin-top:2.5mm">TIPO DE PRUEBA</div>'
+            f'<div class="cover-meta-value">{meta["testTypeLabel"]}</div>'
+        )
+        cover_cell_derecha = (
+            f'<img src="{_client_logo}" alt="Logo del cliente" '
+            f'style="max-height:26mm;max-width:58mm;display:block;margin:0 0 0 auto" />'
+        )
+        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:middle;text-align:right'
+    else:
+        cover_cell_cliente = (
+            f'<div class="cover-meta-label">CLIENTE</div>'
+            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
+        )
+        cover_cell_derecha = (
+            f'<div class="cover-meta-label">TIPO DE PRUEBA</div>'
+            f'<div class="cover-meta-value">{meta["testTypeLabel"]}</div>'
+        )
+        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:top'   # identico al layout de siempre
 
     # Verdict badge (inline in .cover-pretitle only — duplicated destacado block removed in Fix 3)
     criteria = meta.get('acceptanceCriteria', {})
@@ -716,10 +739,10 @@ tbody tr:nth-child(even) {{
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">CLIENTE</div>{client_logo_html}<div class="cover-meta-value">{meta['client'] or 'N/A'}</div></td>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top">{cover_cell_cliente}</td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">NOMBRE DEL PROYECTO</div><div class="cover-meta-value">{meta['project'] or meta['name']}</div></td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
-            <td style="border:none;padding:0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
+            <td style="{cover_cell_derecha_style}">{cover_cell_derecha}</td>
         </tr></table>
         <div class="cover-info-footer">
             Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}{criteria_str}
