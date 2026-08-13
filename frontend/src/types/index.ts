@@ -70,6 +70,7 @@ export interface ClientInfo {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  has_logo?: boolean;   // N1.3
 }
 
 export interface ClientCreate {

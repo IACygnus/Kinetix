@@ -266,6 +266,31 @@ export const clientsAPI = {
   unassign: async (userId: string, clientId: string) => {
     await api.delete(`/clients/assignments/${userId}/${clientId}`);
   },
+
+  // ---- N1.3: logo del cliente ----
+  uploadLogo: async (id: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    // Mismo patron que el resto de uploads del proyecto: el interceptor agrega
+    // el CSRF y axios arma el boundary del multipart.
+    const response = await api.post(`/clients/${id}/logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  deleteLogo: async (id: string) => {
+    await api.delete(`/clients/${id}/logo`);
+  },
+
+  // Descarga el logo CON credenciales y devuelve un object URL para el <img>.
+  // No se puede apuntar el <img> directo al endpoint: la cookie de sesion es
+  // SameSite=lax y en dev el front (:5173) y la API (:8001) son origenes
+  // distintos, asi que el navegador no la mandaria y responderia 401.
+  logoObjectUrl: async (id: string): Promise<string> => {
+    const response = await api.get(`/clients/${id}/logo`, { responseType: 'blob' });
+    return URL.createObjectURL(response.data);
+  },
 };
 
 // ============ AI CONFIG ============

@@ -27,11 +27,61 @@ export default function ClientsPage() {
   const [formContact, setFormContact] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  // N1.3: logo del cliente
+  const [logoFile, setLogoFile] = useState<File | null>(null);       // archivo nuevo a subir
+  const [logoPreview, setLogoPreview] = useState<string | null>(null); // dataURL nuevo o URL del actual
+  const [logoRemove, setLogoRemove] = useState(false);                // marcado para borrar
+  const [logoError, setLogoError] = useState('');
+  const [logoUrls, setLogoUrls] = useState<Record<string, string>>({}); // id -> object URL
+
+  const LOGO_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+  const LOGO_MAX = 2 * 1024 * 1024;
+
+  const handleLogoPick = (file: File | null) => {
+    setLogoError('');
+    if (!file) return;
+    if (!LOGO_MIME.includes(file.type)) {
+      setLogoError('Formato no permitido. Use PNG, JPG o WebP.');
+      return;
+    }
+    if (file.size > LOGO_MAX) {
+      setLogoError(`El logo pesa ${(file.size / 1024 / 1024).toFixed(1)} MB. El maximo es 2 MB.`);
+      return;
+    }
+    setLogoFile(file);
+    setLogoRemove(false);
+    setLogoPreview(URL.createObjectURL(file));
+  };
+
+  // Trae los logos con credenciales y arma object URLs para las miniaturas.
+  const loadLogos = async (list: ClientInfo[]) => {
+    const pairs = await Promise.all(
+      list.filter((c) => c.has_logo).map(async (c) => {
+        try {
+          return [c.id, await clientsAPI.logoObjectUrl(c.id)] as [string, string];
+        } catch {
+          return null;
+        }
+      }),
+    );
+    setLogoUrls((prev) => {
+      Object.values(prev).forEach((u) => URL.revokeObjectURL(u));   // sin fugas
+      return Object.fromEntries(pairs.filter(Boolean) as [string, string][]);
+    });
+  };
+
+  const clearLogo = () => {
+    setLogoFile(null);
+    setLogoPreview(null);
+    setLogoRemove(true);   // en editar: marca para borrar al guardar
+    setLogoError('');
+  };
 
   const fetchClients = async () => {
     try {
       const data = await clientsAPI.list();
       setClients(data);
+      await loadLogos(data);   // N1.3: miniaturas
     } catch {
       setError('Error al cargar clientes');
     } finally {
@@ -50,6 +100,10 @@ export default function ClientsPage() {
     setFormEmail('');
     setEditId(null);
     setShowModal(false);
+    setLogoFile(null);
+    setLogoPreview(null);
+    setLogoRemove(false);
+    setLogoError('');
   };
 
   const openCreate = () => {
@@ -63,6 +117,11 @@ export default function ClientsPage() {
     setFormDescription(client.description || '');
     setFormContact(client.contact_name || '');
     setFormEmail(client.contact_email || '');
+    // N1.3: el logo existente se muestra desde el endpoint; aun no hay archivo nuevo
+    setLogoFile(null);
+    setLogoRemove(false);
+    setLogoError('');
+    setLogoPreview(client.has_logo ? logoUrls[client.id] || null : null);
     setShowModal(true);
   };
 
@@ -76,11 +135,29 @@ export default function ClientsPage() {
         contact_name: formContact.trim() || undefined,
         contact_email: formEmail.trim() || undefined,
       };
-      if (editId) {
-        await clientsAPI.update(editId, payload);
-      } else {
-        await clientsAPI.create(payload);
+      // N1.3: primero los datos. Si el logo falla despues, el cliente igual
+      // queda guardado y solo se muestra el error del logo.
+      const saved = editId
+        ? await clientsAPI.update(editId, payload)
+        : await clientsAPI.create(payload);
+
+      try {
+        if (logoFile) {
+          await clientsAPI.uploadLogo(saved.id, logoFile);
+        } else if (logoRemove && editId) {
+          await clientsAPI.deleteLogo(saved.id);
+        }
+      } catch (logoErr: unknown) {
+        const e = logoErr as { response?: { data?: { detail?: string } } };
+        await fetchClients();   // recarga miniaturas
+        setError(
+          `Los datos del cliente se guardaron, pero el logo no: ${
+            e.response?.data?.detail || 'error al subir el logo'
+          }`,
+        );
+        return;   // el modal queda abierto para reintentar solo el logo
       }
+
       resetForm();
       await fetchClients();
     } catch (err: unknown) {
@@ -189,7 +266,16 @@ export default function ClientsPage() {
               >
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
-                    <Building2 className="w-5 h-5 text-[#f5a623]" />
+                    {/* N1.3: miniatura del logo, o el icono generico si no hay */}
+                    {client.has_logo && logoUrls[client.id] ? (
+                      <img
+                        src={logoUrls[client.id]}
+                        alt={`Logo ${client.name}`}
+                        className="h-6 max-w-[72px] object-contain"
+                      />
+                    ) : (
+                      <Building2 className="w-5 h-5 text-[#f5a623]" />
+                    )}
                     <span className="text-base font-semibold text-gray-800">{client.name}</span>
                   </div>
                 </td>
@@ -288,6 +374,42 @@ export default function ClientsPage() {
                   placeholder="email@ejemplo.com"
                   className="w-full px-4 h-12 bg-white border border-gray-300 rounded-lg text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-[#f5a623] text-base"
                 />
+              </div>
+
+              {/* N1.3: logo del cliente — aparece en los informes exportados */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Logo del Cliente</label>
+                <div className="flex items-center gap-4">
+                  <div className="w-32 h-16 border border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50 overflow-hidden shrink-0">
+                    {logoPreview ? (
+                      <img src={logoPreview} alt="Logo" className="max-h-16 max-w-32 object-contain" />
+                    ) : (
+                      <Building2 className="w-6 h-6 text-gray-300" />
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:border-[#f5a623] cursor-pointer transition-colors">
+                      {logoPreview ? 'Cambiar logo' : 'Subir logo'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => handleLogoPick(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                    {logoPreview && (
+                      <button
+                        type="button"
+                        onClick={clearLogo}
+                        className="px-4 py-2 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-left"
+                      >
+                        Quitar logo
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mt-2">PNG, JPG o WebP. Maximo 2 MB. Se ajusta solo a 400x160 px.</p>
+                {logoError && <p className="text-sm text-red-600 mt-1">{logoError}</p>}
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
