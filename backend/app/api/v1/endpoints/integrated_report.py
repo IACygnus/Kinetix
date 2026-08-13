@@ -1555,6 +1555,12 @@ async def export_integrated_pdf(
 {extracted_style}
 @page {{ size: A4 landscape; margin: 1.5cm; }}
 @page :first {{ margin: 0; }}
+/* PDF-1: la portada mide ~210mm y solo cabe en una pagina sin margenes. Con
+   `:first` eso solo valia para la pagina 1, asi que en un integrado con varias
+   ejecuciones la 2a portada en adelante se partia en dos. Con pagina nombrada,
+   TODA portada cae en su propia pagina sin margen. */
+@page cover {{ margin: 0; @bottom-center {{ content: none; }} }}
+.cover {{ page: cover; }}
 img {{ max-width: 100%; height: auto; }}
 </style>
 </head>
