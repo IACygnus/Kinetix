@@ -23,6 +23,7 @@ from app.db.models.scenario import Scenario
 from app.db.models.performance_execution import PerformanceExecution
 from app.db.models.data_file import DataFile
 from app.db.models.attachment import ExecutionAttachment
+from app.db.models.client_logo import ClientLogo
 from app.core.security import get_password_hash
 
 # Configurar logging
