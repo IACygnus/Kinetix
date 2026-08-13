@@ -371,6 +371,10 @@ async def export_html(
         pie_values = [int(row['count']) for _, row in response_codes.iterrows()]
         pie_colors = [HTTP_CODE_COLORS.get(c, '#94a3b8') for c in pie_labels]
 
+        # N1.7: logo del cliente para la cabecera (None si no hay)
+        from app.services.export.client_logo import get_client_logo_b64
+        meta['client_logo'] = await get_client_logo_b64(db, execution)
+
         # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
         html_content = _build_plotly_html(
             meta=meta,
@@ -706,6 +710,15 @@ def _build_plotly_html(
             f'</div>'
         )
 
+    # N1.7: logo del cliente en la cabecera. Sin logo -> cadena vacia y la
+    # plantilla queda exactamente igual que antes. Aca sí se permiten px:
+    # es HTML para navegador, no la rama PDF.
+    _client_logo = meta.get('client_logo')
+    client_logo_html = (
+        f'<img src="{_client_logo}" alt="Logo del cliente" '
+        f'style="max-height:48px;max-width:150px;display:block;margin:.35rem 0 .15rem 0" />'
+    ) if _client_logo else ''
+
     # ---- Full HTML ----
     return f'''<!DOCTYPE html>
 <html lang="es">
@@ -780,7 +793,7 @@ tr:hover{{background:#f8fafc}}
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge}</div>
 <div class="project-name">{meta['name']}</div>
 <div class="meta-grid">
-<div><div class="meta-label">Cliente</div><div class="meta-value">{meta['client'] or 'N/A'}</div></div>
+<div><div class="meta-label">Cliente</div>{client_logo_html}<div class="meta-value">{meta['client'] or 'N/A'}</div></div>
 <div><div class="meta-label">Nombre del Proyecto</div><div class="meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
 <div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
