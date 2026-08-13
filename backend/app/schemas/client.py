@@ -31,6 +31,9 @@ class ClientResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # N1.2: se calcula sin traer los bytes del logo. Default False para que los
+    # endpoints que no lo calculan sigan respondiendo igual.
+    has_logo: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

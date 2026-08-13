@@ -1,15 +1,18 @@
 """
 Endpoints CRUD de Clientes y asignaciones Usuario-Cliente - Admin only - v2.1
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List
+import io
 import uuid
 import logging
 
 from app.db.session import get_db
 from app.db.models.client import Client, UserClient
+from app.db.models.client_logo import ClientLogo
 from app.db.models.user import User
 from app.core.security import require_role, get_current_active_user
 from app.schemas.client import (
@@ -36,7 +39,7 @@ async def list_clients(
     result = await db.execute(
         select(Client).order_by(Client.name)
     )
-    return result.scalars().all()
+    return await _with_logo_flag(db, result.scalars().all())
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
@@ -102,6 +105,7 @@ async def update_client(
     await db.refresh(client)
 
     logger.info(f"Cliente actualizado: {client.name} por {current_user.username}")
+    (await _with_logo_flag(db, [client]))   # N1.2: no perder has_logo al editar
     return client
 
 
@@ -250,4 +254,120 @@ async def get_my_clients(
             Client.is_active == True,
         ).order_by(Client.name)
     )
-    return result.scalars().all()
+    clients = result.scalars().all()
+    return await _with_logo_flag(db, clients)
+
+
+# ===================== CLIENT LOGO (N1.2) =====================
+
+LOGO_ALLOWED_MIME = {"image/png", "image/jpeg", "image/webp"}
+LOGO_MAX_UPLOAD = 2 * 1024 * 1024      # 2 MB de subida
+LOGO_MAX_SIZE = (400, 160)             # ancho x alto maximos tras normalizar
+
+
+async def _with_logo_flag(db: AsyncSession, clients):
+    """Marca has_logo en cada cliente con UNA consulta y SIN traer los bytes.
+
+    Se consulta solo la columna client_id; `data` (BYTEA) nunca entra en memoria.
+    El atributo es transitorio: no es una columna, no se persiste.
+    """
+    if not clients:
+        return clients
+    result = await db.execute(select(ClientLogo.client_id))
+    with_logo = set(result.scalars().all())
+    for c in clients:
+        c.has_logo = c.id in with_logo
+    return clients
+
+
+@router.post("/{client_id}/logo")
+async def upload_client_logo(
+    client_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin"])),
+):
+    """Sube o reemplaza el logo del cliente - Solo admin."""
+    result = await db.execute(select(Client).where(Client.id == client_id))
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    if file.content_type not in LOGO_ALLOWED_MIME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de archivo no permitido: {file.content_type}. Permitidos: PNG, JPG, WebP",
+        )
+
+    content = await file.read()
+    if len(content) > LOGO_MAX_UPLOAD:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El logo excede el limite de {LOGO_MAX_UPLOAD // (1024 * 1024)}MB",
+        )
+
+    # Normalizacion: PNG con transparencia, reducido a LOGO_MAX_SIZE. `thumbnail`
+    # respeta la proporcion y NUNCA agranda una imagen mas chica.
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(content))
+        img.load()                       # una imagen corrupta revienta aca, antes de escribir
+        img = img.convert("RGBA")        # conserva/agrega canal alfa
+        img.thumbnail(LOGO_MAX_SIZE, Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        data = buf.getvalue()
+    except Exception as e:
+        logger.warning(f"Logo invalido para cliente {client_id}: {e}")
+        raise HTTPException(status_code=400, detail="La imagen no se pudo procesar. Suba un PNG, JPG o WebP valido.")
+
+    result = await db.execute(select(ClientLogo).where(ClientLogo.client_id == client_id))
+    logo = result.scalar_one_or_none()
+    if logo:
+        logo.data = data
+        logo.mime_type = "image/png"
+        logo.file_size = len(data)
+    else:
+        db.add(ClientLogo(
+            id=uuid.uuid4(), client_id=client_id, data=data,
+            mime_type="image/png", file_size=len(data),
+        ))
+    await db.flush()
+
+    logger.info(f"Logo de '{client.name}' actualizado por {current_user.username} ({len(data)} bytes)")
+    return {
+        "client_id": str(client_id), "mime_type": "image/png",
+        "file_size": len(data), "width": img.width, "height": img.height,
+    }
+
+
+@router.get("/{client_id}/logo")
+async def get_client_logo(
+    client_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Devuelve la imagen del logo - Cualquier usuario autenticado."""
+    result = await db.execute(select(ClientLogo).where(ClientLogo.client_id == client_id))
+    logo = result.scalar_one_or_none()
+    if not logo:
+        raise HTTPException(status_code=404, detail="Este cliente no tiene logo")
+    return Response(content=logo.data, media_type=logo.mime_type,
+                    headers={"Cache-Control": "no-cache"})
+
+
+@router.delete("/{client_id}/logo")
+async def delete_client_logo(
+    client_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin"])),
+):
+    """Quita el logo del cliente - Solo admin."""
+    result = await db.execute(select(ClientLogo).where(ClientLogo.client_id == client_id))
+    logo = result.scalar_one_or_none()
+    if not logo:
+        raise HTTPException(status_code=404, detail="Este cliente no tiene logo")
+    await db.delete(logo)
+    await db.flush()
+    logger.info(f"Logo del cliente {client_id} eliminado por {current_user.username}")
+    return {"deleted": True}
