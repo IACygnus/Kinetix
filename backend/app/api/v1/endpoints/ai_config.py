@@ -227,11 +227,16 @@ async def create_or_update_ai_config(
         config.provider = data.provider
 
     if data.model_name is not None:
-        provider = data.provider or config.provider
-        provider_info = PROVIDERS.get(provider)
-        if provider_info and data.model_name not in provider_info.models:
-            raise HTTPException(400, f"Modelo invalido para {provider}. Opciones: {provider_info.models}")
-        config.model_name = data.model_name
+        # B6: NO se valida contra PROVIDERS. Esa lista es fija y envejece sola:
+        # el desplegable se llena con la lista viva del proveedor (95 modelos),
+        # asi que validar contra 4 rechazaba casi todo — incluido el modelo ya
+        # configurado. PROVIDERS queda solo como fallback del desplegable cuando
+        # models/live no responde. La verificacion real del modelo es el boton
+        # "Probar conexion" (POST /ai-config/test), que consulta al proveedor.
+        model_name = (data.model_name or "").strip()
+        if not model_name:
+            raise HTTPException(400, "El nombre del modelo no puede estar vacio.")
+        config.model_name = model_name
 
     # API key handling: only encrypt if it's a real new plaintext key.
     # If it's "****", "•...", or empty → keep the existing encrypted key in DB.

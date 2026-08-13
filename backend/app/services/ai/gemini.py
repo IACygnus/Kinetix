@@ -49,8 +49,33 @@ OPENAI_MAX_TOKENS = {
     "gpt-5-mini": 16384,
     "gpt-5-nano": 8192,
     "o4-mini": 16384,
+    # B6: familias de razonamiento que ofrece la lista viva. Su limite real de
+    # salida documentado es MAYOR; se fija 16384 como valor conservador (igual
+    # que o4-mini) para que no caigan al default de 4096 y trunquen. Subirlo es
+    # seguro si algun analisis se queda corto.
+    "o3": 16384,
+    "o3-mini": 16384,
+    "o1": 16384,
+    "o1-mini": 16384,
 }
 OPENAI_DEFAULT_MAX_TOKENS = 4096
+
+
+def _openai_max_tokens_for(model_name: str) -> int:
+    """Techo de salida del modelo, avisando cuando no esta en el dict.
+
+    B6 (leccion HF18b): un modelo ausente de OPENAI_MAX_TOKENS caia al default
+    de 4096 EN SILENCIO y truncaba los analisis. Ahora queda registrado en el
+    log con el nombre del modelo. Mismo patron que ya usa script_ai.py.
+    """
+    if model_name in OPENAI_MAX_TOKENS:
+        return OPENAI_MAX_TOKENS[model_name]
+    logger.warning(
+        "modelo %s sin entrada en OPENAI_MAX_TOKENS, usando default %s "
+        "(riesgo de truncacion: agregarlo al dict si el analisis sale corto)",
+        model_name, OPENAI_DEFAULT_MAX_TOKENS,
+    )
+    return OPENAI_DEFAULT_MAX_TOKENS
 
 # Performance tier thresholds (ms)
 TIER_EXCELLENT = 500
@@ -698,7 +723,7 @@ class GeminiAnalyzer:
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": prompt},
                         ],
-                        max_tokens=OPENAI_MAX_TOKENS.get(self.model_name, OPENAI_DEFAULT_MAX_TOKENS),
+                        max_tokens=_openai_max_tokens_for(self.model_name),
                         temperature=GENERATION_CONFIG["temperature"],
                     )
                     result = response.choices[0].message.content if response.choices else None
@@ -805,7 +830,7 @@ class GeminiAnalyzer:
                             }}
                         ]
                     }],
-                    max_tokens=min(OPENAI_MAX_TOKENS.get(self.model_name, OPENAI_DEFAULT_MAX_TOKENS), 1024),
+                    max_tokens=min(_openai_max_tokens_for(self.model_name), 1024),
                     temperature=0.3,
                 )
                 text = response.choices[0].message.content if response.choices else None

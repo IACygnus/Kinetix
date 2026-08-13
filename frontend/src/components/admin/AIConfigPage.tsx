@@ -81,7 +81,11 @@ export default function AIConfigPage() {
     }
   };
 
-  const availableModels = providers.find((p) => p.id === selectedProvider)?.models || [];
+  // B6: la lista viva trae modelos que no sirven para analizar texto
+  // (transcripcion, audio, imagenes, embeddings). Se ocultan del desplegable.
+  const NO_CHAT = ['whisper', 'tts', 'dall-e', 'embedding', 'transcribe', 'audio', 'search-preview', 'realtime', 'moderation', 'image'];
+  const availableModels = (providers.find((p) => p.id === selectedProvider)?.models || [])
+    .filter((m) => !NO_CHAT.some((bad) => m.toLowerCase().includes(bad)));
 
   const handleProviderChange = (newProvider: string) => {
     setSelectedProvider(newProvider);
@@ -115,8 +119,11 @@ export default function AIConfigPage() {
       setSuccess('Configuracion guardada exitosamente');
       setTestResult(null);
       setTimeout(() => setSuccess(''), 4000);
-    } catch {
-      setError('Error guardando configuracion');
+    } catch (err: any) {
+      // B6: mostrar el motivo real que manda el backend (ej. modelo vacio),
+      // no un generico que esconde la causa.
+      const detail = err?.response?.data?.detail;
+      setError(typeof detail === 'string' && detail ? detail : 'Error guardando configuracion');
     } finally {
       setSaving(false);
     }
