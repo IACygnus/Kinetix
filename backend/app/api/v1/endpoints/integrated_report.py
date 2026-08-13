@@ -28,6 +28,7 @@ from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
+from app.services.export.client_logo import get_client_logo_b64   # N1.5
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 import pandas as pd
 import json as _json_hf10h
@@ -564,6 +565,14 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     id_threads = f"{prefix}chart-threads"
     id_pie = f"{prefix}chart-pie"
 
+    # N1.5: logo del cliente. Sin logo -> cadena vacia y la cabecera queda
+    # exactamente igual que antes (ni un hueco de mas).
+    _logo_uri = meta.get('client_logo')
+    client_logo_html = (
+        f'<img src="{_logo_uri}" alt="Logo del cliente" '
+        f'style="max-height:48px;max-width:150px;display:block;margin:.35rem 0 .15rem 0" />'
+    ) if _logo_uri else ''
+
     # Body fragment (HF10h BLOQUE A.1: cover restored)
     return f'''
 <div class="plotly-header">
@@ -576,7 +585,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
 <div class="plotly-meta-grid">
-<div><div class="plotly-meta-label">Cliente</div><div class="plotly-meta-value">{meta['client'] or 'N/A'}</div></div>
+<div><div class="plotly-meta-label">Cliente</div>{client_logo_html}<div class="plotly-meta-value">{meta['client'] or 'N/A'}</div></div>
 <div><div class="plotly-meta-label">Nombre del Proyecto</div><div class="plotly-meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
 <div><div class="plotly-meta-label">Tipo de Prueba</div><div class="plotly-meta-value">{meta['testTypeLabel']}</div></div>
@@ -850,6 +859,9 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'totalRedirects': execution.total_redirects or 0,
             'acceptanceCriteria': execution.acceptance_criteria_json or {},
         }
+        # N1.5: logo del cliente para la cabecera. None si el cliente no tiene
+        # logo o no se puede resolver: la plantilla entonces no pinta nada.
+        meta['client_logo'] = await get_client_logo_b64(db, execution)
 
         # Build Plotly traces
         tl_timestamps = _ts_iso_list(tl)
