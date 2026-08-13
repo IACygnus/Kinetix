@@ -195,6 +195,9 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
             'acceptanceCriteria': execution.acceptance_criteria_json or {},
         }
 
+        # N1.6: logo del cliente para la portada (None si no hay: portada igual que hoy)
+        meta['client_logo'] = await get_client_logo_b64(db, execution)
+
         # Generate the full PDF HTML using report_generator's build_pdf_html
         return build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 

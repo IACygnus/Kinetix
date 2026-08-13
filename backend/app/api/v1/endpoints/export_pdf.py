@@ -269,6 +269,10 @@ async def export_pdf(
         }
 
         # ---- Render PDF (individual: NO monitoring/evidence attachments) ----
+        # N1.6: logo del cliente para la portada (None si no hay: portada igual que hoy)
+        from app.services.export.client_logo import get_client_logo_b64
+        meta['client_logo'] = await get_client_logo_b64(db, execution)
+
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 
         # KNX-17: Capacity analysis for PDF

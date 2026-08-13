@@ -215,6 +215,16 @@ def build_pdf_html(
     # Test-type badge
     tt_color = meta.get('testTypeColor', '#3b82f6')
 
+    # N1.6: logo del cliente en la portada (data-URI o None). Sin logo queda una
+    # cadena vacia y la portada sale exactamente igual que antes. Medidas en mm
+    # (regla 17: nunca rem en PDF) y dentro de la celda de la tabla existente
+    # (regla 11: WeasyPrint no maneja flex/grid).
+    _client_logo = meta.get('client_logo')
+    client_logo_html = (
+        f'<img src="{_client_logo}" alt="Logo del cliente" '
+        f'style="max-height:12mm;max-width:34mm;display:block;margin:1mm 0 0.5mm 0" />'
+    ) if _client_logo else ''
+
     # Verdict badge (inline in .cover-pretitle only — duplicated destacado block removed in Fix 3)
     criteria = meta.get('acceptanceCriteria', {})
     verdict_text = criteria.get('verdict', '') if isinstance(criteria, dict) else ''
@@ -706,7 +716,7 @@ tbody tr:nth-child(even) {{
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">CLIENTE</div><div class="cover-meta-value">{meta['client'] or 'N/A'}</div></td>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">CLIENTE</div>{client_logo_html}<div class="cover-meta-value">{meta['client'] or 'N/A'}</div></td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">NOMBRE DEL PROYECTO</div><div class="cover-meta-value">{meta['project'] or meta['name']}</div></td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
             <td style="border:none;padding:0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
