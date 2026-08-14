@@ -122,7 +122,7 @@ Ninguno de los 7 archivos usaba `useAuth` antes; ahora todos gatean con `user?.r
 
 ```
 $ git log --oneline -1
-36c1a2e SEC-2: todo DELETE destructivo restringido a admin (regla global de Fredy)
+d6ce593 SEC-2: todo DELETE destructivo restringido a admin (regla global de Fredy)
 ```
 
 Anteriores: `89dbccc` (SEC-1) · `24eb0a5` (R1) · `0dc5cd4` (F5) · `4ed0957` (UI-2).
