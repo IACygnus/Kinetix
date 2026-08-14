@@ -500,7 +500,6 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   );
 
   // ===== DATA PROCESSING =====
-  const timelineData = prepareChartData(charts.timeline || []);
   const throughputData = prepareChartData(charts.throughput_timeline || []);
   const latencyData = prepareChartData(charts.latency_timeline || []);
   const errorRateData = prepareChartData(charts.error_rate_timeline || []);
@@ -977,7 +976,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             <button onClick={() => setChartsExpanded(!chartsExpanded)} className="flex items-center gap-3 text-white hover:text-[#f5a623] transition-colors">
               <span className={`transform transition-transform text-2xl ${chartsExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
               <h2 className="text-3xl font-bold">Graficos de Performance</h2>
-              <span className="text-lg text-white/50">(8 graficas)</span>
+              <span className="text-lg text-white/50">(7 graficas)</span>
             </button>
             {chartsExpanded && (
               <div className="flex gap-2">
@@ -1021,22 +1020,10 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               <AnalysisBox value={analysisResponseTimes} onChange={emitEdit('ai_analysis_response_times', setAnalysisResponseTimes)} />
             </div>
 
-            {/* 2. Response Time Over Time */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-              <h3 className="text-3xl font-bold text-gray-800 mb-4 border-l-4 border-[#0a1628] pl-4">Response Time Over Time</h3>
-              <ResponsiveContainer width="100%" height={minH}>
-                <AreaChart data={timelineData} margin={CHART_LAYOUT.padding}>
-                  <defs><linearGradient id="colorResponseTime" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis {...getXAxisProps(timelineData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('rtOverTime')} allowDataOverflow={true} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
-                  <Tooltip content={<CustomChartTooltip unit="ms" />} />
-                  <Area type="monotone" dataKey="avg_response_time" stroke="#3b82f6" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorResponseTime)" connectNulls isAnimationActive={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-              <ChartYAxisZoom dataValues={extractY(timelineData, ['avg_response_time'])} onRangeChange={(mn, mx) => handleYRange('rtOverTime', mn, mx)} />
-              <AnalysisBox value={analysisResponseTimeOverTime} onChange={emitEdit('ai_analysis_response_time_over_time', setAnalysisResponseTimeOverTime)} />
-            </div>
+            {/* UI-2: grafica "Response Time Over Time" (promedio agregado) retirada.
+                La fuente de verdad es "Response Times por Transaccion" con su serie
+                dual avg/max. El analisis IA ya guardado se sigue cargando y guardando,
+                solo deja de pintarse. */}
 
             {/* 3. Throughput */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">

@@ -127,7 +127,7 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
                 'Response Time (ms)',
                 dual_max=True,              # GRAF1-C
             ),
-            'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),
+            # UI-2: 'rt_time' (Response Time Over Time) retirada del PDF integrado.
             'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
             'latency': chart_area(tl_timestamps, [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else [], '#8b5cf6', 'Latencia (ms)'),
             'error_rate': chart_area(tl_timestamps, _float_list(tl, 'error_rate'), '#ef4444', 'Error Rate (%)'),
@@ -339,7 +339,6 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     redirect_stats = execution_data['redirect_stats']
     ia = execution_data['ia']
     rt_by_label_traces = execution_data['rt_by_label_traces']
-    rt_over_time_traces = execution_data['rt_over_time_traces']
     throughput_traces = execution_data['throughput_traces']
     latency_traces = execution_data['latency_traces']
     error_rate_traces = execution_data['error_rate_traces']
@@ -363,20 +362,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
         f'border:1px solid {tt_color}">{meta["testTypeLabel"]}</span>'
     )
 
-    criteria = meta.get('acceptanceCriteria', {})
-    verdict_text = criteria.get('verdict', '') if isinstance(criteria, dict) else ''
-    verdict_badge = ''
-    if verdict_text:
-        if verdict_text == 'APTO':
-            vb, vc, vr = '#dcfce7', '#16a34a', '#86efac'
-        elif verdict_text == 'NO APTO':
-            vb, vc, vr = '#fef2f2', '#dc2626', '#fca5a5'
-        else:
-            vb, vc, vr = '#fffbeb', '#d97706', '#fcd34d'
-        verdict_badge = (
-            f'<span class="plotly-badge" style="background:{vb};color:{vc};'
-            f'border:1px solid {vr};font-weight:700;margin-left:8px">{verdict_text}</span>'
-        )
+    # UI-2: sin badge de veredicto en los exports (se conserva solo en pantalla).
 
     def ai_box(key, title, border='#4f46e5'):
         text = ia.get(key, '')
@@ -529,7 +515,6 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
         return max_val, p99_val
 
     rt_label_max, rt_label_p99 = _compute_trace_stats(rt_by_label_traces)
-    rt_time_max, rt_time_p99 = _compute_trace_stats(rt_over_time_traces)
     latency_max, latency_p99 = _compute_trace_stats(latency_traces)
 
     # Helper: render chart controls (show/hide all + optional Y-axis controls)
@@ -564,7 +549,6 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 
     # Prefixed div IDs
     id_rt_label = f"{prefix}chart-rt-label"
-    id_rt_time = f"{prefix}chart-rt-time"
     id_throughput = f"{prefix}chart-throughput"
     id_latency = f"{prefix}chart-latency"
     id_error_rate = f"{prefix}chart-error-rate"
@@ -580,15 +564,17 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # de la derecha (la de Tipo de Prueba) y el tipo se integra al bloque
     # Cliente. Sin logo, todo queda EXACTAMENTE como antes.
     if _logo_uri:
+        # UI-2: el bloque del cliente es una columna en la celda derecha —
+        # etiqueta Cliente, logo debajo y nombre del cliente al pie.
         celda_cliente = (
-            f'<div class="plotly-meta-label">Cliente</div>'
-            f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
-            f'<div class="plotly-meta-label" style="margin-top:.6rem">Tipo de Prueba</div>'
+            f'<div class="plotly-meta-label">Tipo de Prueba</div>'
             f'<div class="plotly-meta-value">{meta["testTypeLabel"]}</div>'
         )
         celda_derecha = (
+            f'<div class="plotly-meta-label" style="text-align:right">Cliente</div>'
             f'<img src="{_logo_uri}" alt="Logo del cliente" '
-            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin-left:auto" />'
+            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
+            f'<div class="plotly-meta-value" style="text-align:right">{meta["client"] or "N/A"}</div>'
         )
     else:
         celda_cliente = (
@@ -609,7 +595,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div style="text-align:right"><div style="font-size:.8rem;opacity:.7">Realizado por:</div><div style="font-weight:600">Celula de Performance SQA</div></div>
 </div>
 <div class="plotly-header-meta">
-<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge}</div>
+<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
 <div class="plotly-meta-grid">
 <div>{celda_cliente}</div>
@@ -669,12 +655,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 </div>
 {ai_box('responseTimes', 'Analisis - Response Times por Transaccion')}
 
-<div class="plotly-chart-section">
-<div class="plotly-chart-title" style="border-left-color:#3b82f6">Response Time Over Time</div>
-<div id="{id_rt_time}" class="plotly-chart-div"></div>
-{_ctrl_y_axis(id_rt_time, rt_time_p99, rt_time_max)}
-</div>
-{ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time')}
+<!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
 <div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#10b981">Throughput Over Time</div>
@@ -776,7 +757,6 @@ if (typeof window.hf10hShowAll !== 'function') {{
 (function() {{
 var plotlyConfig = {jd(plotly_config)};
 Plotly.newPlot('{id_rt_label}', {jd(rt_by_label_traces)}, {jd(make_layout('Response Time (ms)', 420, ',.0f'))}, plotlyConfig);
-Plotly.newPlot('{id_rt_time}', {jd(rt_over_time_traces)}, {jd(make_layout('Response Time (ms)', 420, ',.0f'))}, plotlyConfig);
 Plotly.newPlot('{id_throughput}', {jd(throughput_traces)}, {jd(make_layout('Requests/s', 420, ',.2f'))}, plotlyConfig);
 Plotly.newPlot('{id_latency}', {jd(latency_traces)}, {jd(make_layout('Latencia (ms)', 420, ',.0f'))}, plotlyConfig);
 Plotly.newPlot('{id_error_rate}', {jd(error_rate_traces)}, {jd(make_layout('Error Rate (%)', 420, ',.2f'))}, plotlyConfig);
@@ -921,13 +901,7 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
                     'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
                 })
 
-        rt_over_time_traces = [{
-            'x': tl_timestamps,
-            'y': [float(row['avg_response_time']) for _, row in tl.iterrows()] if len(tl) > 0 else [],
-            'name': 'Avg Response Time', 'type': 'scatter', 'mode': 'lines', 'fill': 'tozeroy',
-            'line': {'color': '#3b82f6', 'width': 2}, 'fillcolor': 'rgba(59,130,246,0.15)',
-            'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
-        }]
+        # UI-2: traces de "Response Time Over Time" retirados del export.
 
         throughput_traces = [{
             'x': tl_timestamps,
@@ -998,7 +972,6 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'redirect_stats': redirect_stats,
             'ia': ia,
             'rt_by_label_traces': rt_by_label_traces,
-            'rt_over_time_traces': rt_over_time_traces,
             'throughput_traces': throughput_traces,
             'latency_traces': latency_traces,
             'error_rate_traces': error_rate_traces,
@@ -1139,16 +1112,10 @@ def _build_exec_html(execution, section: SectionInput, overrides=None) -> str:
     _recs = _ov.get("ai_recommendations", execution.ai_recommendations)
     er = execution.error_rate or 0
     er_color = '#4caf50' if er < 1 else '#ff9800' if er < 5 else '#f44336'
-    verdict = ''
-    if hasattr(execution, 'acceptance_criteria_json') and execution.acceptance_criteria_json:
-        v = execution.acceptance_criteria_json.get('verdict', '') if isinstance(execution.acceptance_criteria_json, dict) else ''
-        if v:
-            vc = '#4caf50' if v == 'APTO' else '#f44336' if v == 'NO APTO' else '#ff9800'
-            verdict = f'<div style="margin:12px 0;text-align:center"><span style="background:{vc}20;color:{vc};padding:6px 16px;border-radius:20px;font-weight:700;font-size:14px">{v}</span></div>'
+    # UI-2: sin badge de veredicto en los exports (se conserva solo en pantalla).
     return f"""
     <div style="margin-bottom:24px;page-break-inside:avoid">
         <h2 style="color:#0a1628;border-left:4px solid #f5a623;padding-left:12px">{label}: {section.source_name}</h2>
-        {verdict}
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0">
             <div style="background:#eff6ff;padding:10px;border-radius:8px;border-left:3px solid #3b82f6;text-align:center"><div style="font-size:10px;color:#6b7280;text-transform:uppercase">Total Requests</div><div style="font-size:18px;font-weight:700;color:#0a1628">{execution.total_requests or 0:,}</div></div>
             <div style="background:#{'fef2f2' if er > 1 else 'f0fdf4'};padding:10px;border-radius:8px;border-left:3px solid {er_color};text-align:center"><div style="font-size:10px;color:#6b7280;text-transform:uppercase">Error Rate</div><div style="font-size:18px;font-weight:700;color:{er_color}">{er:.2f}%</div></div>

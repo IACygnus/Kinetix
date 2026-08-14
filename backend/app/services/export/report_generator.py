@@ -240,17 +240,20 @@ def build_pdf_html(
     # se integra al bloque CLIENTE. SIN logo, todo queda EXACTAMENTE como antes,
     # para que un cliente sin logo no deje un hueco enorme a la derecha.
     if _client_logo:
+        # UI-2: el bloque del cliente es una COLUMNA en la celda derecha —
+        # etiqueta CLIENTE arriba, logo debajo y nombre del cliente al pie.
+        # La celda izquierda ya no repite el cliente: se queda con el tipo de prueba.
         cover_cell_cliente = (
-            f'<div class="cover-meta-label">CLIENTE</div>'
-            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
-            f'<div class="cover-meta-label" style="margin-top:2.5mm">TIPO DE PRUEBA</div>'
+            f'<div class="cover-meta-label">TIPO DE PRUEBA</div>'
             f'<div class="cover-meta-value">{meta["testTypeLabel"]}</div>'
         )
         cover_cell_derecha = (
+            f'<div class="cover-meta-label">CLIENTE</div>'
             f'<img src="{_client_logo}" alt="Logo del cliente" '
-            f'style="max-height:26mm;max-width:58mm;display:block;margin:0 0 0 auto" />'
+            f'style="max-height:26mm;max-width:58mm;display:block;margin:1.5mm 0 1.5mm auto" />'
+            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
         )
-        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:middle;text-align:right'
+        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:top;text-align:right'
     else:
         cover_cell_cliente = (
             f'<div class="cover-meta-label">CLIENTE</div>'
@@ -262,28 +265,20 @@ def build_pdf_html(
         )
         cover_cell_derecha_style = 'border:none;padding:0;vertical-align:top'   # identico al layout de siempre
 
-    # Verdict badge (inline in .cover-pretitle only — duplicated destacado block removed in Fix 3)
+    # UI-2: el badge APTO/NO APTO ya NO se emite en el PDF (se conserva en pantalla).
+    # Solo se mantiene el resumen del criterio para el pie de la portada.
     criteria = meta.get('acceptanceCriteria', {})
-    verdict_text = criteria.get('verdict', '') if isinstance(criteria, dict) else ''
-    verdict_class = ''
     criteria_str = ''
-    if verdict_text:
-        if verdict_text == 'APTO':
-            verdict_class = 'apto'
-        elif verdict_text == 'NO APTO':
-            verdict_class = 'no-apto'
-        else:
-            verdict_class = 'reservas'
-        if isinstance(criteria, dict):
-            rt_val = criteria.get('response_time', '')
-            avail_val = criteria.get('availability', '')
-            parts = []
-            if rt_val:
-                parts.append(f'&lt;{rt_val}ms')
-            if avail_val:
-                parts.append(f'&gt;{avail_val}% disponibilidad')
-            if parts:
-                criteria_str = f' &nbsp;|&nbsp; Criterio: {", ".join(parts)}'
+    if isinstance(criteria, dict):
+        rt_val = criteria.get('response_time', '')
+        avail_val = criteria.get('availability', '')
+        parts = []
+        if rt_val:
+            parts.append(f'&lt;{rt_val}ms')
+        if avail_val:
+            parts.append(f'&gt;{avail_val}% disponibilidad')
+        if parts:
+            criteria_str = f' &nbsp;|&nbsp; Criterio: {", ".join(parts)}'
 
     # ----- helpers -----
     def ai_box(key, title, border='#4f46e5', allow_break=False):
@@ -508,34 +503,6 @@ body {{
     margin-top: 4mm;
 }}
 
-.cover-verdict {{
-    display: inline-block;
-    padding: 3mm 10mm;
-    border-radius: 4mm;
-    font-size: 20pt;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}}
-
-.cover-verdict.apto {{
-    background: rgba(16,185,129,0.25);
-    color: #10b981;
-    border: 0.4mm solid rgba(16,185,129,0.6);
-}}
-
-.cover-verdict.no-apto {{
-    background: rgba(239,68,68,0.25);
-    color: #fca5a5;
-    border: 0.4mm solid rgba(239,68,68,0.6);
-}}
-
-.cover-verdict.reservas {{
-    background: rgba(245,158,11,0.25);
-    color: #fbbf24;
-    border: 0.4mm solid rgba(245,158,11,0.6);
-}}
-
 .cover-badge {{
     display: inline-block;
     padding: 1.5mm 5mm;
@@ -749,7 +716,6 @@ tbody tr:nth-child(even) {{
         <div class="cover-pretitle">
             REPORTE DE ANALISIS DE PERFORMANCE
             &nbsp;<span class="cover-badge" style="background:{tt_color}20;border-color:{tt_color}">{meta['testTypeLabel']}</span>
-            {f'&nbsp;<span class="cover-verdict {verdict_class}">{verdict_text}</span>' if verdict_text else ''}
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
@@ -805,11 +771,7 @@ tbody tr:nth-child(even) {{
 </div>
 {ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#4f46e5')}
 
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#2196F3">Response Time Over Time</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['rt_time']}" />
-</div>
-{ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time', '#4f46e5')}
+<!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
 <div class="chart-section">
     <div class="chart-title" style="border-left-color:#4CAF50">Throughput Over Time</div>
@@ -900,21 +862,7 @@ def build_standalone_html(
         f'border:1px solid {tt_color}">{meta["testTypeLabel"]}</span>'
     )
 
-    # Verdict badge for HTML
-    criteria = meta.get('acceptanceCriteria', {})
-    verdict_text = criteria.get('verdict', '') if isinstance(criteria, dict) else ''
-    verdict_badge_html = ''
-    if verdict_text:
-        if verdict_text == 'APTO':
-            v_bg, v_color, v_border = '#dcfce7', '#16a34a', '#86efac'
-        elif verdict_text == 'NO APTO':
-            v_bg, v_color, v_border = '#fef2f2', '#dc2626', '#fca5a5'
-        else:
-            v_bg, v_color, v_border = '#fffbeb', '#d97706', '#fcd34d'
-        verdict_badge_html = (
-            f'<span class="badge" style="background:{v_bg};color:{v_color};'
-            f'border:1px solid {v_border};font-weight:700;margin-left:8px">{verdict_text}</span>'
-        )
+    # UI-2: sin badge de veredicto en los exports (se conserva solo en pantalla).
 
     # ----- helpers -----
     def ai_box(key, title, border='#f97316', allow_break=False):
@@ -1067,7 +1015,7 @@ tr:hover{{background:#f8fafc}}
 <div style="text-align:right"><div style="font-size:.8rem;opacity:.7">Realizado por:</div><div style="font-weight:600">Celula de Performance SQA</div></div>
 </div>
 <div class="header-meta">
-<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge} {verdict_badge_html}</div>
+<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="project-name">{meta['name']}</div>
 <div class="meta-grid">
 <div><div class="meta-label">Cliente</div><div class="meta-value">{meta['client'] or 'N/A'}</div></div>
@@ -1122,11 +1070,7 @@ Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fi
 </div>
 {ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#f97316')}
 
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#3b82f6">Response Time Over Time</div>
-<img class="chart-img" src="data:image/png;base64,{charts['rt_time']}" alt="Response Time Over Time" />
-</div>
-{ai_box('responseTimeOverTime', 'Analisis - Response Time Over Time', '#f97316')}
+<!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
 <div class="chart-section">
 <div class="chart-title" style="border-left-color:#10b981">Throughput Over Time</div>

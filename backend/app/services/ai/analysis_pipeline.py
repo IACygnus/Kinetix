@@ -178,7 +178,7 @@ async def run_ai_and_verdict(
             ai_analysis_errors = fallback.analyze_errors(errors_for_analysis, metrics['total_requests'])
 
         # 3-10. Graficos individuales
-        logger.info("[3-10/12] Analizando 8 graficos...")
+        logger.info("[3-9/12] Analizando 7 graficos...")   # UI-2: 8 -> 7 (sin Response Time Over Time)
 
         # Response Times por Transaccion
         rt_lines = []
@@ -200,23 +200,11 @@ async def run_ai_and_verdict(
             logger.info("Using FALLBACK for response_times")
             ai_analysis_response_times = fallback.analyze_chart("response_times", stats_summary)
 
-        # Response Time Over Time
-        charts_data = parser.get_all_charts_data(interval_seconds=10)
-        timeline_df = charts_data['timeline']
-        rt_over_time_summary = (
-            f"Tiempo promedio: {metrics['avg_response_time']:.0f}ms, "
-            f"Rango: {metrics['min_response_time']:.0f}ms - {metrics['max_response_time']:.0f}ms, "
-            f"P95: {metrics['p95_response_time']:.0f}ms, "
-            f"Duracion: {metrics['duration_seconds']:.0f}s, "
-            f"Puntos de datos: {len(timeline_df)}"
-        )
-        ai_analysis_response_time_over_time = gemini.analyze_chart(
-            'response_time_over_time', rt_over_time_summary, test_type=test_type,
-            test_date=test_date, metric_unit=metric_unit,
-        )
-        if ai_analysis_response_time_over_time is None:
-            logger.info("Using FALLBACK for response_time_over_time")
-            ai_analysis_response_time_over_time = fallback.analyze_chart("response_time_over_time", stats_summary)
+        # UI-2: la grafica "Response Time Over Time" se retiro de pantalla y de los
+        # exports, asi que su seccion de IA ya no se genera (una llamada menos por
+        # analisis). El campo queda vacio para ejecuciones nuevas; lo ya guardado en
+        # DB no se toca. Se elimina tambien el get_all_charts_data() que solo servia
+        # para contar los puntos de esa serie.
 
         # Throughput
         ai_analysis_throughput = gemini.analyze_chart(

@@ -165,7 +165,7 @@ async def export_pdf(
                 'Response Time (ms)',
                 dual_max=True,              # GRAF1-C
             ),
-            'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),
+            # UI-2: 'rt_time' (Response Time Over Time) retirada del PDF — ya no se renderiza.
             'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
             'latency': chart_area(tl_timestamps, [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else [], '#8b5cf6', 'Latencia (ms)'),
             'error_rate': chart_area(tl_timestamps, _float_list(tl, 'error_rate'), '#ef4444', 'Error Rate (%)'),
