@@ -425,10 +425,13 @@ async def test_ai_connection(
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": "Responde solo: OK"}],
-                max_tokens=10,
+            # B6.2: helper compartido — soporta modelos que exigen max_completion_tokens.
+            # Los de razonamiento gastan el tope en tokens internos: con 10 responden
+            # vacio, asi que se les da 256 (coste igualmente despreciable en un test).
+            from app.services.ai.gemini import openai_chat_completion, _openai_token_param
+            _limit = 256 if "max_completion_tokens" in _openai_token_param(model, 1) else 10
+            response = openai_chat_completion(
+                client, model, [{"role": "user", "content": "Responde solo: OK"}], _limit,
             )
             text = response.choices[0].message.content if response.choices else ""
             return AITestResult(

@@ -54,6 +54,7 @@ from app.schemas.refine_operations import (
 from app.services.ai.gemini import (
     OPENAI_DEFAULT_MAX_TOKENS,
     OPENAI_MAX_TOKENS,
+    openai_chat_completion,   # B6.2
     load_ai_config_from_db,
 )
 from app.services.ai.har_flow_analyzer import (
@@ -1723,11 +1724,12 @@ def _call_ai(
             # gpt-4o supports 16384; the old 8192 truncated large JMX (HAR /
             # PeopleSoft). Matches the override branch's model_ceiling lookup.
             effective_max_tokens = OPENAI_MAX_TOKENS.get(model, OPENAI_DEFAULT_MAX_TOKENS)
-        completion = client.chat.completions.create(
-            model=model or "gpt-4o",
-            messages=messages,
+        completion = openai_chat_completion(   # B6.2
+            client,
+            model or "gpt-4o",
+            messages,
+            effective_max_tokens,
             temperature=0.4,
-            max_tokens=effective_max_tokens,
         )
         if not completion.choices:
             raise HTTPException(status_code=502, detail="OpenAI devolvio respuesta vacia")

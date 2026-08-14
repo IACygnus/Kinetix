@@ -54,6 +54,9 @@ OPENAI_MAX_TOKENS = {
     "gpt-4.1": 32768,
     "gpt-4.1-mini": 32768,  # HF18b: familia gpt-4.1 soporta 32K de output
     "gpt-4.1-nano": 32768,  # HF18b: idem — evita truncacion si se cambia a nano
+    # B6.2: la familia gpt-5 exige max_completion_tokens (ver openai_chat_completion).
+    # 16384 conservador, alineado con gpt-5-mini; su techo real documentado es mayor.
+    "gpt-5": 16384,
     "gpt-5-mini": 16384,
     "gpt-5-nano": 8192,
     "o4-mini": 16384,
@@ -84,6 +87,54 @@ def _openai_max_tokens_for(model_name: str) -> int:
         model_name, OPENAI_DEFAULT_MAX_TOKENS,
     )
     return OPENAI_DEFAULT_MAX_TOKENS
+
+
+# ===================== B6.2: max_tokens vs max_completion_tokens =====================
+# Los modelos de nueva generacion (gpt-5*, o1*, o3*, o4*) RECHAZAN max_tokens con un
+# 400 y exigen max_completion_tokens. Estrategia hibrida: prefijos conocidos para
+# acertar a la primera, y aprendizaje del 400 como red de seguridad para modelos
+# futuros que no empiecen por esos prefijos. La eleccion se cachea por nombre de
+# modelo, asi el 400 se paga UNA vez por proceso y no en cada llamada.
+_OPENAI_NEWGEN_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_openai_token_param_cache: Dict[str, str] = {}
+
+
+def _openai_token_param(model_name: str, limit: int) -> dict:
+    """Kwarg de tope de salida que acepta este modelo."""
+    key = _openai_token_param_cache.get(model_name)
+    if key is None:
+        key = ("max_completion_tokens"
+               if (model_name or "").lower().startswith(_OPENAI_NEWGEN_PREFIXES)
+               else "max_tokens")
+        _openai_token_param_cache[model_name] = key
+    return {key: limit}
+
+
+def _openai_is_token_param_error(err) -> bool:
+    """True si el 400 se queja justamente del parametro de tope de salida."""
+    s = str(err).lower()
+    return "max_tokens" in s and ("not supported" in s or "unsupported" in s)
+
+
+def openai_chat_completion(client, model_name: str, messages: list, limit: int, **kwargs):
+    """Llamada a OpenAI tolerante al cambio de nombre del parametro (B6.2).
+
+    Si la API rechaza max_tokens, aprende la preferencia del modelo, la cachea y
+    reintenta UNA vez. Cualquier otro error se propaga sin tocar.
+    """
+    try:
+        return client.chat.completions.create(
+            model=model_name, messages=messages,
+            **_openai_token_param(model_name, limit), **kwargs)
+    except Exception as e:
+        if not _openai_is_token_param_error(e) or _openai_token_param_cache.get(model_name) == "max_completion_tokens":
+            raise
+        _openai_token_param_cache[model_name] = "max_completion_tokens"
+        logger.warning("modelo %s exige max_completion_tokens; cacheado para las siguientes llamadas", model_name)
+        return client.chat.completions.create(
+            model=model_name, messages=messages,
+            **_openai_token_param(model_name, limit), **kwargs)
+
 
 # Performance tier thresholds (ms)
 TIER_EXCELLENT = 500
@@ -730,13 +781,14 @@ class GeminiAnalyzer:
                     response = self.model.generate_content(prompt)
                     result = response.text
                 elif self.provider == "openai":
-                    response = self._openai_client.chat.completions.create(
-                        model=self.model_name,
-                        messages=[
+                    response = openai_chat_completion(   # B6.2
+                        self._openai_client,
+                        self.model_name,
+                        [
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": prompt},
                         ],
-                        max_tokens=_openai_max_tokens_for(self.model_name),
+                        _openai_max_tokens_for(self.model_name),
                         temperature=GENERATION_CONFIG["temperature"],
                     )
                     result = response.choices[0].message.content if response.choices else None
@@ -832,9 +884,10 @@ class GeminiAnalyzer:
         elif self.provider == "openai":
             try:
                 b64_data = base64.b64encode(image_bytes).decode("utf-8")
-                response = self._openai_client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[{
+                response = openai_chat_completion(   # B6.2
+                    self._openai_client,
+                    self.model_name,
+                    [{
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
@@ -843,7 +896,7 @@ class GeminiAnalyzer:
                             }}
                         ]
                     }],
-                    max_tokens=min(_openai_max_tokens_for(self.model_name), 1024),
+                    min(_openai_max_tokens_for(self.model_name), 1024),
                     temperature=0.3,
                 )
                 text = response.choices[0].message.content if response.choices else None
