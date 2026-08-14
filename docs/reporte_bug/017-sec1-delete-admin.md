@@ -110,7 +110,7 @@ Esto confirma la naturaleza del bug: el control existía **solo en el cliente**.
 
 ```
 $ git log --oneline -1
-d3f9c66 SEC-1: DELETE de ejecuciones restringido a admin + auditoria de endpoints destructivos
+4aa779f SEC-1: DELETE de ejecuciones restringido a admin + auditoria de endpoints destructivos
 ```
 
 Anteriores: `24eb0a5` (R1) · `0dc5cd4` (F5) · `4ed0957` (UI-2) · `fad4f01` (GRAF1-C).
