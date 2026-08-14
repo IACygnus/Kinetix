@@ -113,7 +113,7 @@ C:\Users\FredyGabrielBonillaB\Documents\N21_PDFs_comparacion\
 
 ```
 $ git log --oneline -1
-7c31e0a N2.1: PDF denso — flujo continuo de bloques grafica+analisis
+3af9818 N2.1: PDF denso — flujo continuo de bloques grafica+analisis
 ```
 
 Anteriores: `4211a8d` (B6.2) · `5f30b96` (SEC-2) · `89dbccc` (SEC-1) · `24eb0a5` (R1).
