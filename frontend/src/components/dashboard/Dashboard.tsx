@@ -34,6 +34,9 @@ interface DashboardProps {
   analysisOverrides?: Record<string, string>;
 }
 
+// GRAF1-B: sufijo de la serie de maximos (solo Response Times por Transaccion)
+const MAX_SUFFIX = ' (max)';
+
 // ===== CUSTOM TOOLTIP COMPONENT =====
 interface CustomTooltipProps {
   active?: boolean;
@@ -397,7 +400,9 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     });
   };
 
-  const prepareMultiLineData = (data: any[]) => {
+  // GRAF1-B: withMax solo lo activa Response Times por Transaccion (serie dual del backend).
+  // Las demas graficas llaman sin el flag y se construyen exactamente igual que antes.
+  const prepareMultiLineData = (data: any[], withMax = false) => {
     if (!data || data.length === 0) return { labels: [], data: [] };
     const labels = [...new Set(data.map((d: any) => d.label || d.code))];
     const timeMap = new Map();
@@ -407,6 +412,10 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
         timeMap.set(item.timestamp, { timestamp: item.timestamp });
       }
       timeMap.get(item.timestamp)[key] = item.value;
+      // Tolerante a datos sin value_max (ejecuciones previas a GRAF1-A): no crea la clave.
+      if (withMax && item.value_max != null) {
+        timeMap.get(item.timestamp)[`${key}${MAX_SUFFIX}`] = item.value_max;
+      }
     });
     const chartData = Array.from(timeMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const startTime = chartData.length > 0 ? new Date(chartData[0].timestamp) : new Date();
@@ -496,9 +505,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   const latencyData = prepareChartData(charts.latency_timeline || []);
   const errorRateData = prepareChartData(charts.error_rate_timeline || []);
   const activeThreadsData = prepareChartData(charts.active_threads_timeline || []);
-  const responseTimesByLabel = prepareMultiLineData(charts.response_times_by_label || []);
+  const responseTimesByLabel = prepareMultiLineData(charts.response_times_by_label || [], true);
   const tpsByLabel = prepareMultiLineData(charts.tps_by_label || []);
   const codesPerSecond = prepareMultiLineData(charts.codes_per_second || []);
+  // GRAF1-B: solo las transacciones que realmente traen maximos pintan la 2a linea.
+  const rtMaxLabels = responseTimesByLabel.labels.filter((l: string) =>
+    responseTimesByLabel.data.some((p: any) => p[`${l}${MAX_SUFFIX}`] != null));
+  const rtMaxKeys = rtMaxLabels.map((l: string) => `${l}${MAX_SUFFIX}`);
 
   // KNX-02: Use real error codes from error_detail (no more hardcoded "404/405")
   const errorData = (charts.error_detail || []).map((row: any) => ({
@@ -993,9 +1006,18 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                   {responseTimesByLabel.labels.map((label: string, idx: number) => (
                     <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 3 }} isAnimationActive={false} />
                   ))}
+                  {/* GRAF1-B: maximo por transaccion — fina y punteada, mismo color que su promedio.
+                      legendType="none" la excluye del payload de la leyenda (sin entrada duplicada);
+                      se oculta junto con su promedio al usar la leyenda. */}
+                  {rtMaxLabels.map((label: string) => (
+                    <Line key={`${label}${MAX_SUFFIX}`} type="monotone" dataKey={`${label}${MAX_SUFFIX}`}
+                      stroke={getColorForIndex(responseTimesByLabel.labels.indexOf(label))} strokeWidth={0.8}
+                      strokeDasharray="2 3" strokeOpacity={0.85} dot={false} connectNulls legendType="none"
+                      hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 2 }} isAnimationActive={false} />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
-              <ChartYAxisZoom dataValues={extractY(responseTimesByLabel.data, responseTimesByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('rtByLabel', mn, mx)} />
+              <ChartYAxisZoom dataValues={extractY(responseTimesByLabel.data, [...responseTimesByLabel.labels, ...rtMaxKeys])} onRangeChange={(mn, mx) => handleYRange('rtByLabel', mn, mx)} />
               <AnalysisBox value={analysisResponseTimes} onChange={emitEdit('ai_analysis_response_times', setAnalysisResponseTimes)} />
             </div>
 
