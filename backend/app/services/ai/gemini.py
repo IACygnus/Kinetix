@@ -572,8 +572,9 @@ def prepare_insights_for_prompt(summary_df) -> Dict:
         else:
             tiers['critical'].append(tx)
 
-        # GRAF1-A: tambien es variabilidad un max muy por encima del promedio (picos/timeouts)
-        if tx['avg'] > 0 and (tx['p99'] / tx['avg'] > 3 or tx['max'] / tx['avg'] > 10):
+        # GRAF1-A: tambien es variabilidad un max muy por encima del promedio (picos/timeouts).
+        # GRAF1-C: y un max de 10s o mas en absoluto, aunque el ratio sea bajo (timeouts).
+        if tx['avg'] > 0 and (tx['p99'] / tx['avg'] > 3 or tx['max'] / tx['avg'] > 10 or tx['max'] >= 10000):
             high_variability.append(tx)
 
         if tx['errors'] > 0:
@@ -648,7 +649,7 @@ def build_tier_summary(insights: Dict) -> str:
         lines.append("")
 
     if insights['high_variability']:
-        lines.append(f"=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x o max/avg > 10x) - {len(insights['high_variability'])} transacciones ===")
+        lines.append(f"=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x, max/avg > 10x o max >= 10000ms) - {len(insights['high_variability'])} transacciones ===")
         for tx in insights['high_variability']:
             ratio = tx['p99'] / tx['avg'] if tx['avg'] > 0 else 0
             ratio_max = tx['max'] / tx['avg'] if tx['avg'] > 0 else 0

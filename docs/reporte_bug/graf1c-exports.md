@@ -225,3 +225,26 @@ Ejecución **115346ea** (Coomeva 31-jul). Exportar **PDF** y **HTML**, y compara
 - Los exports de validación no crearon registros en `integrated_reports` (se reusó el `report_id` existente y los endpoints de export son de sólo lectura).
 
 **Con esto cierra GRAF1:** los picos de ~21 s existen en el dato, llegan a la IA, se ven en pantalla y salen en los tres exports.
+
+---
+
+## 9. Adenda — punto (5) APLICADO (umbral absoluto confirmado por Fredy)
+
+Fredy confirmó la opción 2 al cierre de esta sesión. Aplicado en `gemini.py` (+2 líneas, commit aparte):
+
+```python
+# GRAF1-C: y un max de 10s o mas en absoluto, aunque el ratio sea bajo (timeouts).
+if tx['avg'] > 0 and (tx['p99'] / tx['avg'] > 3 or tx['max'] / tx['avg'] > 10 or tx['max'] >= 10000):
+```
+
+Más el encabezado de la alerta, para que la IA lea el criterio real.
+
+**Efecto verificado sobre el JTL de Coomeva** (sin llamar al modelo — cuota intacta): la alerta pasa de **1 a 2 transacciones**.
+
+```
+=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x, max/avg > 10x o max >= 10000ms) - 2 transacciones ===
+  token: avg=443ms vs P99=1070ms (ratio 2.4x), max=21060ms (ratio 47.6x sobre el promedio)
+  Adapter VerifMethod: avg=2941ms vs P99=4281ms (ratio 1.5x), max=21058ms (ratio 7.2x sobre el promedio)
+```
+
+`Adapter VerifMethod` —21.058 ms de máximo, ratio 7,2x— **ya entra en la alerta**. Era el hueco señalado en §5. Con esto, las dos transacciones con timeouts de ~21 s llegan señaladas explícitamente al prompt de la sección.
