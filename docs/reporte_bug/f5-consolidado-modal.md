@@ -116,7 +116,7 @@ El modal solo se renderiza en la rama con consolidado (`hasAnalysis`), que es la
 
 ```
 $ git log --oneline -1
-7a15a3e F5: consolidado lee ediciones como insumo + modal de confirmacion (cierre B2/B4 — fin de la emergencia original)
+e16f257 F5: consolidado lee ediciones como insumo + modal de confirmacion (cierre B2/B4 — fin de la emergencia original)
 ```
 
 Anteriores: `4ed0957` (UI-2) · `f069527` (GRAF1-C.2) · `fad4f01` (GRAF1-C) · `0aa43b6` (GRAF1-B) · `337b018` (GRAF1-A).
