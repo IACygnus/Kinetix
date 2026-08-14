@@ -3972,7 +3972,8 @@ async def save_ai_design_as(
 async def delete_ai_design(
     design_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(["admin", "analyst"])),
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user: User = Depends(require_role(["admin"])),
 ):
     """Elimina un diseno AI. Solo el creador o admin."""
     stmt = select(AIScriptDesign).where(AIScriptDesign.id == design_id)

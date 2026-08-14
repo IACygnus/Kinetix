@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from pathlib import Path
 
 from app.db.session import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_role
 from app.db.models.test import TestExecution
 from app.db.models.attachment import ExecutionAttachment
 from app.services.jtl.jtl_parser import JTLParser
@@ -2033,7 +2033,8 @@ async def update_integrated_report(
 async def delete_integrated_report(
     report_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user=Depends(require_role(["admin"])),
 ):
     """Delete an integrated report."""
     from app.db.models.integrated_report import IntegratedReport

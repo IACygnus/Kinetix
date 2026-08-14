@@ -16,11 +16,14 @@ import {
   integratedReportsAPI,
   IntegratedReportSummary,
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 type SortKey = 'name' | 'created_at' | 'updated_at' | 'section_count';
 type SortDir = 'asc' | 'desc';
 
 export default function IntegratedReportsHistory() {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [reports, setReports] = useState<IntegratedReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -368,13 +371,15 @@ export default function IntegratedReportsHistory() {
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => setDeleteTarget(report)}
-                        className="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                        title="Eliminar"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {user?.role === 'admin' && (
+                        <button
+                          onClick={() => setDeleteTarget(report)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

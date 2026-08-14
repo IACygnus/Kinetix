@@ -18,6 +18,7 @@ import {
   AIScriptDesignSummary,
   clientsAPI,
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 type SortKey = 'name' | 'updated_at' | 'created_at' | 'message_count';
 type SortDir = 'asc' | 'desc';
@@ -28,6 +29,8 @@ interface ClientOption {
 }
 
 export default function AIDesignerHistory() {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [designs, setDesigns] = useState<AIScriptDesignSummary[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -368,13 +371,15 @@ export default function AIDesignerHistory() {
                       >
                         <Code className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => setDeleteTarget(d)}
-                        className="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                        title="Eliminar"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {user?.role === 'admin' && (
+                        <button
+                          onClick={() => setDeleteTarget(d)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

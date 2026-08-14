@@ -7,6 +7,7 @@ import { Upload, Trash2, FileText, SearchCheck, Sparkles } from 'lucide-react';
 import { testAPI } from '../services/api';
 import ImageAnalysisCard from '../components/analysis/ImageAnalysisCard';
 import EditableAttachmentTitle from '../components/analysis/EditableAttachmentTitle';
+import { useAuth } from '../context/AuthContext';
 
 interface Attachment {
   id: string;
@@ -29,6 +30,8 @@ const CATEGORIES = [
 ];
 
 export default function EvidencePage() {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const [executions, setExecutions] = useState<any[]>([]);
   const [selectedExecId, setSelectedExecId] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -216,7 +219,7 @@ export default function EvidencePage() {
                         <EditableAttachmentTitle attachmentId={att.id} executionId={selectedExecId} currentTitle={att.title || att.filename}
                           onTitleSaved={(attId, newTitle) => setAttachments(prev => prev.map(a => a.id === attId ? { ...a, title: newTitle } : a))} />
                       </div>
-                      <button onClick={() => handleDelete(att.id)} className="text-red-400 hover:text-red-600 transition-colors p-1"><Trash2 className="w-5 h-5" /></button>
+                      {user?.role === 'admin' && <button onClick={() => handleDelete(att.id)} className="text-red-400 hover:text-red-600 transition-colors p-1"><Trash2 className="w-5 h-5" /></button>}
                     </div>
                     {att.file_type?.startsWith('image/') && (
                       <>

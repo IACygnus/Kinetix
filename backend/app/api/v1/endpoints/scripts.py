@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from app.db.session import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_role
 from app.db.models.script_design import ScriptDesign
 
 router = APIRouter()
@@ -171,7 +171,8 @@ async def update_script(
 async def delete_script(
     script_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user=Depends(require_role(["admin"])),
 ):
     result = await db.execute(select(ScriptDesign).where(ScriptDesign.id == script_id))
     script = result.scalar_one_or_none()

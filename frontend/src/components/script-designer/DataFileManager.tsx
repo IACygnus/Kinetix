@@ -2,12 +2,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { Upload, X, FileText, Loader2 } from 'lucide-react';
 import { dataFileApi, DataFile, DataFilePreview } from '../../api/scriptDesignerApi';
+import { useAuth } from '../../context/AuthContext';
 
 interface Props {
   scriptId: number;
 }
 
 export default function DataFileManager({ scriptId }: Props) {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const [files, setFiles] = useState<DataFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -105,12 +108,14 @@ export default function DataFileManager({ scriptId }: Props) {
                       {f.columns.length} columns &middot; {f.row_count ?? '?'} rows
                     </p>
                   </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); handleDelete(f.id); }}
-                    className="text-gray-300 hover:text-red-500"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  {user?.role === 'admin' && (
+                    <button
+                      onClick={e => { e.stopPropagation(); handleDelete(f.id); }}
+                      className="text-gray-300 hover:text-red-500"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

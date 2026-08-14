@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { Upload, Trash2, FileText } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 interface Attachment {
   id: string;
@@ -41,6 +42,8 @@ export default function AttachmentSection({
   categories,
   textareaPlaceholder,
 }: AttachmentSectionProps) {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(categories[0]?.value || '');
@@ -196,13 +199,13 @@ export default function AttachmentSection({
                       </span>
                       <h3 className="text-xl font-medium text-gray-800">{att.title}</h3>
                     </div>
-                    <button
+                    {user?.role === 'admin' && <button
                       onClick={() => handleDelete(att.id)}
                       className="text-red-400 hover:text-red-600 transition-colors p-1"
                       title="Eliminar"
                     >
                       <Trash2 className="w-5 h-5" />
-                    </button>
+                    </button>}
                   </div>
 
                   {/* Image preview */}

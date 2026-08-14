@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
 from app.db.session import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_role
 from app.db.models.attachment import ExecutionAttachment
 
 router = APIRouter()
@@ -161,7 +161,8 @@ async def delete_attachment(
     execution_id: uuid.UUID,
     attachment_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user=Depends(require_role(["admin"])),
 ):
     """Delete an attachment (file + DB record)."""
     result = await db.execute(

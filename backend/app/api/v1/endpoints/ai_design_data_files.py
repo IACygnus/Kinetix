@@ -336,7 +336,8 @@ async def update_data_file_mapping(
 async def delete_data_file(
     design_id: str,
     file_id: str,
-    current_user: User = Depends(require_role(["admin", "analyst"])),
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user: User = Depends(require_role(["admin"])),
     db: AsyncSession = Depends(get_db),
 ):
     """Elimina el data file (DB + archivo fisico)."""

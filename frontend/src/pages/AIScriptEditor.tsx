@@ -50,6 +50,7 @@ import type {
   SamplerStats,
   TimeBucket,
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import type {
   AIScriptStructure,
   ThreadGroupModel,
@@ -6013,6 +6014,8 @@ interface DataFilesPanelProps {
 }
 
 function DataFilesPanel({ designId, dataFiles, loading, onReload, onReloadStructure }: DataFilesPanelProps) {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -6181,13 +6184,13 @@ function DataFilesPanel({ designId, dataFiles, loading, onReload, onReloadStruct
                     Columnas: {df.columns.join(', ')}
                   </div>
                 </div>
-                <button
+                {user?.role === 'admin' && <button
                   onClick={() => handleDelete(df.id)}
                   className="text-red-500 hover:bg-red-50 p-1.5 rounded"
                   title="Eliminar"
                 >
                   <X className="w-4 h-4" />
-                </button>
+                </button>}
               </li>
             ))}
           </ul>
@@ -6276,6 +6279,8 @@ function DataFileDetailPanel({
   fileId: string;
   onDeleted: () => void;
 }) {
+  // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
+  const { user } = useAuth();
   const [df, setDf] = useState<AIDesignDataFile | null>(null);
   const [preview, setPreview] = useState<AIDesignDataFilePreview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -6331,12 +6336,14 @@ function DataFileDetailPanel({
             </p>
           </div>
         </div>
-        <button
-          onClick={handleDelete}
-          className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50"
-        >
-          Eliminar archivo
-        </button>
+        {user?.role === 'admin' && (
+          <button
+            onClick={handleDelete}
+            className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50"
+          >
+            Eliminar archivo
+          </button>
+        )}
       </div>
 
       <SectionCard title="Información">

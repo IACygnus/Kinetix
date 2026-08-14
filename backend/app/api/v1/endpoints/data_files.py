@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.db.session import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_role
 from app.db.models.data_file import DataFile
 from app.db.models.script_design import ScriptDesign
 from app.services.engine.data_file_service import DataFileService
@@ -226,7 +226,8 @@ async def get_data_file_columns(
 async def delete_data_file(
     file_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user)
+    # SEC-2: borrar es exclusivo de admin en toda la plataforma.
+    current_user=Depends(require_role(["admin"])),
 ):
     """Eliminar un data file (del disco y de la DB)."""
     result = await db.execute(select(DataFile).where(DataFile.id == file_id))
