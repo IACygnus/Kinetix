@@ -189,7 +189,7 @@ if tx['avg'] > 0 and (tx['p99'] / tx['avg'] > 3 or tx['max'] / tx['avg'] > 10 or
 
 ```
 $ git log --oneline -5
-1c0d0d0  GRAF1-C: serie dual avg/max en exports PDF/HTML/integrado (cierre GRAF1)
+fad4f01  GRAF1-C: serie dual avg/max en exports PDF/HTML/integrado (cierre GRAF1)
 0aa43b6  GRAF1-B: linea de maximos en Response Times del dashboard
 337b018  GRAF1-A: serie dual avg/max 1s + maximos al encuadre de la IA
 b0eb62f  GRAF1: diagnostico de alcance (fix detenido por tope de archivos) + salvaguarda 4b4e5977
@@ -200,7 +200,7 @@ c3e3bb4  DPERF-1: quitar sleeps del pipeline + precarga SDK + DEBUG off (fixes B
 |---|---|---|
 | A | `337b018` | `value_max` en el dato + máximos en el encuadre de la IA |
 | B | `0aa43b6` | 2ª línea en el dashboard |
-| C | (este) | 2ª línea en PDF, HTML e informe integrado + serie "Resto" |
+| C | `fad4f01` | 2ª línea en PDF, HTML e informe integrado + serie "Resto" |
 
 ---
 
