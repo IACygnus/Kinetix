@@ -25,7 +25,7 @@ from app.db.models.test import TestExecution
 from app.db.models.attachment import ExecutionAttachment
 from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.report_generator import (
-    chart_area, chart_multiline, chart_pie, build_pdf_html,
+    chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.client_logo import get_client_logo_b64   # N1.5
@@ -63,7 +63,7 @@ def _int_list(df, col):
     return [int(row[col]) for _, row in df.iterrows()] if len(df) > 0 else []
 
 
-def _build_series(dataframes, label_col, value_col='value'):
+def _build_series(dataframes, label_col, value_col='value', with_max=False):
     series = []
     for sub_df in dataframes:
         if len(sub_df) == 0:
@@ -72,6 +72,9 @@ def _build_series(dataframes, label_col, value_col='value'):
         ts = _ts_list(sub_df)
         vs = _float_list(sub_df, value_col)
         series.append((lbl, ts, vs))
+        # GRAF1-C: 2a serie con los maximos; sin la columna no se anade nada.
+        if with_max and 'value_max' in sub_df.columns:
+            series.append((f"{lbl}{MAX_SERIES_SUFFIX}", ts, _float_list(sub_df, 'value_max')))
     return series
 
 
@@ -119,8 +122,10 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
                         summary_df,
                     )[0],
                     'label',
+                    with_max=True,          # GRAF1-C
                 ),
                 'Response Time (ms)',
+                dual_max=True,              # GRAF1-C
             ),
             'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),
             'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
@@ -905,6 +910,16 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
                 'line': {'color': color, 'width': 2},
                 'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
             })
+            # GRAF1-C: 2o trace con los maximos (mismo criterio que el HTML individual)
+            if 'value_max' in sub_df.columns:
+                rt_by_label_traces.append({
+                    'x': _ts_iso_list(sub_df),
+                    'y': [float(row['value_max']) for _, row in sub_df.iterrows()],
+                    'name': f'{lbl}{MAX_SERIES_SUFFIX}', 'type': 'scatter', 'mode': 'lines',
+                    'line': {'color': color, 'width': 1, 'dash': 'dot'},
+                    'opacity': 0.85, 'showlegend': False,
+                    'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
+                })
 
         rt_over_time_traces = [{
             'x': tl_timestamps,

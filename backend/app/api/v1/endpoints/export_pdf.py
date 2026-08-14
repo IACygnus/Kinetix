@@ -25,7 +25,7 @@ from app.services.jtl.jtl_parser import JTLParser
 from app.config.chart_config import TEST_TYPE_LABELS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 from app.services.export.report_generator import (
-    chart_area, chart_multiline, chart_pie, build_pdf_html,
+    chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 
@@ -62,7 +62,7 @@ def _int_list(df, col):
     return [int(row[col]) for _, row in df.iterrows()] if len(df) > 0 else []
 
 
-def _build_series(dataframes, label_col, value_col='value'):
+def _build_series(dataframes, label_col, value_col='value', with_max=False):
     """Build (label, timestamps, values) tuples for chart_multiline."""
     series = []
     for sub_df in dataframes:
@@ -72,6 +72,10 @@ def _build_series(dataframes, label_col, value_col='value'):
         ts = _ts_list(sub_df)
         vs = _float_list(sub_df, value_col)
         series.append((lbl, ts, vs))
+        # GRAF1-C: 2a serie con los maximos. Sin la columna (datos previos a
+        # GRAF1-A) no se anade nada y el grafico queda como hoy.
+        if with_max and 'value_max' in sub_df.columns:
+            series.append((f"{lbl}{MAX_SERIES_SUFFIX}", ts, _float_list(sub_df, 'value_max')))
     return series
 
 
@@ -156,8 +160,10 @@ async def export_pdf(
                         summary_df,
                     )[0],
                     'label',
+                    with_max=True,          # GRAF1-C
                 ),
                 'Response Time (ms)',
+                dual_max=True,              # GRAF1-C
             ),
             'rt_time': chart_area(tl_timestamps, _float_list(tl, 'avg_response_time'), '#3b82f6', 'Response Time (ms)'),
             'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),

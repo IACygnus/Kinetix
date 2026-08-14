@@ -78,6 +78,9 @@ def _set_tick_labels(ax, x_secs, x_labels, max_ticks=15):
 # Public chart functions
 # ---------------------------------------------------------------------------
 
+# GRAF1-C: sufijo que marca la serie de maximos (misma convencion que el dashboard)
+MAX_SERIES_SUFFIX = ' (max)'
+
 def chart_area(timestamps, values, color, ylabel, fill=True):
     """Single-series area/line chart → base64 PNG."""
     fig, ax = plt.subplots(figsize=(10, 3.5))
@@ -96,10 +99,13 @@ def chart_area(timestamps, values, color, ylabel, fill=True):
     return fig_to_base64(fig)
 
 
-def chart_multiline(series_list, ylabel, use_code_colors=False):
+def chart_multiline(series_list, ylabel, use_code_colors=False, dual_max=False):
     """Multi-series line chart → base64 PNG.
 
     series_list: list of (label, timestamps, values)
+    dual_max: GRAF1-C — las series cuyo nombre termina en MAX_SERIES_SUFFIX se
+        dibujan finas y punteadas, con el color de su serie base y sin entrada
+        en la leyenda. Con dual_max=False el resultado es identico al de siempre.
     """
     fig, ax = plt.subplots(figsize=(10, 4))
     if not series_list:
@@ -109,15 +115,23 @@ def chart_multiline(series_list, ylabel, use_code_colors=False):
 
     all_x: list = []
     all_labels: list = []
-    for idx, (label, timestamps, values) in enumerate(series_list):
+    base_colors: dict = {}
+    for label, timestamps, values in series_list:
         x_secs, x_labels = make_time_labels(timestamps)
         if not x_secs:
             continue
-        if use_code_colors:
-            color = get_code_color(label.replace('HTTP ', ''))
+        is_max = dual_max and label.endswith(MAX_SERIES_SUFFIX)
+        if is_max:
+            color = base_colors.get(label[:-len(MAX_SERIES_SUFFIX)], '#94a3b8')
+        elif use_code_colors:
+            color = base_colors[label] = get_code_color(label.replace('HTTP ', ''))
         else:
-            color = get_color_for_index(idx)
-        ax.plot(x_secs, values, color=color, linewidth=1.5, label=label)
+            color = base_colors[label] = get_color_for_index(len(base_colors))
+        if is_max:
+            ax.plot(x_secs, values, color=color, linewidth=0.8, linestyle='--',
+                    alpha=0.85, label='_nolegend_')
+        else:
+            ax.plot(x_secs, values, color=color, linewidth=1.5, label=label)
         if len(x_secs) > len(all_x):
             all_x = x_secs
             all_labels = x_labels
@@ -125,7 +139,7 @@ def chart_multiline(series_list, ylabel, use_code_colors=False):
     _setup_axes(ax, ylabel)
     _set_tick_labels(ax, all_x, all_labels)
 
-    ncol = min(4, len(series_list))
+    ncol = min(4, max(1, len(base_colors)))
     ax.legend(fontsize=7, loc='upper center', bbox_to_anchor=(0.5, -0.22),
               ncol=ncol, frameon=False)
     fig.tight_layout()

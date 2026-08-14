@@ -60,10 +60,15 @@ def apply_top_n_aggregation(
     if rest_dfs:
         combined = pd.concat(rest_dfs, ignore_index=True)
         rest_count = len(rest_dfs)
+        # GRAF1-C: conservar los maximos en la serie agregada. Tolerante a su
+        # ausencia (datos previos a GRAF1-A): entonces solo se agrega el promedio.
+        agg_kwargs = {'value': ('value', 'mean')}
+        if 'value_max' in combined.columns:
+            agg_kwargs['value_max'] = ('value_max', 'max')
         rest_agg = (
             combined
             .groupby('timestamp', as_index=False)
-            .agg(value=('value', 'mean'))
+            .agg(**agg_kwargs)
         )
         rest_agg['label'] = f'Resto ({rest_count} transacciones)'
         top_dfs.append(rest_agg)

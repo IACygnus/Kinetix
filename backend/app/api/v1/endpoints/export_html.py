@@ -24,6 +24,7 @@ from app.db.models.user import User
 from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
+from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
@@ -268,6 +269,20 @@ async def export_html(
                 'line': {'color': color, 'width': 2},
                 'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
             })
+            # GRAF1-C: 2o trace con los maximos — punteado fino, mismo color, sin
+            # leyenda. Sin la columna (datos previos a GRAF1-A) no se anade nada.
+            if 'value_max' in sub_df.columns:
+                rt_by_label_traces.append({
+                    'x': _ts_iso_list(sub_df),
+                    'y': _float_list(sub_df, 'value_max'),
+                    'name': f'{lbl}{MAX_SERIES_SUFFIX}',
+                    'type': 'scatter',
+                    'mode': 'lines',
+                    'line': {'color': color, 'width': 1, 'dash': 'dot'},
+                    'opacity': 0.85,
+                    'showlegend': False,
+                    'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
+                })
 
         # Chart 2: Response Time Over Time (single)
         rt_over_time_traces = [{
