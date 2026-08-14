@@ -20,7 +20,7 @@ from app.db.session import get_db
 from app.db.models.test import TestExecution
 from app.db.models.client import UserClient
 from app.db.models.user import User
-from app.core.security import get_current_active_user
+from app.core.security import get_current_active_user, require_role
 from app.services.jtl.jtl_parser import JTLParser, validate_jtl_compatibility
 from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict
 from app.services.ai.analysis_pipeline import run_ai_and_verdict
@@ -469,9 +469,11 @@ async def list_executions(
 async def delete_execution(
     execution_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # SEC-1: borrar ejecuciones queda restringido a admin. Antes bastaba con
+    # tener el cliente asignado, asi que un viewer podia borrarlas.
+    current_user: User = Depends(require_role(["admin"])),
 ):
-    """Eliminar una ejecucion (con verificacion de acceso)"""
+    """Eliminar una ejecucion (solo admin, con verificacion de acceso)"""
     try:
         exec_uuid = uuid.UUID(execution_id)
     except (ValueError, AttributeError):
