@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, memo } from 'react';
+import React, { useEffect, useState, useCallback, useRef, memo } from 'react';
 import {
   LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
@@ -169,20 +169,32 @@ const EditableTextArea = memo(function EditableTextArea({
   placeholder,
   className,
   minHeight = '176px',
+  debounceMs,
 }: {
   initialValue: string;
   onSave: (value: string) => void;
   placeholder?: string;
   className?: string;
   minHeight?: string;
+  debounceMs?: number;
 }) {
   const [localValue, setLocalValue] = useState(initialValue);
+  // R1: sin `debounceMs` el componente se comporta EXACTAMENTE como antes
+  // (solo confirma en blur). Con el, una pausa al escribir tambien confirma,
+  // que es lo que despierta al autoguardado sin necesidad de hacer clic fuera.
+  const draftTimer = useRef<number | null>(null);
+  const clearDraft = () => { if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; } };
   useEffect(() => { setLocalValue(initialValue); }, [initialValue]);
+  useEffect(() => clearDraft, []);
   return (
     <textarea
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
-      onBlur={() => onSave(localValue)}
+      onChange={(e) => {
+        const v = e.target.value;
+        setLocalValue(v);
+        if (debounceMs) { clearDraft(); draftTimer.current = window.setTimeout(() => { draftTimer.current = null; onSave(v); }, debounceMs); }
+      }}
+      onBlur={() => { clearDraft(); onSave(localValue); }}
       placeholder={placeholder || 'Click para editar el analisis...'}
       className={className || 'w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/50 focus:border-orange-500 resize-y cursor-text hover:border-orange-300 transition-colors'}
       style={{ minHeight }}
@@ -246,6 +258,58 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     return () => clearTimeout(timer);
   }, [aiToast]);
 
+  // ===== R1: AUTOGUARDADO DEL REPORTE INDIVIDUAL (patron F3) =====
+  // Escribe en test_executions por el MISMO PUT que el boton manual. Solo en la
+  // vista individual: embebido en el informe integrado guarda la pagina padre
+  // por el canal de overrides (Opcion B), y guardar aqui seria doble escritura.
+  const AUTOSAVE_MS = 1800;
+  const autoSaveMs = embedded ? undefined : AUTOSAVE_MS;
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [savedAt, setSavedAt] = useState('');
+
+  const flushSave = useCallback(async () => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    const pend = pendingRef.current;
+    if (!Object.keys(pend).length) return;
+    pendingRef.current = {};
+    setSaveState('saving');
+    try {
+      await testAPI.updateAnalysis(executionId!, pend);
+      setSaveState('saved');
+      setSavedAt(new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }));
+    } catch {
+      // Lo no guardado vuelve a la cola (sin pisar lo que se haya escrito despues).
+      pendingRef.current = { ...pend, ...pendingRef.current };
+      setSaveState('error');
+    }
+  }, [executionId]);
+
+  // Canal unico: cada campo confirmado entra a la cola y rearma el debounce.
+  const queueSave = useCallback((field: string, value: string) => {
+    if (embedded) return;
+    pendingRef.current[field] = value;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => { saveTimerRef.current = null; flushSave(); }, AUTOSAVE_MS);
+  }, [embedded, flushSave]);
+
+  // Descarga de la pagina: best-effort con keepalive, igual que F3.
+  useEffect(() => {
+    const onUnload = () => {
+      const pend = pendingRef.current;
+      if (embedded || !Object.keys(pend).length) return;
+      const base = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
+      fetch(`${base}/executions/${executionId}/analysis`, {
+        method: 'PUT', credentials: 'include', keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '' },
+        body: JSON.stringify(pend),
+      }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => { window.removeEventListener('beforeunload', onUnload); if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [embedded, executionId]);
+
   useEffect(() => {
     if (executionId) {
       setYAxisRanges({});  // Reset zoom when changing report
@@ -304,9 +368,14 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   const emitEdit = (field: string, setter: (v: string) => void) => (value: string) => {
     setter(value);
     onAnalysisEdit?.(executionId!, field, value);
+    queueSave(field, value);   // R1: no hace nada en modo embebido
   };
 
   const handleSaveChanges = async () => {
+    // R1: el boton sigue siendo el guardado completo. Descarta el debounce en
+    // vuelo y la cola: este PUT manda los 13 campos y los deja al dia.
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    pendingRef.current = {};
     setSaving(true);
     try {
       await testAPI.updateAnalysis(executionId!, {
@@ -324,6 +393,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
         ai_recommendations: recommendations,
         ai_conclusions: conclusions,
       });
+      setSaveState('saved');
+      setSavedAt(new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }));
       alert('Cambios guardados exitosamente');
     } catch (error) {
       alert('Error al guardar cambios');
@@ -449,7 +520,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
         <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
         <span className="text-xs text-gray-400 italic">Click para editar</span>
       </div>
-      <EditableTextArea initialValue={value} onSave={onChange} placeholder="Analisis..." />
+      <EditableTextArea initialValue={value} onSave={onChange} placeholder="Analisis..." debounceMs={autoSaveMs} />
     </div>
   ), []);
 
@@ -568,7 +639,9 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
       </div>
     )}
 
-    <div className="w-full overflow-hidden bg-gray-50" id="dashboard-content">
+    {/* R1: salir de cualquier caja guarda ya, sin esperar al debounce (blur burbujea) */}
+    <div className="w-full overflow-hidden bg-gray-50" id="dashboard-content"
+      onBlur={!embedded ? () => { if (Object.keys(pendingRef.current).length) flushSave(); } : undefined}>
       {/* HEADER — Dark gradient card */}
       <div className="w-full px-4 py-6">
         <div className="bg-gradient-to-r from-[#0a1628] to-[#162040] rounded-2xl p-8 text-white shadow-xl mb-8">
@@ -809,7 +882,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
             <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
             <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-            <EditableTextArea initialValue={analysisSummary} onSave={emitEdit('ai_analysis_summary', setAnalysisSummary)} placeholder="El analisis aparecera aqui..." />
+            <EditableTextArea initialValue={analysisSummary} onSave={emitEdit('ai_analysis_summary', setAnalysisSummary)} placeholder="El analisis aparecera aqui..." debounceMs={autoSaveMs} />
           </div>
 
           {/* TABLA DE REDIRECCIONES */}
@@ -867,7 +940,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
                 <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Redirecciones</h3>
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-                <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Analisis de redirecciones..." />
+                <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Analisis de redirecciones..." debounceMs={autoSaveMs} />
               </div>
             </div>
           )}
@@ -965,7 +1038,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
               <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Errores</h3>
               <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-              <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Analisis de errores..." />
+              <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Analisis de errores..." debounceMs={autoSaveMs} />
             </div>
           </div>
         )}
@@ -1145,7 +1218,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
               <div className="p-6">
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-                <EditableTextArea initialValue={conclusions} onSave={setConclusions} placeholder="Escribe las conclusiones generales de la prueba de performance..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold resize-y cursor-text hover:border-yellow-300 transition-colors" />
+                <EditableTextArea initialValue={conclusions} onSave={(v) => { setConclusions(v); queueSave('ai_conclusions', v); }} debounceMs={autoSaveMs} placeholder="Escribe las conclusiones generales de la prueba de performance..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold resize-y cursor-text hover:border-yellow-300 transition-colors" />
               </div>
             </div>
             <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
@@ -1154,7 +1227,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
               <div className="p-6">
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
-                <EditableTextArea initialValue={recommendations} onSave={setRecommendations} placeholder="Escribe las recomendaciones para mejorar el performance del sistema..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-green-400/50 focus:border-green-400 resize-y cursor-text hover:border-green-300 transition-colors" />
+                <EditableTextArea initialValue={recommendations} onSave={(v) => { setRecommendations(v); queueSave('ai_recommendations', v); }} debounceMs={autoSaveMs} placeholder="Escribe las recomendaciones para mejorar el performance del sistema..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-green-400/50 focus:border-green-400 resize-y cursor-text hover:border-green-300 transition-colors" />
               </div>
             </div>
           </div>
@@ -1177,6 +1250,21 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               {pdfProgress >= 60 && pdfProgress < 90 && 'Generando documento...'}
               {pdfProgress >= 90 && 'Finalizando...'}
             </div>
+          </div>
+        )}
+
+        {/* R1: indicador fijo de autoguardado — mismo patron que el integrado (F3) */}
+        {!embedded && (
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
+            <span className={`text-sm font-medium ${saveState === 'error' ? 'text-red-600' : saveState === 'saving' ? 'text-gray-500' : saveState === 'saved' ? 'text-emerald-700' : 'text-gray-400'}`}>
+              {saveState === 'saving' ? 'Guardando...' : saveState === 'saved' ? `Guardado ${savedAt}` : saveState === 'error' ? 'Error al guardar' : 'Autoguardado activo'}
+            </span>
+            {saveState === 'error' && (
+              <button onClick={flushSave}
+                className="px-3 py-1.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors">
+                Reintentar
+              </button>
+            )}
           </div>
         )}
 
