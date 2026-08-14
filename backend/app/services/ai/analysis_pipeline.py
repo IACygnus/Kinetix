@@ -183,10 +183,13 @@ async def run_ai_and_verdict(
         # Response Times por Transaccion
         rt_lines = []
         for _, row in summary_df.iterrows():
+            # GRAF1-A: el maximo ya viajaba, pero pasaba desapercibido junto al promedio.
+            ratio_max = (row['max'] / row['promedio']) if row['promedio'] > 0 else 0
+            pico = f" [PICO: max {ratio_max:.0f}x el promedio]" if ratio_max >= 10 else ""
             rt_lines.append(
                 f"- {row['label']}: promedio {row['promedio']:.0f}ms, "
                 f"P90 {row['p90']:.0f}ms, P95 {row['p95']:.0f}ms, "
-                f"P99 {row['p99']:.0f}ms, min {row['min']:.0f}ms, max {row['max']:.0f}ms"
+                f"P99 {row['p99']:.0f}ms, min {row['min']:.0f}ms, max {row['max']:.0f}ms{pico}"
             )
         logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
         ai_analysis_response_times = gemini.analyze_chart(

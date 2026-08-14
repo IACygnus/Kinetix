@@ -647,10 +647,12 @@ async def get_execution_charts(
         # Response Times por Transaccion
         response_times_by_label = []
         for label_df in charts_data['response_times_by_label']:
+            has_max = 'value_max' in label_df.columns  # GRAF1-A
             for _, row in label_df.iterrows():
                 response_times_by_label.append(TimeSeriesPoint(
                     timestamp=row['timestamp'].isoformat(),
                     value=float(row['value']),
+                    value_max=float(row['value_max']) if has_max else None,
                     label=row['label'],
                 ))
 

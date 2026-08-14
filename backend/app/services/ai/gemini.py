@@ -572,7 +572,8 @@ def prepare_insights_for_prompt(summary_df) -> Dict:
         else:
             tiers['critical'].append(tx)
 
-        if tx['avg'] > 0 and tx['p99'] / tx['avg'] > 3:
+        # GRAF1-A: tambien es variabilidad un max muy por encima del promedio (picos/timeouts)
+        if tx['avg'] > 0 and (tx['p99'] / tx['avg'] > 3 or tx['max'] / tx['avg'] > 10):
             high_variability.append(tx)
 
         if tx['errors'] > 0:
@@ -615,7 +616,7 @@ def build_tier_summary(insights: Dict) -> str:
         for tx in sorted(tiers['critical'], key=lambda x: -x['avg']):
             lines.append(
                 f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
+                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
             )
         lines.append("")
 
@@ -624,7 +625,7 @@ def build_tier_summary(insights: Dict) -> str:
         for tx in sorted(tiers['degraded'], key=lambda x: -x['avg']):
             lines.append(
                 f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
+                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
             )
         lines.append("")
 
@@ -633,7 +634,7 @@ def build_tier_summary(insights: Dict) -> str:
         for tx in sorted(tiers['acceptable'], key=lambda x: -x['avg']):
             lines.append(
                 f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
+                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
             )
         lines.append("")
 
@@ -642,16 +643,18 @@ def build_tier_summary(insights: Dict) -> str:
         for tx in sorted(tiers['excellent'], key=lambda x: -x['avg']):
             lines.append(
                 f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
+                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
             )
         lines.append("")
 
     if insights['high_variability']:
-        lines.append(f"=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x) - {len(insights['high_variability'])} transacciones ===")
+        lines.append(f"=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x o max/avg > 10x) - {len(insights['high_variability'])} transacciones ===")
         for tx in insights['high_variability']:
             ratio = tx['p99'] / tx['avg'] if tx['avg'] > 0 else 0
+            ratio_max = tx['max'] / tx['avg'] if tx['avg'] > 0 else 0
             lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms vs P99={tx['p99']:.0f}ms (ratio {ratio:.1f}x)"
+                f"  {tx['name']}: avg={tx['avg']:.0f}ms vs P99={tx['p99']:.0f}ms (ratio {ratio:.1f}x), "
+                f"max={tx['max']:.0f}ms (ratio {ratio_max:.1f}x sobre el promedio)"
             )
         lines.append("")
 
@@ -1090,7 +1093,8 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
 
             chart_specific_instructions = {
                 'response_times': f"""Los datos incluyen {insights['total_transactions'] if insights else 'todas las'} transacciones por tier.
-Menciona CADA transaccion por nombre. Cubre: distribucion por tiers, mas rapida vs mas lenta, variabilidad P99/avg, impacto en produccion.""",
+Menciona CADA transaccion por nombre. Cubre: distribucion por tiers, mas rapida vs mas lenta, variabilidad P99/avg, impacto en produccion.
+El tier se asigna por el promedio, pero debes considerar SIEMPRE avg Y max: si el max supera ampliamente al promedio (por ejemplo 10x o mas), senala esos picos y su probable causa (timeouts, esperas, contencion) aunque el tier por promedio sea bueno.""",
 
                 'response_time_over_time': """Cubre: estabilidad temporal (mejora/degrada), fases ramp-up/meseta/cool-down, picos de latencia y sus causas, tendencia general.""",
 

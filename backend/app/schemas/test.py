@@ -107,6 +107,7 @@ class LabelStats(BaseModel):
 class TimeSeriesPoint(BaseModel):
     timestamp: str
     value: float
+    value_max: Optional[float] = None  # GRAF1-A: maximo del bucket (solo response_times_by_label)
     label: Optional[str] = None
     code: Optional[str] = None
 

@@ -458,13 +458,17 @@ class JTLParser:
         timeline_df = self.get_timeline_data(interval_seconds)
 
         # 2. Response times por transaccion (solo principales)
+        # GRAF1-A: SOLO esta serie usa intervalo fijo de 1s + agregacion dual
+        # (value=promedio, value_max=maximo) para que los picos no se suavicen.
+        # El resto de series conserva el intervalo adaptativo.
+        RT_INTERVAL_SECONDS = 1
         df_for_charts = self.df_main if self.df_main is not None and len(self.df_main) > 0 else self.df
         response_times_by_label = []
         for label in df_for_charts['label'].unique():
             label_df = df_for_charts[df_for_charts['label'] == label].copy()
-            label_df['time_bucket'] = label_df['timestamp'].dt.floor(f'{interval_seconds}s')
-            label_timeline = label_df.groupby('time_bucket')['elapsed'].mean().reset_index()
-            label_timeline.columns = ['timestamp', 'value']
+            label_df['time_bucket'] = label_df['timestamp'].dt.floor(f'{RT_INTERVAL_SECONDS}s')
+            label_timeline = label_df.groupby('time_bucket')['elapsed'].agg(['mean', 'max']).reset_index()
+            label_timeline.columns = ['timestamp', 'value', 'value_max']
             label_timeline['label'] = label
             response_times_by_label.append(label_timeline)
 
