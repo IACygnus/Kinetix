@@ -123,7 +123,7 @@ No se ejecutó ningún análisis completo — cuota intacta. Las únicas llamada
 
 ```
 $ git log --oneline -1
-1de71f2 B6.2: compatibilidad max_completion_tokens para modelos de nueva generacion
+bf8b8f0 B6.2: compatibilidad max_completion_tokens para modelos de nueva generacion
 ```
 
 Anteriores: `5f30b96` (SEC-2) · `89dbccc` (SEC-1) · `24eb0a5` (R1) · `0dc5cd4` (F5).
