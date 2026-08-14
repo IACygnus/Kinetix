@@ -17,7 +17,6 @@ Este modulo NO modifica gemini.py: solo importa y llama sus funciones.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -155,7 +154,6 @@ async def run_ai_and_verdict(
             ai_analysis_summary = fallback.analyze_summary_table(summary_df, insights)
         else:
             ai_status["success"] = True  # Gemini responded for the primary analysis
-        time.sleep(1)
 
         # 2. Errores
         logger.info("[2/12] Analizando errores...")
@@ -178,7 +176,6 @@ async def run_ai_and_verdict(
         if ai_analysis_errors is None:
             logger.info("Using FALLBACK for errors")
             ai_analysis_errors = fallback.analyze_errors(errors_for_analysis, metrics['total_requests'])
-        time.sleep(1)
 
         # 3-10. Graficos individuales
         logger.info("[3-10/12] Analizando 8 graficos...")
@@ -199,7 +196,6 @@ async def run_ai_and_verdict(
         if ai_analysis_response_times is None:
             logger.info("Using FALLBACK for response_times")
             ai_analysis_response_times = fallback.analyze_chart("response_times", stats_summary)
-        time.sleep(1)
 
         # Response Time Over Time
         charts_data = parser.get_all_charts_data(interval_seconds=10)
@@ -218,7 +214,6 @@ async def run_ai_and_verdict(
         if ai_analysis_response_time_over_time is None:
             logger.info("Using FALLBACK for response_time_over_time")
             ai_analysis_response_time_over_time = fallback.analyze_chart("response_time_over_time", stats_summary)
-        time.sleep(1)
 
         # Throughput
         ai_analysis_throughput = gemini.analyze_chart(
@@ -232,7 +227,6 @@ async def run_ai_and_verdict(
         if ai_analysis_throughput is None:
             logger.info("Using FALLBACK for throughput")
             ai_analysis_throughput = fallback.analyze_chart("throughput", stats_summary)
-        time.sleep(1)
 
         # Latency
         ai_analysis_latency = gemini.analyze_chart(
@@ -246,7 +240,6 @@ async def run_ai_and_verdict(
         if ai_analysis_latency is None:
             logger.info("Using FALLBACK for latency")
             ai_analysis_latency = fallback.analyze_chart("latency", stats_summary)
-        time.sleep(1)
 
         # Error Rate
         ai_analysis_error_rate = gemini.analyze_chart(
@@ -259,7 +252,6 @@ async def run_ai_and_verdict(
         if ai_analysis_error_rate is None:
             logger.info("Using FALLBACK for error_rate")
             ai_analysis_error_rate = fallback.analyze_chart("error_rate", stats_summary)
-        time.sleep(1)
 
         # Codes per Second
         code_dist = parser.get_response_code_distribution()
@@ -276,7 +268,6 @@ async def run_ai_and_verdict(
         if ai_analysis_codes_per_second is None:
             logger.info("Using FALLBACK for codes_per_second")
             ai_analysis_codes_per_second = fallback.analyze_chart("codes_per_second", stats_summary)
-        time.sleep(1)
 
         # TPS
         tps_lines = []
@@ -292,7 +283,6 @@ async def run_ai_and_verdict(
         if ai_analysis_transactions_per_second is None:
             logger.info("Using FALLBACK for transactions_per_second")
             ai_analysis_transactions_per_second = fallback.analyze_chart("transactions_per_second", stats_summary)
-        time.sleep(1)
 
         # Active Threads
         ai_analysis_active_threads = gemini.analyze_chart(
@@ -304,7 +294,6 @@ async def run_ai_and_verdict(
         if ai_analysis_active_threads is None:
             logger.info("Using FALLBACK for active_threads")
             ai_analysis_active_threads = fallback.analyze_chart("active_threads", stats_summary)
-        time.sleep(1)
 
         logger.info("Analisis individuales completados")
 
@@ -322,7 +311,6 @@ async def run_ai_and_verdict(
                     int(metrics.get('total_redirects', 0)),
                     int(metrics.get('total_main_samples', metrics['total_requests'])),
                 )
-            time.sleep(1)
 
         # 12. Sintesis: Conclusiones + Recomendaciones
         logger.info("[11-12/12] Sintetizando conclusiones y recomendaciones...")
@@ -349,7 +337,6 @@ async def run_ai_and_verdict(
         if ai_conclusions is None:
             logger.info("Using FALLBACK for conclusions")
             ai_conclusions = fallback.generate_conclusions(stats_summary, acceptance_criteria=acceptance_criteria_dict)
-        time.sleep(1)
 
         ai_recommendations = gemini.generate_recommendations(
             metrics=metrics,

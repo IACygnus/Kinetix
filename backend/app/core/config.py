@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     # General
     APP_NAME: str = "SQA Kinetix Pro"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # DPERF-1 (fix D): default False para que session.py no active el eco SQL de
+    # SQLAlchemy. Se puede reactivar puntualmente con la env var DEBUG=true.
+    DEBUG: bool = False
 
     # Database — set via DATABASE_URL env var
     DATABASE_URL: str = "postgresql://jmeter_user:jmeter_secure_2024@postgres:5432/jmeter_analyzer_db"

@@ -13,6 +13,14 @@ import google.generativeai as genai
 from typing import Dict, List, Optional, Tuple
 import logging
 
+# DPERF-1 (fix C): el SDK de OpenAI se importa aqui, al cargar el modulo, para que
+# el costo del import se pague al arrancar el contenedor y no en el primer analisis.
+# Guardado con try/except porque el provider puede ser solo Gemini.
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 logger = logging.getLogger(__name__)
 
 # ==================== CONSTANTS ====================
@@ -692,7 +700,8 @@ class GeminiAnalyzer:
             )
             logger.info(f"AIAnalyzer v4.0 iniciado: provider=gemini, model={self.model_name}")
         elif self.provider == "openai":
-            from openai import OpenAI
+            if OpenAI is None:
+                raise ValueError("SDK de OpenAI no disponible: falta el paquete 'openai'")
             self._openai_client = OpenAI(api_key=self._api_key)
             logger.info(f"AIAnalyzer v4.0 iniciado: provider=openai, model={self.model_name}")
         else:
