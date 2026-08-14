@@ -294,6 +294,26 @@ def build_pdf_html(
             f'</div>'
         )
 
+    def chart_unit(title, color, img_key, ia_key, ia_title):
+        """N2.1: grafica + su analisis como UNA unidad indivisible, en dos columnas.
+
+        En A4 landscape la pila vertical (grafica de 80mm + caja de analisis) mide
+        ~133mm de los 175mm utiles: solo cabe un bloque por pagina y el resto es
+        blanco. Lado a lado, la unidad mide lo que el mas alto de los dos (~70mm)
+        y entran dos por pagina. Tabla, no flex/grid (regla 11).
+        """
+        ai_html = ai_box(ia_key, ia_title, color)
+        head = f'<div class="chart-title" style="border-left-color:{color}">{title}</div>'
+        img = f'<img class="chart-img" src="data:image/png;base64,{charts[img_key]}" />'
+        if not ai_html:   # sin analisis, la grafica ocupa el ancho completo
+            return f'<table class="chart-unit"><tr><td class="chart-cell" style="width:100%">{head}{img}</td></tr></table>'
+        return (
+            f'<table class="chart-unit"><tr>'
+            f'<td class="chart-cell">{head}{img}</td>'
+            f'<td class="chart-ai-cell">{ai_html}</td>'
+            f'</tr></table>'
+        )
+
     # ----- stats table rows -----
     stats_rows = ''
     for s in statistics:
@@ -628,6 +648,29 @@ tbody tr:nth-child(even) {{
     break-inside: avoid;
 }}
 
+/* N2.1: unidad indivisible grafica + analisis, en dos columnas */
+.chart-unit {{
+    width: 100%;
+    margin-bottom: 4mm;
+    page-break-inside: avoid;
+    break-inside: avoid;
+}}
+
+.chart-unit td {{
+    padding: 0;
+    border-bottom: none;
+    vertical-align: top;
+}}
+
+.chart-cell {{
+    width: 46%;
+    padding-right: 4mm !important;
+}}
+
+.chart-ai-cell {{
+    width: 54%;
+}}
+
 .chart-title {{
     font-size: 10pt;
     font-weight: 700;
@@ -650,7 +693,7 @@ tbody tr:nth-child(even) {{
     border-left: 1.5mm solid #4f46e5;
     border-radius: 1.5mm;
     padding: 3mm 4mm;
-    margin: 2mm 0 5mm 0;
+    margin: 0 0 3mm 0;
     break-inside: avoid;
 }}
 
@@ -663,7 +706,7 @@ tbody tr:nth-child(even) {{
 
 .ai-text {{
     font-size: 8pt;
-    line-height: 1.6;
+    line-height: 1.45;
     color: #334155;
 }}
 
@@ -764,59 +807,15 @@ tbody tr:nth-child(even) {{
 
 {redirect_section}
 
-<!-- ===== CHARTS ===== -->
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#8884d8">Response Times por Transaccion</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['rt_label']}" />
-</div>
-{ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#4f46e5')}
-
-<!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#4CAF50">Throughput Over Time</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['throughput']}" />
-</div>
-{ai_box('throughput', 'Analisis - Throughput', '#4f46e5')}
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#9c27b0">Latency Over Time</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['latency']}" />
-</div>
-{ai_box('latency', 'Analisis - Latency', '#4f46e5')}
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#f44336">Error Rate Over Time</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['error_rate']}" />
-</div>
-{ai_box('errorRate', 'Analisis - Error Rate', '#4f46e5')}
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#4CAF50">Response Codes per Second</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['codes']}" />
-</div>
-{ai_box('codesPerSecond', 'Analisis - Response Codes', '#4f46e5')}
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#4CAF50">Transactions per Second</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['tps']}" />
-</div>
-{ai_box('tps', 'Analisis - Transactions per Second', '#4f46e5')}
-
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#2196F3">Active Threads Over Time</div>
-    <img class="chart-img" src="data:image/png;base64,{charts['threads']}" />
-</div>
-{ai_box('activeThreads', 'Analisis - Active Threads', '#4f46e5')}
-
-<!-- ===== DISTRIBUCION DE CODIGOS ===== -->
-<div class="chart-section">
-    <div class="chart-title" style="border-left-color:#ff9800">Distribucion de Response Codes</div>
-    <div style="text-align:center">
-        <img style="max-width:100mm;max-height:80mm" src="data:image/png;base64,{charts['pie']}" />
-    </div>
-</div>
-{ai_box('errors', 'Analisis de Errores', '#4f46e5')}
+<!-- ===== CHARTS (N2.1: flujo denso, unidad grafica+analisis) ===== -->
+{chart_unit('Response Times por Transaccion', '#8884d8', 'rt_label', 'responseTimes', 'Analisis - Response Times por Transaccion')}
+{chart_unit('Throughput Over Time', '#4CAF50', 'throughput', 'throughput', 'Analisis - Throughput')}
+{chart_unit('Latency Over Time', '#9c27b0', 'latency', 'latency', 'Analisis - Latency')}
+{chart_unit('Error Rate Over Time', '#f44336', 'error_rate', 'errorRate', 'Analisis - Error Rate')}
+{chart_unit('Response Codes per Second', '#4CAF50', 'codes', 'codesPerSecond', 'Analisis - Response Codes')}
+{chart_unit('Transactions per Second', '#4CAF50', 'tps', 'tps', 'Analisis - Transactions per Second')}
+{chart_unit('Active Threads Over Time', '#2196F3', 'threads', 'activeThreads', 'Analisis - Active Threads')}
+{chart_unit('Distribucion de Response Codes', '#ff9800', 'pie', 'errors', 'Analisis de Errores')}
 
 <!-- ===== CONCLUSIONES Y RECOMENDACIONES ===== -->
 {ai_box('conclusions', 'Conclusiones', '#4f46e5', allow_break=True)}
