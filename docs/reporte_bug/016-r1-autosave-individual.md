@@ -111,7 +111,7 @@ El contrato no cambió: es el mismo endpoint que usa el botón desde siempre, y 
 
 ```
 $ git log --oneline -1
-0c78dc1 R1: autosave con indicador en reporte individual
+1ae4f6f R1: autosave con indicador en reporte individual
 ```
 
 Anteriores: `0dc5cd4` (F5) · `4ed0957` (UI-2) · `f069527` (GRAF1-C.2) · `fad4f01` (GRAF1-C).
