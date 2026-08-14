@@ -1716,6 +1716,10 @@ async def generate_consolidated_analysis(
     # Use real_sections for processing
     request_sections = real_sections
 
+    # F5 (B4): el consolidado se redacta sobre el texto EDITADO por el usuario,
+    # no sobre el original de la IA. Misma fuente que usan los exports (F6).
+    overrides_by_exec = await _load_section_overrides(db, request.report_id)
+
     # Group executions by test_type
     executions_by_type: dict = {}  # { "load": [...], "stress": [...] }
 
@@ -1753,12 +1757,15 @@ async def generate_consolidated_analysis(
             if isinstance(execution.acceptance_criteria_json, dict):
                 verdict = execution.acceptance_criteria_json.get("verdict", "")
 
+            # F5 (B4): si el usuario corrigio el texto de esta seccion, la version
+            # corregida es la que alimenta el prompt. Sin overrides, identico a antes.
+            _ov = (overrides_by_exec.get(section.source_id) or {}).get("analysis") or {}
             executions_by_type[tt].append({
                 "name": execution.name,
                 "kpis": kpis,
                 "verdict": verdict,
-                "conclusions": execution.ai_conclusions or "",
-                "recommendations": execution.ai_recommendations or "",
+                "conclusions": _ov.get("ai_conclusions", execution.ai_conclusions) or "",
+                "recommendations": _ov.get("ai_recommendations", execution.ai_recommendations) or "",
             })
 
         elif section.type == "monitoring":

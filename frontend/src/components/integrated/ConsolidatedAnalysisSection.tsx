@@ -35,6 +35,8 @@ export default function ConsolidatedAnalysisSection({
 }: Props) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
+  // F5 (B2, Opcion D): confirmacion antes de pisar ediciones manuales.
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // F7: espejo controlado de lo que muestran las cajas. Se resincroniza cuando
   // el padre cambia consolidatedAnalysis (regenerar), asi la pantalla nunca
@@ -47,7 +49,12 @@ export default function ConsolidatedAnalysisSection({
   const getCsrfToken = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '';
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
+  // F5: el flag `edited` lo escribe la pagina padre (F3/F4) en cada blur y viaja
+  // a la DB, asi que sobrevive a recargar el informe desde el historial.
+  const hasManualEdits = Object.values(consolidatedAnalysis || {}).some((d: any) => d?.edited);
+
   const handleGenerate = async () => {
+    setConfirmOpen(false);
     setGenerating(true);
     setError('');
     try {
@@ -104,13 +111,41 @@ export default function ConsolidatedAnalysisSection({
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-2xl font-bold text-[#0a1628]">Analisis Consolidado</h3>
         <button
-          onClick={handleGenerate}
+          onClick={() => (hasManualEdits ? setConfirmOpen(true) : handleGenerate())}
           disabled={generating}
           className="px-4 py-2 bg-slate-200 text-slate-800 rounded-lg hover:bg-slate-300 disabled:opacity-50 text-sm font-medium transition-colors"
         >
           {generating ? 'Regenerando...' : 'Regenerar'}
         </button>
       </div>
+
+      {/* F5 (B2, Opcion D): confirmacion antes de reemplazar ediciones manuales.
+          Mismo patron que el modal de confirmacion de ClientsPage. */}
+      {confirmOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-white border border-gray-200 rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-2xl font-semibold text-gray-800 mb-2">Regenerar Analisis Consolidado</h3>
+            <p className="text-lg text-gray-500 mb-6">
+              El analisis consolidado tiene ediciones manuales. Regenerar las reemplazara
+              por el texto nuevo de la IA. Esta accion no se puede deshacer. &iquest;Continuar?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmOpen(false)}
+                className="px-5 py-3 text-base text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleGenerate}
+                className="px-5 py-3 bg-red-600 text-white text-base font-semibold rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Regenerar y reemplazar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {Object.entries(draft).map(([testType, data]) => (
         <div key={testType} className="mb-8">
