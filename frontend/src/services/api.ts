@@ -137,11 +137,49 @@ export const profileAPI = {
 };
 
 // ============ PERFORMANCE (v2.0 - multi-JTL) ============
+// N3.2/N3.3: una transaccion del JTL con sus metricas reales y la criticidad
+// que el backend sugiere de forma determinista (sin IA).
+export interface TransactionMetrics {
+  label: string;
+  muestras: number;
+  promedio: number;
+  p90: number;
+  p95: number;
+  max: number;
+  errores: number;
+  tasa_error: number;
+  verdict: string | null;
+  is_critical_suggested: boolean;
+  motivo: string;
+}
+
 export const testAPI = {
   extractJTLLabels: async (file: File): Promise<{ labels: string[]; count: number }> => {
     const formData = new FormData();
     formData.append('file', file);
     const response = await api.post('/extract-jtl-labels', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  // N3.3: transacciones con metricas reales y criticidad sugerida (N3.2).
+  // Los criterios son opcionales: sin ellos el backend marca solo por picos.
+  extractJTLTransactions: async (
+    file: File,
+    responseTime?: string,
+    availability?: string,
+  ): Promise<{
+    transactions: TransactionMetrics[];
+    count: number;
+    critical_count: number;
+    criteria_applied: boolean;
+  }> => {
+    const formData = new FormData();
+    formData.append('files', file);
+    if (responseTime) formData.append('response_time', responseTime);
+    if (availability) formData.append('availability', availability);
+    const response = await api.post('/extract-jtl-transactions', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;

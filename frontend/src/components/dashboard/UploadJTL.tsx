@@ -12,6 +12,7 @@ import {
   File as FileIcon,
 } from 'lucide-react';
 import { testAPI, clientsAPI } from '../../services/api';
+import type { TransactionMetrics } from '../../services/api';   // N3.3
 import type { ClientInfo } from '../../types';
 import LoadingSpinner from '../common/LoadingSpinner';
 
@@ -66,6 +67,13 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   const [detectedLabels, setDetectedLabels] = useState<string[]>([]);
   const [extractingLabels, setExtractingLabels] = useState(false);
 
+  // N3.3: metricas por transaccion + seleccion para analisis individual.
+  // `manualSel` guarda SOLO lo que Fredy toca; la seleccion efectiva se deriva
+  // de la sugerencia del backend con su override encima. Asi, al re-evaluar la
+  // criticidad (porque cambiaron los criterios) no se pierde lo que ya marco.
+  const [transactions, setTransactions] = useState<TransactionMetrics[]>([]);
+  const [manualSel, setManualSel] = useState<Record<string, boolean>>({});
+
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -90,14 +98,26 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
     }
   }, []);
 
-  const extractLabelsFromFile = useCallback(async (file: File) => {
+  // N3.3: primero el endpoint nuevo (metricas + criticidad, soporta XML y no
+  // trunca a 10.000 lineas). Si falla por lo que sea, se cae al viejo y el
+  // panel queda como estaba antes: sin metricas pero sin pantalla rota.
+  const extractLabelsFromFile = useCallback(async (file: File, rt?: string, av?: string) => {
     try {
       setExtractingLabels(true);
-      const response = await testAPI.extractJTLLabels(file);
-      setDetectedLabels(response.labels || []);
+      const data = await testAPI.extractJTLTransactions(file, rt, av);
+      setTransactions(data.transactions || []);
+      setDetectedLabels((data.transactions || []).map(t => t.label));
     } catch (err) {
-      console.error('Error extracting labels:', err);
-      setDetectedLabels([]);
+      console.error('extract-jtl-transactions fallo, se usa el endpoint anterior:', err);
+      try {
+        const response = await testAPI.extractJTLLabels(file);
+        setTransactions([]);
+        setDetectedLabels(response.labels || []);
+      } catch (err2) {
+        console.error('Error extracting labels:', err2);
+        setTransactions([]);
+        setDetectedLabels([]);
+      }
     } finally {
       setExtractingLabels(false);
     }
@@ -126,11 +146,34 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
       setError('');
       // Extraer labels del primer archivo
       if (prev.length === 0 && validFiles.length > 0) {
-        extractLabelsFromFile(validFiles[0]);
+        extractLabelsFromFile(validFiles[0], responseTime, availability);
       }
       return combined;
     });
-  }, [extractLabelsFromFile]);
+  }, [extractLabelsFromFile, responseTime, availability]);
+
+  // N3.3: los criterios globales pueden cambiar DESPUES de cargar el archivo.
+  // Se re-consulta al backend con debounce en vez de recalcular en el cliente:
+  // asi el umbral de criticidad tiene una sola fuente de verdad (el endpoint) y
+  // no se duplica aqui la logica de veredictos. Cuesta ~0.35s por llamada.
+  // Solo aplica si el endpoint nuevo respondio (en fallback no hay metricas).
+  useEffect(() => {
+    if (files.length === 0 || transactions.length === 0) return;
+    const t = setTimeout(() => {
+      extractLabelsFromFile(files[0], responseTime, availability);
+    }, 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responseTime, availability]);
+
+  // Seleccion efectiva = sugerencia del backend + lo que Fredy haya tocado.
+  const isSelected = (t: TransactionMetrics) => manualSel[t.label] ?? t.is_critical_suggested;
+  const selectedLabels = transactions.filter(isSelected).map(t => t.label);
+  const setAll = (value: boolean | null) => {
+    if (value === null) { setManualSel({}); return; }   // volver a la sugerencia
+    setManualSel(Object.fromEntries(transactions.map(t => [t.label, value])));
+  };
+  const fmt = (n: number) => Math.round(n).toLocaleString('es-CO');
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -239,11 +282,16 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
         }
       });
 
+      // N3.3: las marcadas viajan como una clave nueva del mismo JSON de
+      // criterios. Es aditivo: si no hay ninguna la clave no se emite y el
+      // payload queda byte a byte como antes. En N3.3 el backend la ignora;
+      // N3.4 la leera para saber que transacciones analizar.
       const acceptanceCriteria = JSON.stringify({
         concurrency: parseInt(concurrency) || 100,
         response_time: parseInt(responseTime) || 2000,
         availability: parseFloat(availability) || 99.5,
         ...(Object.keys(perTransaction).length > 0 ? { per_transaction: perTransaction } : {}),
+        ...(selectedLabels.length > 0 ? { critical_transactions: selectedLabels } : {}),
       });
 
       const result = await testAPI.uploadJTL(
@@ -517,6 +565,81 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
             <p className="mt-4 text-lg text-gray-400 animate-pulse">
               Detectando transacciones del archivo...
             </p>
+          )}
+
+          {/* N3.3: transacciones con metricas reales y seleccion para analisis
+              individual. Solo aparece si el endpoint nuevo respondio; en
+              fallback se ve el panel de criterios de siempre. */}
+          {transactions.length > 0 && (
+            <div className="mt-5 bg-white rounded-xl border border-gray-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-700">Transacciones del JTL</h3>
+                  <p className="text-sm text-gray-500">
+                    {selectedLabels.length} de {transactions.length} transacciones marcadas para analisis individual
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setAll(true)}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Marcar todas</button>
+                  <button type="button" onClick={() => setAll(null)}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Solo criticas</button>
+                  <button type="button" onClick={() => setAll(false)}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Ninguna</button>
+                </div>
+              </div>
+
+              {selectedLabels.length > 10 && (
+                <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-sm text-amber-800">
+                  {selectedLabels.length} transacciones marcadas: el analisis anadira ~{selectedLabels.length} llamadas
+                  de IA y varios minutos al procesamiento.
+                </div>
+              )}
+
+              <div className="max-h-96 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs uppercase text-gray-500 border-b border-gray-200">
+                    <tr>
+                      <th className="py-2 pr-2 text-left w-8"></th>
+                      <th className="py-2 pr-2 text-left">Transaccion</th>
+                      <th className="py-2 px-2 text-right">Muestras</th>
+                      <th className="py-2 px-2 text-right">Promedio</th>
+                      <th className="py-2 px-2 text-right">p90</th>
+                      <th className="py-2 px-2 text-right">Max</th>
+                      <th className="py-2 pl-2 text-right">Errores</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map(t => (
+                      <tr key={t.label}
+                        className={`border-b border-gray-100 ${t.is_critical_suggested ? 'bg-amber-50/60' : ''}`}>
+                        <td className="py-2 pr-2 align-top">
+                          <input type="checkbox" checked={isSelected(t)}
+                            onChange={e => setManualSel(prev => ({ ...prev, [t.label]: e.target.checked }))}
+                            className="w-4 h-4 accent-[#f5a623] cursor-pointer" />
+                        </td>
+                        <td className="py-2 pr-2">
+                          <span className="font-medium text-gray-700">{t.label}</span>
+                          {t.is_critical_suggested && (
+                            <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-amber-200 text-amber-900">critica</span>
+                          )}
+                          {t.motivo && (
+                            <div className="text-xs text-gray-500 mt-0.5" title={t.motivo}>{t.motivo}</div>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.muestras)}</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.promedio)} ms</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.p90)} ms</td>
+                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.max)} ms</td>
+                        <td className="py-2 pl-2 text-right tabular-nums text-gray-600">
+                          {fmt(t.errores)} <span className="text-gray-400">({t.tasa_error.toFixed(2)}%)</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
 
           {detectedLabels.length > 0 && (
