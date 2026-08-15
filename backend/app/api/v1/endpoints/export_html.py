@@ -750,9 +750,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .meta-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:1rem}}
 .meta-block{{display:flex;align-items:center;gap:2rem;margin-top:1rem}}
 .meta-zona-izq{{flex:1 1 62%;min-width:0}}
-.meta-zona-der{{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.22);padding-left:2rem;text-align:center}}
-.meta-label{{font-size:.7rem;text-transform:uppercase;opacity:.7;letter-spacing:.5px}}
-.meta-value{{font-family:monospace;font-size:.9rem;margin-top:2px}}
+.meta-zona-der{{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.13);padding-left:2rem;text-align:center}}
+.meta-label{{font-size:.7rem;text-transform:uppercase;color:#94a3b8;letter-spacing:.5px}}
+.meta-value{{font-family:monospace;font-size:.9rem;margin-top:2px;color:#fff;font-weight:500}}
+.meta-sec{{font-family:monospace;font-size:.9rem;margin-top:2px;color:#cbd5e1}}
 .badge{{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:700;text-transform:uppercase;margin-left:8px}}
 .container{{max-width:1400px;margin:0 auto;padding:2rem}}
 .kpis{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem}}
@@ -792,7 +793,7 @@ tr:hover{{background:#f8fafc}}
 @media print{{body{{background:#fff}}.header{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}th,.total-row{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}}}
 @media(max-width:768px){{.kpis,.meta-grid,.grid-2{{grid-template-columns:1fr}}
 .meta-block{{flex-direction:column;align-items:stretch;gap:1.2rem}}
-.meta-zona-der{{border-left:none;border-top:1px solid rgba(255,255,255,.22);padding-left:0;padding-top:1rem}}}}
+.meta-zona-der{{border-left:none;border-top:1px solid rgba(255,255,255,.13);padding-left:0;padding-top:1rem}}}}
 </style>
 </head>
 <body>
@@ -809,11 +810,11 @@ tr:hover{{background:#f8fafc}}
 <div class="meta-block">
 <div class="meta-zona-izq">
 <div style="display:flex;gap:2rem;flex-wrap:wrap">
-<div style="flex:1 1 55%"><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-value" style="opacity:.85">{_cm['range']}</div></div>
+<div style="flex:1 1 55%"><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-sec">{_cm['range']}</div></div>
 <div style="flex:1 1 30%"><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
 {fila_criterios}
-<div style="margin-top:.9rem"><div class="meta-label">Archivo</div><div class="meta-value">{files_list}</div></div>
+<div style="margin-top:.9rem"><div class="meta-label">Archivo</div><div class="meta-sec">{files_list}</div></div>
 </div>
 <div class="meta-zona-der">{celda_cliente}</div>
 </div>

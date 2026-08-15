@@ -534,7 +534,7 @@ body {{
 .cover-zona-der {{
     width: 38%;
     border: none;
-    border-left: 0.3mm solid rgba(255,255,255,0.25);
+    border-left: 0.3mm solid rgba(255,255,255,0.13);   /* N2.4: hairline al 13% */
     padding: 0 2mm 0 10mm;
     vertical-align: middle;
     text-align: center;
@@ -550,25 +550,35 @@ body {{
     vertical-align: top;
 }}
 
+/* N2.4: el bloque de metadatos NO lleva zebra. La regla generica
+   `tbody tr:nth-child(even)` (mas abajo en esta misma hoja) pintaba de #f8fafc
+   la 2a fila de la tabla anidada — justo la de CRITERIOS DE ACEPTACION — y
+   dejaba texto claro sobre fondo claro. El fondo va en el <tr>, asi que no
+   basta con poner el <td> transparente: hay que anular la regla en la fila. */
+.cover-meta-grid tr, .cover-meta-inner tr,
+.cover-meta-grid td, .cover-meta-inner td {{
+    background: none !important;
+}}
+
 .cover-meta-label {{
     font-size: 7pt;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.5);
+    color: #94a3b8;   /* N2.4: todas las etiquetas del bloque, iguales entre si */
     letter-spacing: 0.5px;
 }}
 
 .cover-meta-value {{
     font-size: 12pt;
-    color: rgba(255,255,255,0.9);
-    font-weight: 600;
+    color: #ffffff;      /* N2.4: valores principales */
+    font-weight: 500;
     margin-top: 1mm;
 }}
 
-/* N2.3: segunda linea de una celda (rango horario bajo la fecha). Blanco
-   legible, no el gris del pie anterior. */
+/* N2.3/N2.4: valores secundarios del bloque — rango horario y nombre del
+   archivo. */
 .cover-meta-sub {{
     font-size: 10pt;
-    color: rgba(255,255,255,0.85);
+    color: #cbd5e1;
     margin-top: 0.8mm;
 }}
 
@@ -820,7 +830,7 @@ tbody tr:nth-child(even) {{
                         <td class="cover-meta-fila"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
                     </tr>
                     {cover_fila_criterios}
-                    <tr><td colspan="2" class="cover-meta-fila"><div class="cover-meta-label">ARCHIVO</div><div class="cover-meta-value" style="font-size:10.5pt">{files_list}</div></td></tr>
+                    <tr><td colspan="2" class="cover-meta-fila"><div class="cover-meta-label">ARCHIVO</div><div class="cover-meta-sub" style="font-size:10.5pt">{files_list}</div></td></tr>
                 </table>
             </td>
             <td class="cover-zona-der">{cover_cell_cliente}</td>

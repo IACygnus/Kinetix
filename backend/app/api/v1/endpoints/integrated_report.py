@@ -276,9 +276,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:1rem}
 .plotly-meta-block{display:flex;align-items:center;gap:2rem;margin-top:1rem}
 .plotly-meta-izq{flex:1 1 62%;min-width:0}
-.plotly-meta-der{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.22);padding-left:2rem;text-align:center}
-.plotly-meta-label{font-size:.7rem;text-transform:uppercase;opacity:.7;letter-spacing:.5px}
-.plotly-meta-value{font-family:monospace;font-size:.9rem;margin-top:2px}
+.plotly-meta-der{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.13);padding-left:2rem;text-align:center}
+.plotly-meta-label{font-size:.7rem;text-transform:uppercase;color:#94a3b8;letter-spacing:.5px}
+.plotly-meta-value{font-family:monospace;font-size:.9rem;margin-top:2px;color:#fff;font-weight:500}
+.plotly-meta-sec{font-family:monospace;font-size:.9rem;margin-top:2px;color:#cbd5e1}
 .plotly-badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:700;text-transform:uppercase;margin-left:8px}
 .plotly-container{max-width:1400px;margin:0 auto;padding:2rem}
 .plotly-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem}
@@ -316,7 +317,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
 @media(max-width:768px){.plotly-kpis,.plotly-meta-grid,.plotly-grid-2{grid-template-columns:1fr}
 .plotly-meta-block{flex-direction:column;align-items:stretch;gap:1.2rem}
-.plotly-meta-der{border-left:none;border-top:1px solid rgba(255,255,255,.22);padding-left:0;padding-top:1rem}}
+.plotly-meta-der{border-left:none;border-top:1px solid rgba(255,255,255,.13);padding-left:0;padding-top:1rem}}
 </style>
 """
 
@@ -601,11 +602,11 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div class="plotly-meta-block">
 <div class="plotly-meta-izq">
 <div style="display:flex;gap:2rem;flex-wrap:wrap">
-<div style="flex:1 1 55%"><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-value" style="opacity:.85">{_cm['range']}</div></div>
+<div style="flex:1 1 55%"><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-sec">{_cm['range']}</div></div>
 <div style="flex:1 1 30%"><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
 {fila_criterios}
-<div style="margin-top:.9rem"><div class="plotly-meta-label">Archivo</div><div class="plotly-meta-value">{files_list}</div></div>
+<div style="margin-top:.9rem"><div class="plotly-meta-label">Archivo</div><div class="plotly-meta-sec">{files_list}</div></div>
 </div>
 <div class="plotly-meta-der">{celda_cliente}</div>
 </div>
