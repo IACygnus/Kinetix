@@ -504,17 +504,17 @@ def _build_plotly_html(
 
     # UI-2: sin badge de veredicto en los exports (se conserva solo en pantalla).
 
-    # N2.3: la fila de metadatos deja de repetir el nombre del proyecto y el
-    # tipo de prueba (ya estan en el titulo y en el badge de arriba) y muestra
-    # ejecucion / duracion / criterios. Sin criterios definidos la columna no se
-    # pinta y la rejilla pasa a 3 columnas.
+    # N2.3: el bloque de metadatos ya no repite el nombre del proyecto ni el
+    # tipo de prueba (viven en el titulo y en el badge). Son dos zonas separadas
+    # por una linea vertical: izquierda ~62% con ejecucion+duracion / criterios /
+    # archivo, derecha ~34% para el cliente centrado. Sin criterios, esa fila no
+    # se pinta. Aqui si se usa flex: es HTML de navegador, no la rama PDF.
     from app.services.export.report_generator import cover_meta_parts
     _cm = cover_meta_parts(meta)
-    celda_criterios = (
-        f'<div><div class="meta-label">Criterios</div>'
+    fila_criterios = (
+        f'<div style="margin-top:.9rem"><div class="meta-label">Criterios de Aceptacion</div>'
         f'<div class="meta-value">{_cm["criteria"]}</div></div>'
     ) if _cm['criteria'] else ''
-    meta_cols = 'repeat(4,1fr)' if _cm['criteria'] else 'repeat(3,1fr)'
 
     # ---- AI box helper ----
     def ai_box(key, title, border='#4f46e5'):
@@ -714,18 +714,18 @@ def _build_plotly_html(
     # plantilla queda exactamente igual que antes. Aca sí se permiten px:
     # es HTML para navegador, no la rama PDF.
     _client_logo = meta.get('client_logo')
-    # N2.2-B: orden fijo de la fila — Nombre | Duracion | Tipo de Prueba |
-    # Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
-    # derecha, con etiqueta / logo / nombre apilados. Sin logo solo desaparece
-    # la imagen; el orden no cambia.
+    # N2.2-B / N2.3: el cliente ocupa la zona derecha del bloque, con etiqueta,
+    # logo y nombre centrados entre si. Sin logo la zona no cambia de sitio: se
+    # queda con etiqueta + nombre centrados, sin hueco.
     _logo_img = (
         f'<img src="{_client_logo}" alt="Logo del cliente" '
-        f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
+        f'style="max-height:110px;max-width:100%;object-fit:contain;display:block;margin:.7rem auto .5rem auto" />'
     ) if _client_logo else ''
     celda_cliente = (
         f'<div class="meta-label">Cliente</div>'
         f'{_logo_img}'
-        f'<div class="meta-value">{meta["client"] or "N/A"}</div>'
+        f'<div class="meta-value" style="font-size:1.05rem;font-family:inherit'
+        f'{"" if _client_logo else ";margin-top:.5rem"}">{meta["client"] or "N/A"}</div>'
     )
 
     # ---- Full HTML ----
@@ -748,6 +748,9 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .header-meta{{background:rgba(255,255,255,.08);backdrop-filter:blur(10px);border-radius:12px;padding:1.5rem}}
 .project-name{{font-size:1.5rem;font-weight:700;margin-bottom:.5rem}}
 .meta-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:1rem}}
+.meta-block{{display:flex;align-items:center;gap:2rem;margin-top:1rem}}
+.meta-zona-izq{{flex:1 1 62%;min-width:0}}
+.meta-zona-der{{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.22);padding-left:2rem;text-align:center}}
 .meta-label{{font-size:.7rem;text-transform:uppercase;opacity:.7;letter-spacing:.5px}}
 .meta-value{{font-family:monospace;font-size:.9rem;margin-top:2px}}
 .badge{{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:700;text-transform:uppercase;margin-left:8px}}
@@ -787,7 +790,9 @@ tr:hover{{background:#f8fafc}}
 .footer{{text-align:center;padding:2rem;color:#94a3b8;font-size:.85rem;border-top:1px solid var(--border);margin-top:2rem}}
 .footer strong{{color:var(--navy)}}
 @media print{{body{{background:#fff}}.header{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}th,.total-row{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}}}
-@media(max-width:768px){{.kpis,.meta-grid,.grid-2{{grid-template-columns:1fr}}}}
+@media(max-width:768px){{.kpis,.meta-grid,.grid-2{{grid-template-columns:1fr}}
+.meta-block{{flex-direction:column;align-items:stretch;gap:1.2rem}}
+.meta-zona-der{{border-left:none;border-top:1px solid rgba(255,255,255,.22);padding-left:0;padding-top:1rem}}}}
 </style>
 </head>
 <body>
@@ -801,14 +806,16 @@ tr:hover{{background:#f8fafc}}
 <div class="header-meta">
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="project-name">{meta['name']}</div>
-<div class="meta-grid" style="grid-template-columns:{meta_cols}">
-<div><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-value" style="opacity:.85">{_cm['range']}</div></div>
-<div><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
-{celda_criterios}
-<div style="text-align:right">{celda_cliente}</div>
+<div class="meta-block">
+<div class="meta-zona-izq">
+<div style="display:flex;gap:2rem;flex-wrap:wrap">
+<div style="flex:1 1 55%"><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-value" style="opacity:.85">{_cm['range']}</div></div>
+<div style="flex:1 1 30%"><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
-<div style="font-size:.9rem;opacity:.85;margin-top:.75rem">
-Archivo: {files_list}
+{fila_criterios}
+<div style="margin-top:.9rem"><div class="meta-label">Archivo</div><div class="meta-value">{files_list}</div></div>
+</div>
+<div class="meta-zona-der">{celda_cliente}</div>
 </div>
 </div>
 </div>

@@ -228,7 +228,7 @@ def cover_meta_parts(meta: Dict[str, Any]) -> Dict[str, str]:
     return {
         'date': date_part or '--',
         'range': f'{t_ini or "--"} &rarr; {t_fin or "--"}',
-        'criteria': ' / '.join(parts),
+        'criteria': ' &middot; '.join(parts),
     }
 
 
@@ -265,29 +265,32 @@ def build_pdf_html(
     # (regla 11: WeasyPrint no maneja flex/grid).
     _client_logo = meta.get('client_logo')
 
-    # N2.2-B / N2.3: la fila tiene orden fijo — EJECUCION | DURACION |
-    # [CRITERIOS] | CLIENTE. CLIENTE es siempre la ultima columna, alineada a la
-    # derecha, con etiqueta / logo / nombre apilados. Sin logo la columna solo
-    # pierde la imagen: mismo orden, sin hueco.
+    # N2.3: el bloque de metadatos son DOS zonas separadas por una linea
+    # vertical (border-left del <td> derecho, no un flex: regla 11). Izquierda
+    # ~62% con tres filas apiladas (ejecucion+duracion / criterios / archivo);
+    # derecha ~38% dedicada al cliente, con el logo respirando y los tres
+    # elementos centrados entre si. Sin logo la zona no cambia de tamano: solo
+    # se queda con etiqueta + nombre centrados.
     _logo_img = (
         f'<img src="{_client_logo}" alt="Logo del cliente" '
-        f'style="max-height:26mm;max-width:58mm;display:block;margin:1.5mm 0 1.5mm auto" />'
+        f'style="max-height:28mm;max-width:72mm;display:block;margin:3mm auto 2mm auto" />'
     ) if _client_logo else ''
     cover_cell_cliente = (
         f'<div class="cover-meta-label">CLIENTE</div>'
         f'{_logo_img}'
-        f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
+        f'<div class="cover-meta-value" style="font-size:14pt;margin-top:{"0" if _client_logo else "2mm"}">'
+        f'{meta["client"] or "N/A"}</div>'
     )
 
     # UI-2: el badge APTO/NO APTO ya NO se emite en el PDF (se conserva en pantalla).
     # N2.3: los criterios dejan de ser un apendice del pie en gris y pasan a ser
-    # una columna propia de la fila. Sin criterios definidos la columna no se
-    # pinta (celda vacia = la tabla queda de 3 columnas, sin hueco).
+    # una fila propia de la zona izquierda. Sin criterios definidos la fila no se
+    # pinta y las otras dos se juntan, sin hueco.
     _cm = cover_meta_parts(meta)
-    _td = 'border:none;padding:0 6mm 0 0;vertical-align:top'
-    cover_cell_criterios = (
-        f'<td style="{_td}"><div class="cover-meta-label">CRITERIOS</div>'
-        f'<div class="cover-meta-value" style="font-size:10.5pt">{_cm["criteria"]}</div></td>'
+    cover_fila_criterios = (
+        f'<tr><td colspan="2" class="cover-meta-fila">'
+        f'<div class="cover-meta-label">CRITERIOS DE ACEPTACION</div>'
+        f'<div class="cover-meta-value">{_cm["criteria"]}</div></td></tr>'
     ) if _cm['criteria'] else ''
 
     # ----- helpers -----
@@ -461,7 +464,10 @@ body {{
     min-height: 210mm; /* Fill entire A4 landscape page — gradient full-bleed */
     background: linear-gradient(135deg, #0a1628 0%, #1e293b 50%, #1e40af 100%);
     color: white;
-    padding: 15mm 25mm 10mm 25mm;
+    /* N2.3: 15/10mm -> 10/6mm. El bloque de metadatos paso a dos zonas con tres
+       filas y crecio 13.6mm medidos; la portada tiene que seguir cabiendo en una
+       sola pagina (si no, WeasyPrint parte la caja y deja una pagina 2 vacia). */
+    padding: 10mm 25mm 6mm 25mm;
     margin: 0;
 }}
 
@@ -513,8 +519,35 @@ body {{
 
 .cover-meta-grid {{
     width: 100%;
-    gap: 2mm 6mm;
     margin-top: 2mm;
+}}
+
+/* N2.3: las dos zonas del bloque de metadatos. La separacion vertical es el
+   border-left del <td> derecho — WeasyPrint no dibuja flex/grid (regla 11). */
+.cover-zona-izq {{
+    width: 62%;
+    border: none;
+    padding: 0 8mm 0 0;
+    vertical-align: middle;
+}}
+
+.cover-zona-der {{
+    width: 38%;
+    border: none;
+    border-left: 0.3mm solid rgba(255,255,255,0.25);
+    padding: 0 2mm 0 10mm;
+    vertical-align: middle;
+    text-align: center;
+}}
+
+.cover-meta-inner {{
+    width: 100%;
+}}
+
+.cover-meta-fila {{
+    border: none;
+    padding: 0 6mm 1.5mm 0;
+    vertical-align: top;
 }}
 
 .cover-meta-label {{
@@ -539,12 +572,6 @@ body {{
     margin-top: 0.8mm;
 }}
 
-.cover-info-footer {{
-    font-size: 9.5pt;
-    color: rgba(255,255,255,0.75);
-    margin-top: 4mm;
-}}
-
 .cover-badge {{
     display: inline-block;
     padding: 1.5mm 5mm;
@@ -566,14 +593,16 @@ body {{
     width: 100%;
     border-collapse: separate;
     border-spacing: 5px;
-    margin-top: 5mm;
+    /* N2.3: 5mm -> 3mm. El bloque de metadatos crecio (3 filas + logo con
+       aire) y la portada debe seguir cabiendo en una sola pagina. */
+    margin-top: 3mm;
 }}
 
 .cover-kpi-table td {{
     width: 25%;
     background: rgba(255,255,255,0.95);
     border-radius: 3mm;
-    padding: 4mm 5mm;
+    padding: 2.5mm 5mm;   /* N2.3: 4mm -> 2.5mm, ~6mm recuperados en las 2 filas */
     border-left: 5px solid #3b82f6;
     border-bottom: none;
     vertical-align: top;
@@ -784,14 +813,18 @@ tbody tr:nth-child(even) {{
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
-            <td style="{_td}"><div class="cover-meta-label">EJECUCION</div><div class="cover-meta-value">{_cm['date']}</div><div class="cover-meta-sub">{_cm['range']}</div></td>
-            <td style="{_td}"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
-            {cover_cell_criterios}
-            <td style="border:none;padding:0;vertical-align:top;text-align:right">{cover_cell_cliente}</td>
+            <td class="cover-zona-izq">
+                <table class="cover-meta-inner">
+                    <tr>
+                        <td class="cover-meta-fila" style="width:52%"><div class="cover-meta-label">EJECUCION</div><div class="cover-meta-value">{_cm['date']}</div><div class="cover-meta-sub">{_cm['range']}</div></td>
+                        <td class="cover-meta-fila"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
+                    </tr>
+                    {cover_fila_criterios}
+                    <tr><td colspan="2" class="cover-meta-fila"><div class="cover-meta-label">ARCHIVO</div><div class="cover-meta-value" style="font-size:10.5pt">{files_list}</div></td></tr>
+                </table>
+            </td>
+            <td class="cover-zona-der">{cover_cell_cliente}</td>
         </tr></table>
-        <div class="cover-info-footer">
-            Archivo: {files_list}
-        </div>
     </div>
 
     <table class="cover-kpi-table"><tr>
@@ -806,7 +839,7 @@ tbody tr:nth-child(even) {{
         <td style="border-left-color:#2196F3"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;font-weight:600;letter-spacing:0.3px">AVG LATENCY</div><div style="font-size:22pt;font-weight:700;color:#0a1628;margin-top:2mm">{meta['avgLatency']:.0f} <span style="font-size:10pt;font-weight:400;color:#64748b">ms</span></div></td>
     </tr></table>
 
-    <div style="margin-top:5mm;text-align:center;font-size:9pt;color:rgba(255,255,255,0.4)">
+    <div style="margin-top:3mm;text-align:center;font-size:9pt;color:rgba(255,255,255,0.4)">
         Celula de Performance SQA
     </div>
 </div>

@@ -274,6 +274,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-header-meta{background:rgba(255,255,255,.08);backdrop-filter:blur(10px);border-radius:12px;padding:1.5rem}
 .plotly-project-name{font-size:1.5rem;font-weight:700;margin-bottom:.5rem}
 .plotly-meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:1rem}
+.plotly-meta-block{display:flex;align-items:center;gap:2rem;margin-top:1rem}
+.plotly-meta-izq{flex:1 1 62%;min-width:0}
+.plotly-meta-der{flex:0 0 34%;border-left:1px solid rgba(255,255,255,.22);padding-left:2rem;text-align:center}
 .plotly-meta-label{font-size:.7rem;text-transform:uppercase;opacity:.7;letter-spacing:.5px}
 .plotly-meta-value{font-family:monospace;font-size:.9rem;margin-top:2px}
 .plotly-badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:700;text-transform:uppercase;margin-left:8px}
@@ -311,7 +314,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-ai-text p{margin:0 0 8px 0}
 .plotly-ai-text strong{color:var(--navy)}
 .plotly-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
-@media(max-width:768px){.plotly-kpis,.plotly-meta-grid,.plotly-grid-2{grid-template-columns:1fr}}
+@media(max-width:768px){.plotly-kpis,.plotly-meta-grid,.plotly-grid-2{grid-template-columns:1fr}
+.plotly-meta-block{flex-direction:column;align-items:stretch;gap:1.2rem}
+.plotly-meta-der{border-left:none;border-top:1px solid rgba(255,255,255,.22);padding-left:0;padding-top:1rem}}
 </style>
 """
 
@@ -561,27 +566,25 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # N1.5: logo del cliente. Sin logo -> cadena vacia y la cabecera queda
     # exactamente igual que antes (ni un hueco de mas).
     _logo_uri = meta.get('client_logo')
-    # N2.2-B / N2.3: orden fijo de la fila — Ejecucion | Duracion | [Criterios]
-    # | Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
-    # derecha, con etiqueta / logo / nombre apilados. Sin logo solo desaparece
-    # la imagen; el orden no cambia.
-    # N2.3: fuera de la fila el nombre del proyecto y el tipo de prueba (viven
-    # arriba, en el titulo y el badge); entran ejecucion, duracion y criterios.
-    # Sin criterios definidos la columna no se pinta: la rejilla queda en 3.
+    # N2.2-B / N2.3: el bloque de metadatos son dos zonas separadas por una
+    # linea vertical. Izquierda ~62%: ejecucion + duracion, criterios, archivo.
+    # Derecha ~34%: el cliente con etiqueta, logo y nombre centrados entre si.
+    # El nombre del proyecto y el tipo de prueba salen del bloque (ya estan en el
+    # titulo y en el badge). Sin criterios, esa fila no se pinta.
     _cm = cover_meta_parts(meta)
-    celda_criterios = (
-        f'<div><div class="plotly-meta-label">Criterios</div>'
+    fila_criterios = (
+        f'<div style="margin-top:.9rem"><div class="plotly-meta-label">Criterios de Aceptacion</div>'
         f'<div class="plotly-meta-value">{_cm["criteria"]}</div></div>'
     ) if _cm['criteria'] else ''
-    meta_cols = 'repeat(4,1fr)' if _cm['criteria'] else 'repeat(3,1fr)'
     _logo_img = (
         f'<img src="{_logo_uri}" alt="Logo del cliente" '
-        f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
+        f'style="max-height:110px;max-width:100%;object-fit:contain;display:block;margin:.7rem auto .5rem auto" />'
     ) if _logo_uri else ''
     celda_cliente = (
         f'<div class="plotly-meta-label">Cliente</div>'
         f'{_logo_img}'
-        f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
+        f'<div class="plotly-meta-value" style="font-size:1.05rem;font-family:inherit'
+        f'{"" if _logo_uri else ";margin-top:.5rem"}">{meta["client"] or "N/A"}</div>'
     )
 
     # Body fragment (HF10h BLOQUE A.1: cover restored)
@@ -595,14 +598,16 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div class="plotly-header-meta">
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
-<div class="plotly-meta-grid" style="grid-template-columns:{meta_cols}">
-<div><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-value" style="opacity:.85">{_cm['range']}</div></div>
-<div><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
-{celda_criterios}
-<div style="text-align:right">{celda_cliente}</div>
+<div class="plotly-meta-block">
+<div class="plotly-meta-izq">
+<div style="display:flex;gap:2rem;flex-wrap:wrap">
+<div style="flex:1 1 55%"><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-value" style="opacity:.85">{_cm['range']}</div></div>
+<div style="flex:1 1 30%"><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
-<div style="font-size:.9rem;opacity:.85;margin-top:.75rem">
-Archivo: {files_list}
+{fila_criterios}
+<div style="margin-top:.9rem"><div class="plotly-meta-label">Archivo</div><div class="plotly-meta-value">{files_list}</div></div>
+</div>
+<div class="plotly-meta-der">{celda_cliente}</div>
 </div>
 </div>
 </div>
