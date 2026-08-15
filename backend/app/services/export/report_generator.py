@@ -202,6 +202,36 @@ def markdown_to_html(text: str) -> str:
 # HTML builder
 # ---------------------------------------------------------------------------
 
+def cover_meta_parts(meta: Dict[str, Any]) -> Dict[str, str]:
+    """N2.3: piezas de la fila de metadatos de la portada (PDF y HTML).
+
+    El nombre del proyecto y el tipo de prueba NO salen de aqui a proposito:
+    viven solo en el titulo y en el badge de la zona superior. Repetirlos en la
+    fila era la duplicacion que N2.2 no resolvio. Lo que sube a la fila es la
+    informacion que antes quedaba en gris diminuto al pie: fecha, rango horario
+    y criterios de aceptacion.
+
+    ``criteria`` vuelve vacio cuando la ejecucion no tiene criterios definidos;
+    quien lo consume no debe pintar la columna en ese caso.
+    """
+    start = str(meta.get('startTime') or '--')
+    end = str(meta.get('endTime') or '--')
+    date_part, _, t_ini = start.partition(' ')
+    _, _, t_fin = end.partition(' ')
+    crit = meta.get('acceptanceCriteria') or {}
+    parts = []
+    if isinstance(crit, dict):
+        if crit.get('response_time'):
+            parts.append(f'&lt; {crit["response_time"]} ms')
+        if crit.get('availability'):
+            parts.append(f'&gt; {crit["availability"]}% disponibilidad')
+    return {
+        'date': date_part or '--',
+        'range': f'{t_ini or "--"} &rarr; {t_fin or "--"}',
+        'criteria': ' / '.join(parts),
+    }
+
+
 def build_pdf_html(
     meta: Dict[str, Any],
     statistics: List[Dict[str, Any]],
@@ -235,11 +265,9 @@ def build_pdf_html(
     # (regla 11: WeasyPrint no maneja flex/grid).
     _client_logo = meta.get('client_logo')
 
-    # N2.2-B: la fila de metadatos tiene orden fijo — NOMBRE | DURACION | TIPO
-    # DE PRUEBA | CLIENTE. Antes el orden bailaba segun hubiera logo o no (el
-    # tipo de prueba saltaba a la primera columna y el logo se montaba sobre la
-    # zona del cliente). Ahora CLIENTE es siempre la ultima columna, alineada a
-    # la derecha, con etiqueta / logo / nombre apilados. Sin logo la columna solo
+    # N2.2-B / N2.3: la fila tiene orden fijo — EJECUCION | DURACION |
+    # [CRITERIOS] | CLIENTE. CLIENTE es siempre la ultima columna, alineada a la
+    # derecha, con etiqueta / logo / nombre apilados. Sin logo la columna solo
     # pierde la imagen: mismo orden, sin hueco.
     _logo_img = (
         f'<img src="{_client_logo}" alt="Logo del cliente" '
@@ -252,19 +280,15 @@ def build_pdf_html(
     )
 
     # UI-2: el badge APTO/NO APTO ya NO se emite en el PDF (se conserva en pantalla).
-    # Solo se mantiene el resumen del criterio para el pie de la portada.
-    criteria = meta.get('acceptanceCriteria', {})
-    criteria_str = ''
-    if isinstance(criteria, dict):
-        rt_val = criteria.get('response_time', '')
-        avail_val = criteria.get('availability', '')
-        parts = []
-        if rt_val:
-            parts.append(f'&lt;{rt_val}ms')
-        if avail_val:
-            parts.append(f'&gt;{avail_val}% disponibilidad')
-        if parts:
-            criteria_str = f' &nbsp;|&nbsp; Criterio: {", ".join(parts)}'
+    # N2.3: los criterios dejan de ser un apendice del pie en gris y pasan a ser
+    # una columna propia de la fila. Sin criterios definidos la columna no se
+    # pinta (celda vacia = la tabla queda de 3 columnas, sin hueco).
+    _cm = cover_meta_parts(meta)
+    _td = 'border:none;padding:0 6mm 0 0;vertical-align:top'
+    cover_cell_criterios = (
+        f'<td style="{_td}"><div class="cover-meta-label">CRITERIOS</div>'
+        f'<div class="cover-meta-value" style="font-size:10.5pt">{_cm["criteria"]}</div></td>'
+    ) if _cm['criteria'] else ''
 
     # ----- helpers -----
     def ai_box(key, title, border='#4f46e5', allow_break=False):
@@ -462,11 +486,15 @@ body {{
     margin-top: 0;
 }}
 
+/* N2.3: la celda EJECUCION anade una segunda linea (rango horario) y la
+   portada se pasaba de pagina por ~4mm — dejaba una pagina 2 en blanco. Se
+   recupera ese espacio del propio ritmo vertical de la caja (padding y
+   margenes), sin tocar tamanos de fuente ni el conteo de paginas del cuerpo. */
 .cover-info-box {{
     background: rgba(255,255,255,0.08);
     border-radius: 4mm;
-    padding: 6mm 8mm;
-    margin-bottom: 6mm;
+    padding: 5mm 8mm;
+    margin-bottom: 4mm;
 }}
 
 .cover-pretitle {{
@@ -480,13 +508,13 @@ body {{
 .cover-title {{
     font-size: 24pt;
     font-weight: 700;
-    margin-bottom: 5mm;
+    margin-bottom: 3mm;
 }}
 
 .cover-meta-grid {{
     width: 100%;
     gap: 2mm 6mm;
-    margin-top: 3mm;
+    margin-top: 2mm;
 }}
 
 .cover-meta-label {{
@@ -503,9 +531,17 @@ body {{
     margin-top: 1mm;
 }}
 
+/* N2.3: segunda linea de una celda (rango horario bajo la fecha). Blanco
+   legible, no el gris del pie anterior. */
+.cover-meta-sub {{
+    font-size: 10pt;
+    color: rgba(255,255,255,0.85);
+    margin-top: 0.8mm;
+}}
+
 .cover-info-footer {{
-    font-size: 8pt;
-    color: rgba(255,255,255,0.4);
+    font-size: 9.5pt;
+    color: rgba(255,255,255,0.75);
     margin-top: 4mm;
 }}
 
@@ -748,13 +784,13 @@ tbody tr:nth-child(even) {{
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">NOMBRE DEL PROYECTO</div><div class="cover-meta-value">{meta['project'] or meta['name']}</div></td>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
+            <td style="{_td}"><div class="cover-meta-label">EJECUCION</div><div class="cover-meta-value">{_cm['date']}</div><div class="cover-meta-sub">{_cm['range']}</div></td>
+            <td style="{_td}"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
+            {cover_cell_criterios}
             <td style="border:none;padding:0;vertical-align:top;text-align:right">{cover_cell_cliente}</td>
         </tr></table>
         <div class="cover-info-footer">
-            Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}{criteria_str}
+            Archivo: {files_list}
         </div>
     </div>
 

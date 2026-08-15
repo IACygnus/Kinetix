@@ -26,6 +26,7 @@ from app.db.models.attachment import ExecutionAttachment
 from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
+    cover_meta_parts,   # N2.3
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.client_logo import get_client_logo_b64   # N1.5
@@ -560,10 +561,19 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # N1.5: logo del cliente. Sin logo -> cadena vacia y la cabecera queda
     # exactamente igual que antes (ni un hueco de mas).
     _logo_uri = meta.get('client_logo')
-    # N2.2-B: orden fijo de la fila — Nombre | Duracion | Tipo de Prueba |
-    # Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
+    # N2.2-B / N2.3: orden fijo de la fila — Ejecucion | Duracion | [Criterios]
+    # | Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
     # derecha, con etiqueta / logo / nombre apilados. Sin logo solo desaparece
     # la imagen; el orden no cambia.
+    # N2.3: fuera de la fila el nombre del proyecto y el tipo de prueba (viven
+    # arriba, en el titulo y el badge); entran ejecucion, duracion y criterios.
+    # Sin criterios definidos la columna no se pinta: la rejilla queda en 3.
+    _cm = cover_meta_parts(meta)
+    celda_criterios = (
+        f'<div><div class="plotly-meta-label">Criterios</div>'
+        f'<div class="plotly-meta-value">{_cm["criteria"]}</div></div>'
+    ) if _cm['criteria'] else ''
+    meta_cols = 'repeat(4,1fr)' if _cm['criteria'] else 'repeat(3,1fr)'
     _logo_img = (
         f'<img src="{_logo_uri}" alt="Logo del cliente" '
         f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
@@ -585,14 +595,14 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div class="plotly-header-meta">
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
-<div class="plotly-meta-grid">
-<div><div class="plotly-meta-label">Nombre del Proyecto</div><div class="plotly-meta-value">{meta['project'] or meta['name']}</div></div>
+<div class="plotly-meta-grid" style="grid-template-columns:{meta_cols}">
+<div><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-value" style="opacity:.85">{_cm['range']}</div></div>
 <div><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
-<div><div class="plotly-meta-label">Tipo de Prueba</div><div class="plotly-meta-value">{meta['testTypeLabel']}</div></div>
+{celda_criterios}
 <div style="text-align:right">{celda_cliente}</div>
 </div>
-<div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
-Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
+<div style="font-size:.9rem;opacity:.85;margin-top:.75rem">
+Archivo: {files_list}
 </div>
 </div>
 </div>

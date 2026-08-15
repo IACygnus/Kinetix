@@ -504,6 +504,18 @@ def _build_plotly_html(
 
     # UI-2: sin badge de veredicto en los exports (se conserva solo en pantalla).
 
+    # N2.3: la fila de metadatos deja de repetir el nombre del proyecto y el
+    # tipo de prueba (ya estan en el titulo y en el badge de arriba) y muestra
+    # ejecucion / duracion / criterios. Sin criterios definidos la columna no se
+    # pinta y la rejilla pasa a 3 columnas.
+    from app.services.export.report_generator import cover_meta_parts
+    _cm = cover_meta_parts(meta)
+    celda_criterios = (
+        f'<div><div class="meta-label">Criterios</div>'
+        f'<div class="meta-value">{_cm["criteria"]}</div></div>'
+    ) if _cm['criteria'] else ''
+    meta_cols = 'repeat(4,1fr)' if _cm['criteria'] else 'repeat(3,1fr)'
+
     # ---- AI box helper ----
     def ai_box(key, title, border='#4f46e5'):
         text = ia.get(key, '')
@@ -789,14 +801,14 @@ tr:hover{{background:#f8fafc}}
 <div class="header-meta">
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="project-name">{meta['name']}</div>
-<div class="meta-grid">
-<div><div class="meta-label">Nombre del Proyecto</div><div class="meta-value">{meta['project'] or meta['name']}</div></div>
+<div class="meta-grid" style="grid-template-columns:{meta_cols}">
+<div><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-value" style="opacity:.85">{_cm['range']}</div></div>
 <div><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
-<div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
+{celda_criterios}
 <div style="text-align:right">{celda_cliente}</div>
 </div>
-<div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
-Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
+<div style="font-size:.9rem;opacity:.85;margin-top:.75rem">
+Archivo: {files_list}
 </div>
 </div>
 </div>
