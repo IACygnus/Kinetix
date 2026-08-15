@@ -24,6 +24,8 @@ from app.core.security import get_current_active_user, require_role
 from app.services.jtl.jtl_parser import JTLParser, validate_jtl_compatibility
 from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict, compute_per_transaction_verdicts   # N3.2
 from app.services.ai.analysis_pipeline import run_ai_and_verdict
+from app.services.ai.transaction_analysis import analyze_critical_transactions   # N3.4
+from app.db.models.transaction_analysis import TransactionAnalysis               # N3.4
 from app.schemas.test import (
     TestExecutionResponse,
     ChartData,
@@ -494,6 +496,21 @@ async def upload_jtl(
         await db.commit()
         await db.refresh(execution)
 
+        # N3.4: analisis IA individual de las transacciones marcadas en el panel.
+        # Va DESPUES del pipeline de 12 pasos y de guardar la ejecucion (necesita
+        # su id). Sin transacciones marcadas no hace nada: ni IA ni escrituras.
+        # No lanza nunca; si falla, la ejecucion ya esta guardada igualmente.
+        try:
+            await analyze_critical_transactions(
+                db=db,
+                execution_id=execution.id,
+                summary_df=parser.get_summary_table_data(),
+                acceptance_criteria=acceptance_criteria_dict,
+                test_type=test_type,
+            )
+        except Exception as txn_err:
+            logger.error(f"N3.4: analisis por transaccion omitido: {txn_err}")
+
         # Update AI usage counters in DB (non-fatal)
         try:
             await update_ai_usage_in_db(db)
@@ -615,6 +632,46 @@ async def get_execution(
     await _check_execution_access(db, current_user, execution)
 
     return execution
+
+
+@router.get("/executions/{execution_id}/transaction-analyses")
+async def get_transaction_analyses(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """N3.4: analisis IA por transaccion critica de una ejecucion.
+
+    Lo consumen los exports (N3.5) y el dashboard. Devuelve lista vacia si la
+    ejecucion no tenia transacciones marcadas.
+    """
+    try:
+        eid = uuid.UUID(execution_id)
+    except ValueError:
+        raise HTTPException(400, "execution_id invalido")
+
+    result = await db.execute(
+        select(TransactionAnalysis)
+        .where(TransactionAnalysis.execution_id == eid)
+        .order_by(TransactionAnalysis.sort_order)
+    )
+    rows = result.scalars().all()
+    return {
+        "transaction_analyses": [
+            {
+                "id": str(r.id),
+                "label": r.label,
+                "is_critical": r.is_critical,
+                "marked_by": r.marked_by,
+                "metrics": r.metrics_json,
+                "ai_analysis": r.ai_analysis,
+                "ai_analysis_updated_at": r.ai_analysis_updated_at.isoformat() if r.ai_analysis_updated_at else None,
+                "sort_order": r.sort_order,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
 
 
 @router.get("/executions/{execution_id}/charts", response_model=ChartData)
