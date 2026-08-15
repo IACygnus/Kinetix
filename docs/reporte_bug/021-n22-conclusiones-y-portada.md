@@ -1,6 +1,6 @@
 # 021 — N2.2: conclusiones consolidadas en el integrado + fila de metadatos
 
-**Fecha:** 14/08/2026 · **Rama:** `backup-trabajo-local` · **Commit:** `__HASH__`
+**Fecha:** 14/08/2026 · **Rama:** `backup-trabajo-local` · **Commit:** `f847e23`
 
 **Resumen:** (A) la falta de conclusiones **no era una regresión de UI-2 ni de
 N2.1**, y tampoco el orden de los strips (regla 18). Los exports integrados nunca
