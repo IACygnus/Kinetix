@@ -2,7 +2,7 @@
 Endpoints de JTL Upload y Analisis - v2.0
 Multi-JTL upload, test types, redirect separation, enhanced Gemini AI
 """
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query, status
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, desc, delete
 from pydantic import BaseModel
@@ -22,7 +22,7 @@ from app.db.models.client import UserClient
 from app.db.models.user import User
 from app.core.security import get_current_active_user, require_role
 from app.services.jtl.jtl_parser import JTLParser, validate_jtl_compatibility
-from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict
+from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict, compute_per_transaction_verdicts   # N3.2
 from app.services.ai.analysis_pipeline import run_ai_and_verdict
 from app.schemas.test import (
     TestExecutionResponse,
@@ -107,6 +107,98 @@ async def test_gemini():
         result["error"] = str(e)[:500]
 
     return result
+
+
+@router.post("/extract-jtl-transactions")
+async def extract_jtl_transactions(
+    files: List[UploadFile] = File(...),
+    response_time: Optional[float] = Form(None),
+    availability: Optional[float] = Form(None),
+    current_user: User = Depends(get_current_active_user),
+):
+    """N3.2: transacciones del JTL con sus metricas reales y criticidad sugerida.
+
+    A diferencia de /extract-jtl-labels (que se mantiene, D6), usa JTLParser: por
+    eso entiende JTL en XML y no trunca a 10.000 lineas.
+
+    La criticidad es determinista, sin IA (D3), y se dispara con tres senales:
+      (a) el veredicto por transaccion de KNX-09 (p90 vs tiempo, tasa de error vs
+          disponibilidad). Requiere criterios; sin ellos se omite.
+      (b) pico relativo: max >= 10x el promedio.
+      (c) pico absoluto: max >= 10000 ms.
+    Cualquiera de las tres marca. (b) y (c) existen porque una transaccion puede
+    cumplir p90 y error y aun asi acumular timeouts: en la ejecucion de Coomeva,
+    'token' promedia 447ms y tiene picos de 21s (leccion de GRAF1).
+    """
+    UPLOAD_DIR.mkdir(exist_ok=True)
+    temp_paths: List[str] = []
+    try:
+        for f in files:
+            temp_path = UPLOAD_DIR / f"temp_txn_{uuid.uuid4().hex}_{f.filename or 'jtl'}"
+            async with aiofiles.open(temp_path, 'wb') as out:
+                await out.write(await f.read())
+            temp_paths.append(str(temp_path))
+
+        parser = JTLParser(temp_paths[0])
+        parser.parse()
+        summary_df = parser.get_summary_table_data()
+
+        criteria = None
+        if response_time is not None or availability is not None:
+            criteria = {
+                'response_time': response_time if response_time is not None else 2000,
+                'availability': availability if availability is not None else 99.0,
+            }
+        # Se importa, no se copia: la logica de veredicto vive en gemini.py (KNX-09).
+        verdicts = compute_per_transaction_verdicts(summary_df, criteria).get(
+            'verdicts_per_transaction', {}) if criteria else {}
+
+        transactions = []
+        for _, row in summary_df.iterrows():
+            label = str(row['label'])
+            avg, mx = float(row['promedio']), float(row['max'])
+            motivos = []
+            veredicto = verdicts.get(label)
+            if veredicto in ("NO APTO", "APTO CON RESERVAS"):
+                motivos.append(f"{veredicto.lower()} por criterios (p90 {row['p90']:.0f}ms, "
+                               f"{row['tasa_error']:.2f}% error)")
+            if avg > 0 and mx >= 10 * avg:
+                motivos.append(f"pico de {mx:.0f}ms, {mx / avg:.0f}x el promedio")
+            if mx >= 10000:
+                motivos.append(f"pico absoluto de {mx:.0f}ms (>=10s, posible timeout)")
+
+            transactions.append({
+                'label': label,
+                'muestras': int(row['muestras']),
+                'promedio': round(avg, 2),
+                'p90': round(float(row['p90']), 2),
+                'p95': round(float(row['p95']), 2),
+                'max': round(mx, 2),
+                'errores': int(row['errores']),
+                'tasa_error': round(float(row['tasa_error']), 4),
+                'verdict': veredicto,
+                'is_critical_suggested': bool(motivos),
+                'motivo': " · ".join(motivos),
+            })
+
+        transactions.sort(key=lambda t: (not t['is_critical_suggested'], -t['max']))
+        return {
+            "transactions": transactions,
+            "count": len(transactions),
+            "critical_count": sum(1 for t in transactions if t['is_critical_suggested']),
+            "criteria_applied": criteria is not None,
+        }
+
+    except Exception as e:
+        logger.error(f"Error extrayendo transacciones del JTL: {e}")
+        raise HTTPException(400, f"No se pudieron extraer las transacciones: {e}")
+
+    finally:
+        for p in temp_paths:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 @router.post("/extract-jtl-labels")
