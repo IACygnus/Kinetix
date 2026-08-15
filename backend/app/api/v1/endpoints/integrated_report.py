@@ -560,31 +560,19 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # N1.5: logo del cliente. Sin logo -> cadena vacia y la cabecera queda
     # exactamente igual que antes (ni un hueco de mas).
     _logo_uri = meta.get('client_logo')
-    # N1.8: con logo, la cabecera reorganiza: el logo ocupa en grande la celda
-    # de la derecha (la de Tipo de Prueba) y el tipo se integra al bloque
-    # Cliente. Sin logo, todo queda EXACTAMENTE como antes.
-    if _logo_uri:
-        # UI-2: el bloque del cliente es una columna en la celda derecha —
-        # etiqueta Cliente, logo debajo y nombre del cliente al pie.
-        celda_cliente = (
-            f'<div class="plotly-meta-label">Tipo de Prueba</div>'
-            f'<div class="plotly-meta-value">{meta["testTypeLabel"]}</div>'
-        )
-        celda_derecha = (
-            f'<div class="plotly-meta-label" style="text-align:right">Cliente</div>'
-            f'<img src="{_logo_uri}" alt="Logo del cliente" '
-            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
-            f'<div class="plotly-meta-value" style="text-align:right">{meta["client"] or "N/A"}</div>'
-        )
-    else:
-        celda_cliente = (
-            f'<div class="plotly-meta-label">Cliente</div>'
-            f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
-        )
-        celda_derecha = (
-            f'<div class="plotly-meta-label">Tipo de Prueba</div>'
-            f'<div class="plotly-meta-value">{meta["testTypeLabel"]}</div>'
-        )
+    # N2.2-B: orden fijo de la fila — Nombre | Duracion | Tipo de Prueba |
+    # Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
+    # derecha, con etiqueta / logo / nombre apilados. Sin logo solo desaparece
+    # la imagen; el orden no cambia.
+    _logo_img = (
+        f'<img src="{_logo_uri}" alt="Logo del cliente" '
+        f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
+    ) if _logo_uri else ''
+    celda_cliente = (
+        f'<div class="plotly-meta-label">Cliente</div>'
+        f'{_logo_img}'
+        f'<div class="plotly-meta-value">{meta["client"] or "N/A"}</div>'
+    )
 
     # Body fragment (HF10h BLOQUE A.1: cover restored)
     return f'''
@@ -598,10 +586,10 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
 <div class="plotly-meta-grid">
-<div>{celda_cliente}</div>
 <div><div class="plotly-meta-label">Nombre del Proyecto</div><div class="plotly-meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
-<div>{celda_derecha}</div>
+<div><div class="plotly-meta-label">Tipo de Prueba</div><div class="plotly-meta-value">{meta['testTypeLabel']}</div></div>
+<div style="text-align:right">{celda_cliente}</div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
 Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
@@ -1217,6 +1205,45 @@ def _strip_pdf_individual_conclusions(html: str) -> str:
     return html
 
 
+def _flatten_consolidated(consolidated: dict) -> str:
+    """N2.2-A: aplana el consolidado al texto plano que consumen los exports.
+    Mismo formato que flattenConsolidated() en IntegratedReportPage.tsx."""
+    parts = []
+    for tt, d in (consolidated or {}).items():
+        if tt.startswith("_") or not isinstance(d, dict):
+            continue
+        concl = (d.get("conclusions") or "").strip()
+        recs = (d.get("recommendations") or "").strip()
+        if not concl and not recs:
+            continue
+        label = "PRUEBA DE CARGA" if tt == "load" else "PRUEBA DE ESTRES"
+        parts.append(f"{label}\n\nConclusiones:\n{concl}\n\nRecomendaciones:\n{recs}")
+    return "\n\n---\n\n".join(parts)
+
+
+async def _resolve_unified_conclusions(db: AsyncSession, request) -> str:
+    """N2.2-A: el consolidado vive en integrated_reports.consolidated_analysis,
+    pero los exports solo pintaban request.unified_conclusions — un estado de
+    React que cualquier regeneracion del informe puede dejar vacio. Cuando eso
+    pasaba, el PDF salia sin el bloque y sin avisar. Si el request llega vacio se
+    lee de la DB, igual que F6 hace con los textos editados de cada seccion.
+    """
+    text = (request.unified_conclusions or "").strip()
+    if text or not getattr(request, "report_id", None):
+        return text
+    try:
+        from app.db.models.integrated_report import IntegratedReport
+        report = await db.get(IntegratedReport, uuid.UUID(request.report_id))
+    except (ValueError, AttributeError):
+        return ""
+    text = _flatten_consolidated((report.consolidated_analysis or {}) if report else {}).strip()
+    if text:
+        logger.info(f"_resolve_unified_conclusions: {len(text)} chars recuperados del consolidado en DB")
+    else:
+        logger.warning("_resolve_unified_conclusions: el informe no tiene consolidado generado")
+    return text
+
+
 def _extract_style_from_individual_report(full_html: str) -> str:
     """Extract <style> CSS from build_pdf_html output for injection into integrated report."""
     import re as _re
@@ -1557,11 +1584,12 @@ async def export_integrated_pdf(
 
     # Unified conclusions (B1+B3: forced new page via .conclusions-block, boxes don't split)
     conclusions_html = ""
-    if request.unified_conclusions:
+    unified_text = await _resolve_unified_conclusions(db, request)   # N2.2-A
+    if unified_text:
         conclusions_html = f'''
         <div class="conclusions-block" style="padding:20px">
         <h2 class="conclusions-title">Conclusiones y Recomendaciones</h2>
-        <div class="ai-box"><div class="ai-text" style="white-space:pre-wrap">{request.unified_conclusions}</div></div>
+        <div class="ai-box"><div class="ai-text" style="white-space:pre-wrap">{unified_text}</div></div>
         </div>'''
 
     full_pdf_html = f"""<!DOCTYPE html>
@@ -1644,7 +1672,13 @@ async def export_integrated_html(
 
     # HF10h BLOQUE A.1: Integrated header removed. Report starts directly with
     # the yellow separator + individual execution cover (restored in _build_plotly_html_isolated).
-    conclusions_text = request.unified_conclusions or ''
+    # N2.2-A: mismo fallback a DB que el PDF. Ademas el bloque pasa a ser
+    # condicional: sin consolidado ya no se emite una caja vacia con titulo.
+    conclusions_text = await _resolve_unified_conclusions(db, request)
+    conclusions_html = f'''<div class="conclusions-wrap">
+    <h2>Conclusiones y Recomendaciones</h2>
+    <div class="conclusions-box">{conclusions_text}</div>
+</div>''' if conclusions_text else ''
     full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="utf-8">
@@ -1668,10 +1702,7 @@ img {{ max-width: 100%; height: auto; }}
 <div class="integrated-wrap">
 {''.join(html_parts)}
 </div>
-<div class="conclusions-wrap">
-    <h2>Conclusiones y Recomendaciones</h2>
-    <div class="conclusions-box">{conclusions_text}</div>
-</div>
+{conclusions_html}
 <div class="integrated-footer">
     <strong>sqa &mdash; Software Quality Assurance</strong><br>
     Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos

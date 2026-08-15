@@ -235,35 +235,21 @@ def build_pdf_html(
     # (regla 11: WeasyPrint no maneja flex/grid).
     _client_logo = meta.get('client_logo')
 
-    # N1.8: CON logo, la portada reorganiza la fila de metadatos — el logo pasa
-    # a la celda derecha (la de TIPO DE PRUEBA) en grande, y el tipo de prueba
-    # se integra al bloque CLIENTE. SIN logo, todo queda EXACTAMENTE como antes,
-    # para que un cliente sin logo no deje un hueco enorme a la derecha.
-    if _client_logo:
-        # UI-2: el bloque del cliente es una COLUMNA en la celda derecha —
-        # etiqueta CLIENTE arriba, logo debajo y nombre del cliente al pie.
-        # La celda izquierda ya no repite el cliente: se queda con el tipo de prueba.
-        cover_cell_cliente = (
-            f'<div class="cover-meta-label">TIPO DE PRUEBA</div>'
-            f'<div class="cover-meta-value">{meta["testTypeLabel"]}</div>'
-        )
-        cover_cell_derecha = (
-            f'<div class="cover-meta-label">CLIENTE</div>'
-            f'<img src="{_client_logo}" alt="Logo del cliente" '
-            f'style="max-height:26mm;max-width:58mm;display:block;margin:1.5mm 0 1.5mm auto" />'
-            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
-        )
-        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:top;text-align:right'
-    else:
-        cover_cell_cliente = (
-            f'<div class="cover-meta-label">CLIENTE</div>'
-            f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
-        )
-        cover_cell_derecha = (
-            f'<div class="cover-meta-label">TIPO DE PRUEBA</div>'
-            f'<div class="cover-meta-value">{meta["testTypeLabel"]}</div>'
-        )
-        cover_cell_derecha_style = 'border:none;padding:0;vertical-align:top'   # identico al layout de siempre
+    # N2.2-B: la fila de metadatos tiene orden fijo — NOMBRE | DURACION | TIPO
+    # DE PRUEBA | CLIENTE. Antes el orden bailaba segun hubiera logo o no (el
+    # tipo de prueba saltaba a la primera columna y el logo se montaba sobre la
+    # zona del cliente). Ahora CLIENTE es siempre la ultima columna, alineada a
+    # la derecha, con etiqueta / logo / nombre apilados. Sin logo la columna solo
+    # pierde la imagen: mismo orden, sin hueco.
+    _logo_img = (
+        f'<img src="{_client_logo}" alt="Logo del cliente" '
+        f'style="max-height:26mm;max-width:58mm;display:block;margin:1.5mm 0 1.5mm auto" />'
+    ) if _client_logo else ''
+    cover_cell_cliente = (
+        f'<div class="cover-meta-label">CLIENTE</div>'
+        f'{_logo_img}'
+        f'<div class="cover-meta-value">{meta["client"] or "N/A"}</div>'
+    )
 
     # UI-2: el badge APTO/NO APTO ya NO se emite en el PDF (se conserva en pantalla).
     # Solo se mantiene el resumen del criterio para el pie de la portada.
@@ -762,10 +748,10 @@ tbody tr:nth-child(even) {{
         </div>
         <div class="cover-title">{meta['project'] or meta['name']}</div>
         <table class="cover-meta-grid"><tr>
-            <td style="border:none;padding:0 3mm 0 0;vertical-align:top">{cover_cell_cliente}</td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">NOMBRE DEL PROYECTO</div><div class="cover-meta-value">{meta['project'] or meta['name']}</div></td>
             <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">DURACION</div><div class="cover-meta-value">{duration_min}m {duration_sec}s</div></td>
-            <td style="{cover_cell_derecha_style}">{cover_cell_derecha}</td>
+            <td style="border:none;padding:0 3mm 0 0;vertical-align:top"><div class="cover-meta-label">TIPO DE PRUEBA</div><div class="cover-meta-value">{meta['testTypeLabel']}</div></td>
+            <td style="border:none;padding:0;vertical-align:top;text-align:right">{cover_cell_cliente}</td>
         </tr></table>
         <div class="cover-info-footer">
             Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}{criteria_str}

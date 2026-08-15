@@ -702,31 +702,19 @@ def _build_plotly_html(
     # plantilla queda exactamente igual que antes. Aca sí se permiten px:
     # es HTML para navegador, no la rama PDF.
     _client_logo = meta.get('client_logo')
-    # N1.8: con logo, la cabecera reorganiza: el logo ocupa en grande la celda
-    # de la derecha (la de Tipo de Prueba) y el tipo se integra al bloque
-    # Cliente. Sin logo, todo queda EXACTAMENTE como antes.
-    if _client_logo:
-        # UI-2: el bloque del cliente es una columna en la celda derecha —
-        # etiqueta Cliente, logo debajo y nombre del cliente al pie.
-        celda_cliente = (
-            f'<div class="meta-label">Tipo de Prueba</div>'
-            f'<div class="meta-value">{meta["testTypeLabel"]}</div>'
-        )
-        celda_derecha = (
-            f'<div class="meta-label" style="text-align:right">Cliente</div>'
-            f'<img src="{_client_logo}" alt="Logo del cliente" '
-            f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
-            f'<div class="meta-value" style="text-align:right">{meta["client"] or "N/A"}</div>'
-        )
-    else:
-        celda_cliente = (
-            f'<div class="meta-label">Cliente</div>'
-            f'<div class="meta-value">{meta["client"] or "N/A"}</div>'
-        )
-        celda_derecha = (
-            f'<div class="meta-label">Tipo de Prueba</div>'
-            f'<div class="meta-value">{meta["testTypeLabel"]}</div>'
-        )
+    # N2.2-B: orden fijo de la fila — Nombre | Duracion | Tipo de Prueba |
+    # Cliente. El bloque Cliente es siempre la ultima celda, alineada a la
+    # derecha, con etiqueta / logo / nombre apilados. Sin logo solo desaparece
+    # la imagen; el orden no cambia.
+    _logo_img = (
+        f'<img src="{_client_logo}" alt="Logo del cliente" '
+        f'style="max-height:90px;max-width:100%;object-fit:contain;display:block;margin:.4rem 0 .4rem auto" />'
+    ) if _client_logo else ''
+    celda_cliente = (
+        f'<div class="meta-label">Cliente</div>'
+        f'{_logo_img}'
+        f'<div class="meta-value">{meta["client"] or "N/A"}</div>'
+    )
 
     # ---- Full HTML ----
     return f'''<!DOCTYPE html>
@@ -802,10 +790,10 @@ tr:hover{{background:#f8fafc}}
 <div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
 <div class="project-name">{meta['name']}</div>
 <div class="meta-grid">
-<div>{celda_cliente}</div>
 <div><div class="meta-label">Nombre del Proyecto</div><div class="meta-value">{meta['project'] or meta['name']}</div></div>
 <div><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
-<div>{celda_derecha}</div>
+<div><div class="meta-label">Tipo de Prueba</div><div class="meta-value">{meta['testTypeLabel']}</div></div>
+<div style="text-align:right">{celda_cliente}</div>
 </div>
 <div style="font-size:.8rem;opacity:.6;margin-top:.75rem">
 Archivo: {files_list} &nbsp;|&nbsp; Inicio: {meta['startTime']} &nbsp;|&nbsp; Fin: {meta['endTime']}
