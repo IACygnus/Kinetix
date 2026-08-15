@@ -25,6 +25,7 @@ from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
+from app.services.export.report_generator import transaction_analyses_html   # N3.5
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
@@ -378,6 +379,18 @@ async def export_html(
         # N1.7: logo del cliente para la cabecera (None si no hay)
         from app.services.export.client_logo import get_client_logo_b64
         meta['client_logo'] = await get_client_logo_b64(db, execution)
+
+        # N3.5: transacciones criticas de ESTA ejecucion (vacio -> no se pinta)
+        from app.db.models.transaction_analysis import TransactionAnalysis
+        _txn = await db.execute(
+            select(TransactionAnalysis)
+            .where(TransactionAnalysis.execution_id == execution.id)
+            .order_by(TransactionAnalysis.sort_order)
+        )
+        meta['transaction_analyses'] = [
+            {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
+            for r in _txn.scalars().all()
+        ]
 
         # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
         html_content = _build_plotly_html(
@@ -924,6 +937,8 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 </div>
 
 {ai_box('errors', 'Analisis de Errores', '#f97316')}
+
+{transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=False)}
 
 {ai_box('conclusions', 'Conclusiones', '#6366f1')}
 {ai_box('recommendations', 'Recomendaciones', '#10b981')}

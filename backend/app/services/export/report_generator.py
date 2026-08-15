@@ -202,6 +202,50 @@ def markdown_to_html(text: str) -> str:
 # HTML builder
 # ---------------------------------------------------------------------------
 
+def transaction_analyses_html(rows: Optional[List[Dict[str, Any]]], for_pdf: bool = True) -> str:
+    """N3.5: bloque 'Analisis por transaccion critica', una caja por transaccion.
+
+    `ai_box` pinta UNA seccion desde UNA clave fija y no sirve aqui: el numero de
+    cajas es variable. Sin filas devuelve cadena vacia — el documento sale
+    exactamente como antes (mismo criterio que el logo en N1).
+
+    Una fila sin analisis (la que fallo o la que paso del tope de 10) se pinta
+    igual, con sus metricas y una nota: la transaccion la marco Fredy y ocultarla
+    en silencio le haria creer que se analizo.
+    """
+    if not rows:
+        return ''
+    if for_pdf:
+        titulo = ('<div class="section-title" style="margin-top:6mm">'
+                  'Analisis por Transaccion Critica</div>')
+        caja, met, txt = (
+            'background:#fff7ed;border-left:1.2mm solid #4f46e5;border-radius:2mm;'
+            'padding:3mm 4mm;margin:0 0 3mm 0;break-inside:avoid',
+            'font-size:8pt;color:#475569;margin:1mm 0 2mm 0',
+            'font-size:9pt;line-height:1.5;color:#334155')
+        nom = 'font-size:11pt;font-weight:700;color:#0a1628'
+    else:
+        titulo = '<div class="section-title" style="margin-top:1.5rem">Analisis por Transaccion Critica</div>'
+        caja, met, txt = (
+            'background:#fff7ed;border-left:4px solid #4f46e5;border-radius:8px;'
+            'padding:1rem 1.2rem;margin:0 0 1rem 0',
+            'font-size:.8rem;color:#475569;margin:.25rem 0 .6rem 0',
+            'font-size:.9rem;line-height:1.7;color:#334155')
+        nom = 'font-size:1rem;font-weight:700;color:#0a1628'
+
+    cajas = []
+    for r in rows:
+        m = r.get('metrics') or {}
+        linea = (f"{int(m.get('muestras', 0)):,} muestras &middot; promedio {float(m.get('promedio', 0)):.0f} ms"
+                 f" &middot; p90 {float(m.get('p90', 0)):.0f} ms &middot; max {float(m.get('max', 0)):.0f} ms"
+                 f" &middot; {int(m.get('errores', 0)):,} errores ({float(m.get('tasa_error', 0)):.2f}%)")
+        cuerpo = (markdown_to_html(r['ai_analysis']) if r.get('ai_analysis')
+                  else '<em>Esta transaccion se marco como critica pero no se genero su analisis individual.</em>')
+        cajas.append(f'<div style="{caja}"><div style="{nom}">{r.get("label", "")}</div>'
+                     f'<div style="{met}">{linea}</div><div style="{txt}">{cuerpo}</div></div>')
+    return titulo + ''.join(cajas)
+
+
 def cover_meta_parts(meta: Dict[str, Any]) -> Dict[str, str]:
     """N2.3: piezas de la fila de metadatos de la portada (PDF y HTML).
 
@@ -881,6 +925,9 @@ tbody tr:nth-child(even) {{
 {chart_unit('Transactions per Second', '#4CAF50', 'tps', 'tps', 'Analisis - Transactions per Second')}
 {chart_unit('Active Threads Over Time', '#2196F3', 'threads', 'activeThreads', 'Analisis - Active Threads')}
 {chart_unit('Distribucion de Response Codes', '#ff9800', 'pie', 'errors', 'Analisis de Errores')}
+
+<!-- ===== N3.5: ANALISIS POR TRANSACCION CRITICA (antes de conclusiones) ===== -->
+{transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=True)}
 
 <!-- ===== CONCLUSIONES Y RECOMENDACIONES ===== -->
 {ai_box('conclusions', 'Conclusiones', '#4f46e5', allow_break=True)}

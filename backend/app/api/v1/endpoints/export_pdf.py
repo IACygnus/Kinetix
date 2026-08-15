@@ -279,6 +279,19 @@ async def export_pdf(
         from app.services.export.client_logo import get_client_logo_b64
         meta['client_logo'] = await get_client_logo_b64(db, execution)
 
+        # N3.5: transacciones criticas de ESTA ejecucion. Sin filas, el bloque no
+        # se pinta y el PDF sale identico al de siempre.
+        from app.db.models.transaction_analysis import TransactionAnalysis
+        _txn = await db.execute(
+            select(TransactionAnalysis)
+            .where(TransactionAnalysis.execution_id == execution.id)
+            .order_by(TransactionAnalysis.sort_order)
+        )
+        meta['transaction_analyses'] = [
+            {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
+            for r in _txn.scalars().all()
+        ]
+
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 
         # KNX-17: Capacity analysis for PDF
