@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Upload, Trash2, FileText, SearchCheck, Sparkles } from 'lucide-react';
 import { testAPI } from '../services/api';
 import ImageAnalysisCard from '../components/analysis/ImageAnalysisCard';
+import type { ImageSaveState } from '../components/analysis/ImageAnalysisCard';   // R2
 import EditableAttachmentTitle from '../components/analysis/EditableAttachmentTitle';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,6 +33,18 @@ const CATEGORIES = [
 export default function EvidencePage() {
   // SEC-2: borrar es exclusivo de admin (el backend responde 403 al resto).
   const { user } = useAuth();
+
+  // R2: autoguardado del analisis de cada imagen (patron F3/R1). El indicador
+  // es uno solo para toda la pagina; cada tarjeta reporta su estado aqui.
+  const AUTOSAVE_MS = 1800;
+  const [saveState, setSaveState] = useState<ImageSaveState>('idle');
+  const [savedAt, setSavedAt] = useState('');
+  const [retrySave, setRetrySave] = useState<{ fn: () => void }>({ fn: () => {} });
+  const handleSaveState = useCallback((s: ImageSaveState, at: string, retry: () => void) => {
+    setSaveState(s);
+    if (at) setSavedAt(at);
+    setRetrySave({ fn: retry });
+  }, []);
   const [executions, setExecutions] = useState<any[]>([]);
   const [selectedExecId, setSelectedExecId] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -232,6 +245,8 @@ export default function EvidencePage() {
                           onAnalysisUpdated={(attId, analysis) => {
                             setAttachments(prev => prev.map(a => a.id === attId ? { ...a, ai_analysis: analysis } : a));
                           }}
+                          autoSaveMs={AUTOSAVE_MS}
+                          onSaveStateChange={handleSaveState}
                         />
                       </>
                     )}
@@ -265,6 +280,19 @@ export default function EvidencePage() {
           )}
         </>
       )}
+
+      {/* R2: indicador fijo de autoguardado — mismo patron que F3/R1 */}
+      <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
+        <span className={`text-sm font-medium ${saveState === 'error' ? 'text-red-600' : saveState === 'saving' ? 'text-gray-500' : saveState === 'saved' ? 'text-emerald-700' : 'text-gray-400'}`}>
+          {saveState === 'saving' ? 'Guardando...' : saveState === 'saved' ? `Guardado ${savedAt}` : saveState === 'error' ? 'Error al guardar' : 'Autoguardado activo'}
+        </span>
+        {saveState === 'error' && (
+          <button onClick={() => retrySave.fn()}
+            className="px-3 py-1.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors">
+            Reintentar
+          </button>
+        )}
+      </div>
     </div>
   );
 }

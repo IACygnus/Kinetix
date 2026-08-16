@@ -2,8 +2,10 @@
  * ImageAnalysisCard — Per-image AI analysis display + controls.
  * Shows analysis text below each uploaded image with analyze/edit/regenerate.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, RefreshCw, Save, Sparkles } from 'lucide-react';
+
+export type ImageSaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 interface Props {
   executionId: string;
@@ -11,6 +13,13 @@ interface Props {
   aiAnalysis: string | null;
   aiAnalysisUpdatedAt: string | null;
   onAnalysisUpdated: (attachmentId: string, analysis: string) => void;
+  /** R2: sin `autoSaveMs` el componente se comporta EXACTAMENTE como antes
+   *  (solo guarda con el boton). El informe integrado no usa este componente:
+   *  sus imagenes guardan por el canal de overrides (F4) y no se tocan. */
+  autoSaveMs?: number;
+  /** R2: la pagina pinta UN indicador para todas sus imagenes; la tarjeta le
+   *  reporta su estado y le entrega como reintentar lo que quedo pendiente. */
+  onSaveStateChange?: (state: ImageSaveState, savedAt: string, retry: () => void) => void;
 }
 
 export default function ImageAnalysisCard({
@@ -19,12 +28,19 @@ export default function ImageAnalysisCard({
   aiAnalysis,
   aiAnalysisUpdatedAt,
   onAnalysisUpdated,
+  autoSaveMs,
+  onSaveStateChange,
 }: Props) {
   const [localAnalysis, setLocalAnalysis] = useState(aiAnalysis || '');
   const [isEdited, setIsEdited] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // R2: temporizador y texto pendiente en refs (patron R1)
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<string | null>(null);
+  const doSaveRef = useRef<(v: string) => void>(() => {});
 
   useEffect(() => {
     setLocalAnalysis(aiAnalysis || '');
@@ -62,26 +78,85 @@ export default function ImageAnalysisCard({
     }
   };
 
-  const saveAnalysis = async () => {
+  // R2: un unico camino de guardado — el MISMO PUT que ya usaba el boton. El
+  // boton manual y el autoguardado entran los dos por aqui.
+  const doSave = useCallback(async (value: string) => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    pendingRef.current = null;
     setSaving(true);
+    onSaveStateChange?.('saving', '', () => {});
     try {
-      await fetch(
+      const res = await fetch(
         `${apiBase}/executions/${executionId}/attachments/${attachmentId}/analysis`,
         {
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-          body: JSON.stringify({ ai_analysis: localAnalysis }),
+          body: JSON.stringify({ ai_analysis: value }),
         },
       );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setIsEdited(false);
-      onAnalysisUpdated(attachmentId, localAnalysis);
+      onAnalysisUpdated(attachmentId, value);
+      onSaveStateChange?.(
+        'saved',
+        new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+        () => {},
+      );
     } catch (err) {
       console.error('Error saving analysis:', err);
+      // Lo no guardado vuelve a quedar pendiente y el reintento lo reenvia.
+      pendingRef.current = value;
+      onSaveStateChange?.('error', '', () => { void doSaveRef.current(value); });
     } finally {
       setSaving(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executionId, attachmentId, apiBase, onAnalysisUpdated, onSaveStateChange]);
+
+  useEffect(() => { doSaveRef.current = doSave; }, [doSave]);
+
+  const saveAnalysis = () => doSave(localAnalysis);
+
+  // R2: al teclear se rearma el debounce; el texto pendiente vive en un ref, no
+  // en estado, asi que escribir no provoca renders extra por el autoguardado.
+  const scheduleSave = (value: string) => {
+    if (!autoSaveMs) return;
+    pendingRef.current = value;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      const v = pendingRef.current;
+      if (v !== null) void doSave(v);
+    }, autoSaveMs);
   };
+
+  // Salir de la caja guarda ya, sin esperar al debounce.
+  const flushOnBlur = () => {
+    if (!autoSaveMs) return;
+    const v = pendingRef.current;
+    if (v !== null) void doSave(v);
+  };
+
+  // Descarga de la pagina: best-effort con keepalive, igual que F3/R1.
+  useEffect(() => {
+    if (!autoSaveMs) return;
+    const onUnload = () => {
+      const v = pendingRef.current;
+      if (v === null) return;
+      fetch(`${apiBase}/executions/${executionId}/attachments/${attachmentId}/analysis`, {
+        method: 'PUT', credentials: 'include', keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({ ai_analysis: v }),
+      }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSaveMs, executionId, attachmentId, apiBase]);
 
   const formatDate = (iso: string | null) => {
     if (!iso) return '';
@@ -127,7 +202,8 @@ export default function ImageAnalysisCard({
       </div>
         <textarea
           value={localAnalysis}
-          onChange={(e) => { setLocalAnalysis(e.target.value); setIsEdited(true); }}
+          onChange={(e) => { setLocalAnalysis(e.target.value); setIsEdited(true); scheduleSave(e.target.value); }}
+          onBlur={flushOnBlur}
           className="w-full min-h-[100px] p-3 border border-gray-200 rounded-lg text-sm text-gray-800 resize-y focus:border-orange-400 focus:ring-1 focus:ring-orange-400/30 cursor-text hover:border-orange-300 transition-colors"
           placeholder="Analisis de la imagen..."
         />
