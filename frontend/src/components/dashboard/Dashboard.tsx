@@ -625,9 +625,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 : 'Analisis generado localmente'}
             </p>
             <p className="text-sm opacity-80 mt-1">
+              {/* B6.3: el aviso nombra el provider y el modelo REALES y el motivo
+                  real. Antes decia siempre "Gemini no disponible", aunque el
+                  provider fuera OpenAI y el motivo fuera otro. */}
               {aiToast.success
                 ? `Modelo: ${aiToast.model}`
-                : aiToast.error || 'Gemini no disponible'}
+                : aiToast.error
+                  || `${aiToast.provider || 'El proveedor de IA'} ${aiToast.model || ''} no devolvio analisis: se uso el analizador de respaldo`}
             </p>
             <p className="text-sm opacity-70 mt-0.5">
               {aiToast.success

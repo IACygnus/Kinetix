@@ -116,17 +116,51 @@ def _openai_is_token_param_error(err) -> bool:
     return "max_tokens" in s and ("not supported" in s or "unsupported" in s)
 
 
+# B6.3: la familia gpt-5/o* tampoco acepta `temperature` distinta de 1. Mandarla
+# devuelve un 400 y TODA seccion cae al fallback. Es la causa raiz del informe
+# generado con el analizador de respaldo el 16/08 (gpt-5-mini):
+#   400 - "Unsupported value: 'temperature' does not support 0.7 with this model."
+# Misma estrategia hibrida que B6.2: se evita por prefijo y, si aun asi llega el
+# 400, se aprende y se cachea para no volver a pagarlo.
+_openai_no_temp_cache: Dict[str, bool] = {}
+
+
+def _openai_temperature_kwarg(model_name: str, temperature: float) -> dict:
+    """`temperature` solo para los modelos que la admiten."""
+    m = (model_name or "").lower()
+    if _openai_no_temp_cache.get(model_name) or m.startswith(_OPENAI_NEWGEN_PREFIXES):
+        return {}
+    return {"temperature": temperature}
+
+
+def _openai_is_temperature_error(err) -> bool:
+    s = str(err).lower()
+    return "temperature" in s and ("not support" in s or "unsupported" in s)
+
+
 def openai_chat_completion(client, model_name: str, messages: list, limit: int, **kwargs):
     """Llamada a OpenAI tolerante al cambio de nombre del parametro (B6.2).
 
     Si la API rechaza max_tokens, aprende la preferencia del modelo, la cachea y
     reintenta UNA vez. Cualquier otro error se propaga sin tocar.
     """
+    # B6.3: la temperatura se filtra aqui, en el unico punto por el que pasan
+    # todas las llamadas de chat, para que ninguna seccion la cuele por su cuenta.
+    if "temperature" in kwargs and not _openai_temperature_kwarg(model_name, kwargs["temperature"]):
+        kwargs = {k: v for k, v in kwargs.items() if k != "temperature"}
     try:
         return client.chat.completions.create(
             model=model_name, messages=messages,
             **_openai_token_param(model_name, limit), **kwargs)
     except Exception as e:
+        # B6.3: modelo que rechaza la temperatura -> se aprende y se reintenta sin ella
+        if _openai_is_temperature_error(e) and "temperature" in kwargs:
+            _openai_no_temp_cache[model_name] = True
+            logger.warning("modelo %s no admite temperature; se reintenta sin ella y se cachea", model_name)
+            kwargs.pop("temperature", None)
+            return client.chat.completions.create(
+                model=model_name, messages=messages,
+                **_openai_token_param(model_name, limit), **kwargs)
         if not _openai_is_token_param_error(e) or _openai_token_param_cache.get(model_name) == "max_completion_tokens":
             raise
         _openai_token_param_cache[model_name] = "max_completion_tokens"
@@ -149,16 +183,23 @@ REGLAS DE ESTILO OBLIGATORIAS:
 2. PROHIBIDO usar las palabras: "veredicto", "hallazgo", "se evidencia", "cabe destacar", "es importante mencionar", "en conclusion".
 3. PROHIBIDO encerrar palabras entre asteriscos o comillas para dar enfasis.
 4. PROHIBIDO numerar parrafos (1. 2. 3.) excepto en conclusiones y recomendaciones.
-5. Escribe en parrafos narrativos fluidos de 3-5 oraciones cada uno.
+5. Escribe en parrafos narrativos fluidos de 2-4 oraciones cada uno.
 6. Usa datos concretos (numeros, porcentajes, milisegundos) dentro de las frases, no como listas aparte.
 7. Cuando menciones transacciones, usa su nombre natural en el texto sin resaltarlo con formato especial.
-8. Maximo 200 palabras por analisis de grafica. Para conclusiones y recomendaciones maximo 600 palabras.
+8. Maximo 120 palabras por analisis de grafica. Para conclusiones y recomendaciones maximo 350 palabras.
 9. Compara la transaccion mas rapida vs la mas lenta. Agrupa por comportamiento similar.
 10. Explica el impacto para el usuario final.
 11. El texto debe leerse como si un humano lo hubiera escrito, no generado por IA.
+12. EMPIEZA POR EL DATO. Nada de preambulos ("En el presente analisis...", "A continuacion se detalla...", "El grafico muestra que..."): la primera frase ya debe llevar la cifra que importa.
+13. PROHIBIDO cerrar repitiendo lo ya dicho. Si no anade informacion nueva, no lo escribas.
+14. Nada de relleno: fuera adverbios de adorno y frases que no cambian la decision de nadie.
+15. Cuando el maximo se dispare frente al promedio (10x o mas) o supere los 10 segundos, dilo con su cifra y su causa probable: esos picos no se omiten nunca, aunque el promedio se vea sano.
 
-EJEMPLO CORRECTO:
-"La transaccion de inicio de sesion mantuvo un tiempo de respuesta promedio de 245ms durante toda la prueba, dentro del umbral de 2000ms definido por el cliente. Sin embargo, a partir del minuto 15 los tiempos comenzaron a incrementarse de forma gradual, alcanzando picos de 890ms en el percentil 99. Este comportamiento sugiere que el pool de conexiones podria estar saturandose conforme aumenta la concurrencia sostenida."
+EJEMPLO CORRECTO (directo, sin preambulo ni cierre redundante):
+"Inicio de sesion promedio 245ms contra un umbral de 2000ms, pero con picos de 21060ms, 47 veces su promedio, concentrados desde el minuto 15. Ese salto apunta a timeouts por saturacion del pool de conexiones bajo concurrencia sostenida, y es lo que el usuario percibe como la aplicacion congelada."
+
+EJEMPLO INCORRECTO (preambulo, relleno y cierre que repite):
+"En el presente analisis se procede a revisar el comportamiento de la grafica. Como se puede apreciar, la transaccion de inicio de sesion presenta un tiempo de respuesta promedio de 245ms. En conclusion, se puede afirmar que el comportamiento observado es el descrito anteriormente."
 """
 
 
@@ -732,6 +773,7 @@ class GeminiAnalyzer:
 
     # Circuit breaker: after first rate-limit failure, skip all subsequent calls
     _circuit_open: bool = False
+    _last_error: Optional[str] = None   # B6.3: motivo del ultimo fallo, para ai_status
 
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = ""):
         self.provider = provider or DEFAULT_PROVIDER
@@ -740,6 +782,7 @@ class GeminiAnalyzer:
 
         # Reset circuit breaker on new instance
         GeminiAnalyzer._circuit_open = False
+        GeminiAnalyzer._last_error = None   # B6.3
 
         if not self._api_key:
             raise ValueError("API key no configurada para el proveedor de IA")
@@ -793,6 +836,13 @@ class GeminiAnalyzer:
                     )
                     result = response.choices[0].message.content if response.choices else None
                     if not result:
+                        # B6.3: antes esto volvia None en silencio — sin log y sin
+                        # motivo — y por eso el fallback era invisible (error=null).
+                        fin = getattr(response.choices[0], "finish_reason", "?") if response.choices else "sin choices"
+                        motivo = (f"{self.model_name} devolvio contenido vacio "
+                                  f"(finish_reason={fin})")
+                        logger.error(f"AI EMPTY for {section_name}: {motivo}")
+                        GeminiAnalyzer._last_error = motivo
                         GeminiAnalyzer._total_errors += 1
                         return None
                 else:
@@ -812,6 +862,7 @@ class GeminiAnalyzer:
                     continue
                 else:
                     logger.error(f"AI ERROR for {section_name}: {error_str}")
+                    GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
                     GeminiAnalyzer._total_errors += 1
                     return None
 
@@ -1022,7 +1073,7 @@ RESUMEN GLOBAL:
 - Throughput: {metrics['throughput']:.2f} req/s
 - Duracion: {metrics['duration_seconds']:.0f}s{criteria_text}
 
-Analiza esta tabla de resultados. Escribe un analisis NARRATIVO y CONCISO en espanol (maximo 250 palabras).
+Analiza esta tabla de resultados. Escribe un analisis NARRATIVO y DIRECTO en espanol (maximo 150 palabras).
 NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
 
 ESTRUCTURA (parrafos breves de 2-3 oraciones):
@@ -1104,7 +1155,7 @@ CONTEXTO:
 - Transacciones con errores: {len(error_data)}
 - Codigos HTTP distintos: {len(error_by_code)}
 
-Escribe un analisis NARRATIVO y CONCISO de los errores (maximo 200 palabras). Menciona CADA transaccion con error POR NOMBRE.
+Escribe un analisis NARRATIVO y DIRECTO de los errores (maximo 120 palabras). Menciona CADA transaccion con error POR NOMBRE.
 NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
 
 1. Panorama: total errores, porcentaje, codigos HTTP con sus transacciones.
@@ -1174,7 +1225,7 @@ El tier se asigna por el promedio, pero debes considerar SIEMPRE avg Y max: si e
 DATOS DE LA GRAFICA "{chart_name}":
 {data_summary}
 {tier_context}
-Analiza esta grafica de {chart_name}. Escribe un analisis NARRATIVO y CONCISO en espanol (maximo 200 palabras).
+Analiza esta grafica de {chart_name}. Escribe un analisis NARRATIVO y DIRECTO en espanol (maximo 120 palabras).
 NO repitas datos que ya estan en la grafica, enfocate en INTERPRETACION.
 
 {specific}
@@ -1215,7 +1266,7 @@ CONTEXTO DEL TRAFICO PRINCIPAL:
 - Muestras de redireccion: {main_metrics.get('total_redirects', 0):,}
 - Labels de redireccion: {', '.join(main_metrics.get('redirect_labels', []))}
 
-Escribe un analisis NARRATIVO y CONCISO (maximo 200 palabras). Menciona CADA redireccion por nombre.
+Escribe un analisis NARRATIVO y DIRECTO (maximo 120 palabras). Menciona CADA redireccion por nombre.
 NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
 
 1. Cuantas redirecciones, porcentaje del trafico, patron de nombres.
@@ -1337,7 +1388,7 @@ ANALISIS REALIZADOS:
 10. ACTIVE THREADS:
 {ai_analysis_active_threads}
 {redirect_section}
-Escribe 6 conclusiones ejecutivas como parrafos completos. Maximo 600 palabras total.
+Escribe 6 conclusiones ejecutivas como parrafos completos. Maximo 350 palabras total.
 Cubre: veredicto general, tiempos criticos, errores, throughput, estabilidad, acciones prioritarias.
 
 Cada conclusion es un PARRAFO COMPLETO de 3-5 oraciones numerado.
@@ -1442,7 +1493,7 @@ INFRAESTRUCTURA:
 {ai_analysis_latency}
 {ai_analysis_active_threads}
 {redirect_section}
-Escribe recomendaciones organizadas por prioridad. Maximo 600 palabras total.
+Escribe recomendaciones organizadas por prioridad. Maximo 350 palabras total.
 CRITICAS (2-3): Resolver antes de produccion.
 ALTAS (2-3): Resolver pronto.
 MEDIAS (1-2): Optimizaciones opcionales.

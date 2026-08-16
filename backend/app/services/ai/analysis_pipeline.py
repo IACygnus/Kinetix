@@ -359,6 +359,16 @@ async def run_ai_and_verdict(
         if not ai_status.get("error"):
             ai_status["error"] = str(ai_err)[:200]
 
+    # B6.3: si se cayo al fallback sin excepcion (respuesta vacia o 400 tragado en
+    # _generate), ai_status.error venia null y el problema era invisible. Se rescata
+    # el motivo que registro el analizador.
+    if not ai_status.get("success") and not ai_status.get("error"):
+        from app.services.ai.gemini import GeminiAnalyzer
+        ai_status["error"] = (
+            GeminiAnalyzer._last_error
+            or f"{ai_status.get('provider', 'IA')} no devolvio analisis; se uso el analizador de respaldo"
+        )
+
     # ===== COMPUTE VERDICT =====
     if acceptance_criteria_dict and not acceptance_criteria_dict.get('raw_text'):
         # P4: If per_scenario criteria exist for this test_type, merge into effective criteria
