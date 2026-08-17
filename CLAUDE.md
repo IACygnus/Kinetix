@@ -184,7 +184,7 @@ backend/app/
     │   └── wsdl_importer.py
     ├── export/
     │   ├── high_cardinality_strategy.py
-    │   └── report_generator.py           # build_pdf_html / build_standalone_html
+    │   └── report_generator.py           # build_pdf_html
     ├── jmx_parser.py
     ├── jtl/jtl_parser.py                 # CSV + XML JTL → DataFrames
     └── parsers/
@@ -392,8 +392,9 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 - **Flujo de análisis (`/upload`):**
   1. Parse JTL → DataFrame.
   2. `prepare_insights_for_prompt()` (pre-clasificación en tiers).
-  3. 12 secciones IA + 2 (recomendaciones, conclusiones) en paralelo
-     controlado, con `sanitize_ai_text()` aplicado a cada salida.
+  3. 12 secciones IA + 2 (recomendaciones, conclusiones) de forma
+     **secuencial** (12 pasos escritos a mano en `run_ai_and_verdict`, uno
+     detrás de otro), con `sanitize_ai_text()` aplicado a cada salida.
   4. `compute_verdict()` (cumple/no cumple acceptance criteria).
   5. `compute_per_transaction_verdicts()` (KNX-09).
   6. `update_ai_usage_in_db()` para sincronizar contadores.
@@ -488,8 +489,6 @@ construcción de HTML para los dos exportadores (PDF y HTML standalone).
   - Solo layouts en `table`, **no flex/grid** (WeasyPrint los procesa mal).
   - Headers navy `#0a1628`, cajas IA naranja `#fff7ed`.
   - Accent **Indigo `#4f46e5`** (estándar visual SQA).
-- **`build_standalone_html(...)`** — HTML responsivo (no CDN, offline-capable),
-  acepta CSS moderno con flex/grid.
 - **Helpers compartidos:** `chart_area()`, `chart_multiline()`, `chart_pie()`
   retornan imágenes base64 listas para `<img src="data:image/png;base64,...">`.
 
@@ -562,7 +561,7 @@ comentarios XML, variables para todo lo configurable, no URLs hardcodeadas).
 - Gemini: aplana los mensajes a un único prompt con marcas `[USER]`/`[ASSISTANT]`,
   `transport="rest"` siempre (requerido en Docker).
 
-### `frontend/src/pages/AIScriptDesigner.tsx` (532 líneas)
+### `frontend/src/pages/AIScriptDesigner.tsx` (1.352 líneas)
 
 - Layout dos paneles: chat 40% / preview JMX 60%.
 - Botón "Adjuntar archivo" (input file oculto, accept

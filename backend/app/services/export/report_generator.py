@@ -14,10 +14,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from app.config.chart_config import (
-    CHART_COLORS, HTTP_CODE_COLORS, TEST_TYPE_LABELS,
-    get_color_for_index, get_code_color,
-)
+from app.config.chart_config import get_color_for_index, get_code_color
 
 
 # ---------------------------------------------------------------------------
