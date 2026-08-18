@@ -1052,6 +1052,56 @@ _IA_KEY_BY_COLUMN = {
 }
 
 
+# F5.2: etiquetas legibles de cada analisis de seccion para el prompt del
+# consolidado. Se excluyen conclusiones y recomendaciones a proposito: ya viajan
+# en sus propios bloques desde F5.
+_SECCION_LABEL = {
+    "ai_analysis_summary": "Resumen general",
+    "ai_analysis_errors": "Analisis de errores",
+    "ai_analysis_response_times": "Tiempos de respuesta por transaccion",
+    "ai_analysis_response_time_over_time": "Tiempo de respuesta en el tiempo",
+    "ai_analysis_throughput": "Throughput",
+    "ai_analysis_latency": "Latencia",
+    "ai_analysis_error_rate": "Tasa de error",
+    "ai_analysis_codes_per_second": "Codigos HTTP por segundo",
+    "ai_analysis_transactions_per_second": "Transacciones por segundo",
+    "ai_analysis_active_threads": "Hilos activos",
+    "ai_analysis_redirects": "Redirecciones",
+}
+
+# Tope para los analisis que el usuario NO edito. Los editados van completos:
+# son la correccion que motiva F5.2 y recortarlos vaciaria el cambio de sentido.
+_SECCION_MAX_CHARS_SIN_EDITAR = 400
+
+
+def _section_analyses_for_prompt(execution, overrides_analysis: dict) -> str:
+    """F5.2: analisis de seccion de una ejecucion, listos para el consolidado.
+
+    Si el usuario corrigio una caja en el informe integrado entra su version,
+    completa y marcada; si no la toco, entra la original recortada. El consolidado
+    se redacta sobre los analisis, asi que usar el texto viejo de una seccion ya
+    corregida hacia que el informe se contradijera a si mismo.
+
+    La fuente de los overrides es la misma de F5/F6 (_load_section_overrides), no
+    se duplica logica.
+    """
+    partes = []
+    for columna, etiqueta in _SECCION_LABEL.items():
+        editado = (overrides_analysis or {}).get(columna)
+        original = getattr(execution, columna, None)
+        texto = editado if editado is not None else original
+        if not texto:
+            continue
+        texto = str(texto).strip()
+        if editado is not None:
+            partes.append(f"[{etiqueta} — CORREGIDO POR EL USUARIO]: {texto}")
+        else:
+            if len(texto) > _SECCION_MAX_CHARS_SIN_EDITAR:
+                texto = texto[:_SECCION_MAX_CHARS_SIN_EDITAR].rstrip() + "..."
+            partes.append(f"[{etiqueta}]: {texto}")
+    return "\n".join(partes)
+
+
 def _apply_ia_overrides(ia: dict, overrides) -> dict:
     """F6: pisa el texto de la IA con lo editado en el informe integrado.
 
@@ -1838,6 +1888,9 @@ async def generate_consolidated_analysis(
                 "verdict": verdict,
                 "conclusions": _ov.get("ai_conclusions", execution.ai_conclusions) or "",
                 "recommendations": _ov.get("ai_recommendations", execution.ai_recommendations) or "",
+                # F5.2: los analisis de seccion (resumen, errores y graficas) tambien
+                # alimentan el consolidado, con los overrides ya aplicados.
+                "section_analyses": _section_analyses_for_prompt(execution, _ov),
             })
 
         elif section.type == "monitoring":
@@ -1906,6 +1959,7 @@ async def generate_consolidated_analysis(
         all_recommendations = "\n".join(e.get("recommendations", "") for e in entries if e.get("recommendations"))
         all_monitoring = "\n".join(e.get("monitoring_analysis", "") for e in entries if e.get("monitoring_analysis"))
         all_evidence = "\n".join(e.get("evidence_analysis", "") for e in entries if e.get("evidence_analysis"))
+        all_sections = "\n".join(e.get("section_analyses", "") for e in entries if e.get("section_analyses"))   # F5.2
 
         prompt = f"""{SYSTEM_PROMPT}
 
@@ -1924,6 +1978,11 @@ Conclusiones originales del reporte:
 
 Recomendaciones originales del reporte:
 {all_recommendations or 'Sin recomendaciones previas.'}
+
+Analisis de las secciones del reporte (los marcados como CORREGIDO POR EL USUARIO
+son correcciones suyas: tienen prioridad sobre cualquier otro texto y sobre tu
+propio criterio; los demas van recortados y solo dan contexto):
+{all_sections or 'Sin analisis de secciones disponible.'}
 
 Analisis del monitoreo de infraestructura:
 {all_monitoring or 'Sin analisis de monitoreo disponible.'}
