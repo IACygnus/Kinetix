@@ -218,7 +218,7 @@ frontend/src/
 │   │   ├── CapacityAnalysis.tsx
 │   │   ├── ChartYAxisZoom.tsx
 │   │   ├── ComparisonReport.tsx
-│   │   ├── Dashboard.tsx                 # ⚠ Protegido — 1177 líneas
+│   │   ├── Dashboard.tsx                 # ⚠ Protegido — 1304 líneas
 │   │   ├── DashboardHome.tsx
 │   │   └── UploadJTL.tsx
 │   ├── execution/{ScenarioForm, LiveMetricsChart, ExecutionHistory}.tsx
@@ -616,7 +616,7 @@ Editor visual de scripts (no IA). Maneja:
 
 ---
 
-## 10. JTL PARSER (`backend/app/services/jtl/jtl_parser.py` — 511 líneas, **PROTEGIDO**)
+## 10. JTL PARSER (`backend/app/services/jtl/jtl_parser.py` — 515 líneas, **PROTEGIDO**)
 
 Soporta **CSV (default)** y **XML** nativos de JMeter.
 
@@ -671,9 +671,9 @@ Lee la primera línea no-vacía y devuelve `True` si empieza con `<?xml` o
 
 | Archivo | Líneas |
 |---|---|
-| `frontend/src/components/dashboard/Dashboard.tsx` | 1177 |
+| `frontend/src/components/dashboard/Dashboard.tsx` | 1304 |
 | `frontend/src/pages/ScriptDesigner.tsx` | 967 |
-| `backend/app/services/jtl/jtl_parser.py` | 511 |
+| `backend/app/services/jtl/jtl_parser.py` | 515 |
 | `backend/app/services/engine/virtual_user.py` | 194 |
 | `backend/app/services/export/report_generator.py` | 940 |
 | `backend/app/services/engine/` (carpeta completa) | — motor propio |
