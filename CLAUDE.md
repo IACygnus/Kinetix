@@ -480,7 +480,7 @@ PROVIDERS = {
 ### `backend/app/services/export/report_generator.py` (1148 líneas)
 
 Módulo central que comparte generación de gráficas (matplotlib → base64) y
-construcción de HTML para los dos exportadores (PDF y HTML standalone).
+construcción de HTML para el exportador PDF.
 
 - **`build_pdf_html(...)`** — produce HTML optimizado para WeasyPrint:
   - Cover page full-bleed con `@page :first { margin: 0 }`.
