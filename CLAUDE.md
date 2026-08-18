@@ -477,7 +477,7 @@ PROVIDERS = {
 
 ## 7. SISTEMA DE REPORTES
 
-### `backend/app/services/export/report_generator.py` (1148 líneas)
+### `backend/app/services/export/report_generator.py` (940 líneas)
 
 Módulo central que comparte generación de gráficas (matplotlib → base64) y
 construcción de HTML para el exportador PDF.
@@ -675,7 +675,7 @@ Lee la primera línea no-vacía y devuelve `True` si empieza con `<?xml` o
 | `frontend/src/pages/ScriptDesigner.tsx` | 967 |
 | `backend/app/services/jtl/jtl_parser.py` | 511 |
 | `backend/app/services/engine/virtual_user.py` | 194 |
-| `backend/app/services/export/report_generator.py` | 1148 |
+| `backend/app/services/export/report_generator.py` | 940 |
 | `backend/app/services/engine/` (carpeta completa) | — motor propio |
 
 **NO refactorizar sin autorización explícita de Fredy.**
