@@ -190,16 +190,43 @@ REGLAS DE ESTILO OBLIGATORIAS:
 9. Compara la transaccion mas rapida vs la mas lenta. Agrupa por comportamiento similar.
 10. Explica el impacto para el usuario final.
 11. El texto debe leerse como si un humano lo hubiera escrito, no generado por IA.
-12. EMPIEZA POR EL DATO. Nada de preambulos ("En el presente analisis...", "A continuacion se detalla...", "El grafico muestra que..."): la primera frase ya debe llevar la cifra que importa.
-13. PROHIBIDO cerrar repitiendo lo ya dicho. Si no anade informacion nueva, no lo escribas.
-14. Nada de relleno: fuera adverbios de adorno y frases que no cambian la decision de nadie.
-15. Cuando el maximo se dispare frente al promedio (10x o mas) o supere los 10 segundos, dilo con su cifra y su causa probable: esos picos no se omiten nunca, aunque el promedio se vea sano.
+12. APERTURA CON DATO. La primera frase debe contener una cifra concreta. PROHIBIDO abrir con "El grafico...", "El analisis muestra...", "Se observa...", "En el presente analisis...", "A continuacion se detalla...", "Como se puede apreciar...".
+13. CIFRAS EXACTAS. Usa los valores reales tal como se te entregan (139ms, 2941ms, 21060ms). PROHIBIDO escribir "cercano a", "aproximadamente", "alrededor de", "unos" o "valores estables en torno a" cuando el dato exacto esta en los datos entregados.
+14. RATIOS OBLIGATORIOS. Cada vez que compares transacciones o senales un pico, expresa la relacion numerica: "21 veces mas lenta", "47 veces sobre su promedio". Los ratios ya vienen calculados en los datos: usalos tal cual, no los estimes ni los omitas.
+15. RAZONAR, NO DESCRIBIR. Cada observacion relevante va acompanada de su lectura probable, marcada como hipotesis: "apunta a", "sugiere", "es coherente con". PROHIBIDO afirmar causas como hechos demostrados. PROHIBIDO convertir el analisis en lista de tareas ("se recomienda revisar...", "se sugiere optimizar...", "como oportunidad de mejora..."): eso pertenece a Recomendaciones, no al analisis (unica excepcion: las secciones que expresamente te pidan conclusiones, prioridades o recomendaciones).
+16. CIERRE CON IMPACTO. Termina SIEMPRE con UNA frase sobre lo que percibira el usuario final en produccion, en lenguaje de negocio y sin tecnicismos (nada de P99, throughput, pool de conexiones en esa frase).
+17. DENSIDAD. PROHIBIDAS las frases que no aportan dato, lectura o impacto: "En terminos generales...", "cabe destacar...", "es importante mencionar...", "en resumen...". Si una frase no dice nada nuevo, se borra. Fuera adverbios de adorno y frases que no cambian la decision de nadie.
+18. PROHIBIDO cerrar repitiendo lo ya dicho. Si no anade informacion nueva, no lo escribas.
+19. Cuando el maximo se dispare frente al promedio (10x o mas) o supere los 10 segundos, dilo con su cifra y su causa probable: esos picos no se omiten nunca, aunque el promedio se vea sano.
 
-EJEMPLO CORRECTO (directo, sin preambulo ni cierre redundante):
+Los cuatro ejemplos siguientes son de OTRAS pruebas y estan aqui solo por su forma de redactar: nunca copies sus cifras ni sus nombres de transaccion, usa los datos que se te entregan.
+
+ASI SI (denso, ejecutivo: dato exacto, ratio, hipotesis, impacto de negocio):
+"Adapter SendCode fue la mas rapida con 139ms y tier excelente, mientras Adapter VerifMethod fue la mas lenta con 2941ms, 21,1 veces mayor. El maximo de 21060ms en token, 47,6 veces sobre su promedio, apunta a esperas o timeouts intermitentes. En produccion, el usuario percibira autenticaciones inconsistentes, codigos agiles y validaciones lentas con episodios de congelamiento."
+
+ASI NO (preambulo, cifras redondeadas, cierre generico y lista de tareas):
+"El grafico de Response Times por Transaccion muestra que Adapter SendCode mantuvo los mejores tiempos de respuesta, con valores estables cercanos a 150 ms. En terminos generales, la aplicacion mostro un comportamiento estable, identificandose como principal oportunidad de mejora la optimizacion de VerifiMethod."
+
+ASI SI (arranca por el dato, explica el pico y cierra en impacto):
 "Inicio de sesion promedio 245ms contra un umbral de 2000ms, pero con picos de 21060ms, 47 veces su promedio, concentrados desde el minuto 15. Ese salto apunta a timeouts por saturacion del pool de conexiones bajo concurrencia sostenida, y es lo que el usuario percibe como la aplicacion congelada."
 
-EJEMPLO INCORRECTO (preambulo, relleno y cierre que repite):
+ASI NO (preambulo, relleno y cierre que repite):
 "En el presente analisis se procede a revisar el comportamiento de la grafica. Como se puede apreciar, la transaccion de inicio de sesion presenta un tiempo de respuesta promedio de 245ms. En conclusion, se puede afirmar que el comportamiento observado es el descrito anteriormente."
+"""
+
+
+# C2: recordatorio de estilo que se repite AL FINAL de los prompts de seccion.
+# El SYSTEM_PROMPT ya lleva las reglas completas, pero en prompts largos la ultima
+# instruccion pesa mas que la primera: esto es lo que evita que el modelo recaiga
+# en "El grafico muestra..." y en cifras redondeadas.
+STYLE_REMINDER = """
+RECORDATORIO DE ESTILO (obligatorio, se revisa antes de publicar):
+- Primera frase con una cifra concreta. PROHIBIDO abrir con "El grafico...", "El analisis muestra...", "Se observa...".
+- Cifras exactas tal como aparecen en los datos entregados. PROHIBIDO "cercano a", "aproximadamente", "alrededor de".
+- Toda comparacion entre transacciones y todo pico van con su ratio numerico ("21,1 veces mayor", "47,6 veces sobre su promedio"). Los ratios ya vienen calculados en los datos.
+- Cada dato relevante va con su lectura probable marcada como hipotesis ("apunta a", "sugiere", "es coherente con"). Nada de causas afirmadas como hechos, nada de lista de tareas.
+- Cierra con UNA sola frase sobre lo que percibira el usuario final en produccion, en lenguaje de negocio y sin tecnicismos.
+- Ninguna frase de relleno: si no aporta dato, lectura o impacto, se borra.
 """
 
 
@@ -1199,7 +1226,8 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
             chart_specific_instructions = {
                 'response_times': f"""Los datos incluyen {insights['total_transactions'] if insights else 'todas las'} transacciones por tier.
 Menciona CADA transaccion por nombre. Cubre: distribucion por tiers, mas rapida vs mas lenta, variabilidad P99/avg, impacto en produccion.
-El tier se asigna por el promedio, pero debes considerar SIEMPRE avg Y max: si el max supera ampliamente al promedio (por ejemplo 10x o mas), senala esos picos y su probable causa (timeouts, esperas, contencion) aunque el tier por promedio sea bueno.""",
+El tier se asigna por el promedio, pero debes considerar SIEMPRE avg Y max: si el max supera ampliamente al promedio (por ejemplo 10x o mas), senala esos picos y su probable causa (timeouts, esperas, contencion) aunque el tier por promedio sea bueno.
+Al contrastar la mas rapida con la mas lenta escribe el ratio exacto que ya viene calculado en RATIO PEOR/MEJOR, y para cada pico usa el ratio que llega marcado como [PICO: max Nx el promedio] o como ratio sobre el promedio. No estimes esos numeros: estan dados.""",
 
                 'response_time_over_time': """Cubre: estabilidad temporal (mejora/degrada), fases ramp-up/meseta/cool-down, picos de latencia y sus causas, tendencia general.""",
 
@@ -1229,9 +1257,7 @@ Analiza esta grafica de {chart_name}. Escribe un analisis NARRATIVO y DIRECTO en
 NO repitas datos que ya estan en la grafica, enfocate en INTERPRETACION.
 
 {specific}
-
-Cierra con una oracion sobre el impacto en produccion.
-"""
+{STYLE_REMINDER}"""
             return self._generate(prompt, section_name=f"chart_{chart_type}")
 
         except Exception as e:
