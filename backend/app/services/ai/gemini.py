@@ -57,6 +57,11 @@ OPENAI_MAX_TOKENS = {
     # B6.2: la familia gpt-5 exige max_completion_tokens (ver openai_chat_completion).
     # 16384 conservador, alineado con gpt-5-mini; su techo real documentado es mayor.
     "gpt-5": 16384,
+    # N4.6b: gpt-5.5 caia al default de 4096 con warning (misma trampa de HF18b).
+    # 16384 verificado contra la API con una llamada real: acepta
+    # max_completion_tokens=16384 y responde finish_reason=stop. Valor conservador
+    # alineado con el resto de la familia gpt-5; su techo documentado es mayor.
+    "gpt-5.5": 16384,
     "gpt-5-mini": 16384,
     "gpt-5-nano": 8192,
     "o4-mini": 16384,

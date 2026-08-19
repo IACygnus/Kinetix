@@ -781,6 +781,7 @@ async def _execution_or_404(db, current_user, execution_id: str):
 async def generate_transaction_report_endpoint(
     execution_id: str,
     label: str = Query(..., description="Nombre exacto de la transaccion"),
+    sections: Optional[str] = Query(None, description="N4.6b: secciones a regenerar, separadas por coma. Vacio = las 8"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "analyst"])),
 ):
@@ -791,6 +792,13 @@ async def generate_transaction_report_endpoint(
     reescribe las mismas 8 filas. El progreso se sigue con el GET de esta misma
     ruta, que cuenta las filas ya persistidas.
     """
+    pedidas: Optional[List[str]] = None
+    if sections:
+        pedidas = [s.strip() for s in sections.split(",") if s.strip()]
+        invalidas = [s for s in pedidas if s not in SECTIONS]
+        if invalidas:
+            raise HTTPException(400, f"Secciones desconocidas: {', '.join(invalidas)}. Validas: {', '.join(SECTIONS)}")
+
     execution = await _execution_or_404(db, current_user, execution_id)
     parser, df = _parse_execution_df(execution)
 
@@ -810,7 +818,7 @@ async def generate_transaction_report_endpoint(
     t0 = time.perf_counter()
     counters = await generate_transaction_report(
         db=db, execution_id=execution.id, label=label, metrics=metrics,
-        series=series, test_type=execution.test_type or "load",
+        series=series, test_type=execution.test_type or "load", sections=pedidas,
     )
     counters["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
     counters["label"] = label
