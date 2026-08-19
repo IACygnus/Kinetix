@@ -25,6 +25,7 @@ from app.db.models.data_file import DataFile
 from app.db.models.attachment import ExecutionAttachment
 from app.db.models.client_logo import ClientLogo
 from app.db.models.transaction_analysis import TransactionAnalysis   # N3.4
+from app.db.models.transaction_chart_analysis import TransactionChartAnalysis   # N4.5
 from app.core.security import get_password_hash
 
 # Configurar logging
