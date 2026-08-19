@@ -26,6 +26,11 @@ from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_pro
 from app.services.ai.analysis_pipeline import run_ai_and_verdict
 from app.services.ai.transaction_analysis import analyze_critical_transactions   # N3.4
 from app.db.models.transaction_analysis import TransactionAnalysis               # N3.4
+from app.services.jtl.transaction_series import (                                # N4.4
+    build_transaction_series,
+    available_labels,
+    DEFAULT_INTERVAL_SECONDS,
+)
 from app.schemas.test import (
     TestExecutionResponse,
     ChartData,
@@ -672,6 +677,78 @@ async def get_transaction_analyses(
         ],
         "count": len(rows),
     }
+
+
+@router.get("/executions/{execution_id}/transaction-charts")
+async def get_transaction_charts(
+    execution_id: str,
+    label: str = Query(..., description="Nombre exacto de la transaccion"),
+    interval_seconds: int = Query(DEFAULT_INTERVAL_SECONDS, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """N4.4: las 5 series temporales de UNA transaccion, bajo demanda.
+
+    Vive aparte de /charts a proposito (diagnostico 036 §3): meter estas series
+    en el endpoint general le sumaria +1,26 MB en CADA apertura del dashboard,
+    para un dato que solo consumen las transacciones marcadas como criticas.
+    Aqui se calcula solo la transaccion pedida (~500 KB) y solo cuando se pide.
+    """
+    try:
+        exec_uuid = uuid.UUID(execution_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, f"ID de ejecucion invalido: '{execution_id}'")
+
+    result = await db.execute(select(TestExecution).where(TestExecution.id == exec_uuid))
+    execution = result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(404, "Ejecucion no encontrada")
+
+    await _check_execution_access(db, current_user, execution)
+
+    # Mismo criterio de busqueda que /charts, pero sin tocarlo: las series se
+    # calculan desde el JTL original, que puede haberse borrado del disco.
+    upload_dir = Path("/app/uploads")
+    jtl_filenames = execution.jtl_filenames or [execution.jtl_filename]
+    found_paths: List[str] = []
+    for filename in jtl_filenames:
+        matches = list(upload_dir.glob(f"*{filename}"))
+        if matches:
+            found_paths.append(str(matches[0]))
+    if not found_paths:
+        raise HTTPException(
+            404,
+            f"No se encuentra el JTL de esta ejecucion ({', '.join(str(f) for f in jtl_filenames)}). "
+            f"Las series por transaccion se calculan desde el archivo original.",
+        )
+
+    t0 = time.perf_counter()
+    try:
+        if len(found_paths) == 1:
+            parser = JTLParser(found_paths[0])
+            parser.parse()
+        else:
+            _, _, parser = JTLParser.parse_multiple(found_paths)
+    except Exception as e:
+        logger.exception(f"N4.4: fallo el parseo del JTL de {exec_uuid}")
+        raise HTTPException(400, f"No se pudo parsear el JTL de esta ejecucion: {e}")
+
+    df = parser.df_main if parser.df_main is not None and len(parser.df_main) > 0 else parser.df
+    if df is None or len(df) == 0:
+        raise HTTPException(400, "El JTL de esta ejecucion no tiene muestras utilizables")
+
+    try:
+        series = build_transaction_series(df, label, interval_seconds=interval_seconds)
+    except ValueError as e:
+        disponibles = ", ".join(available_labels(df)) or "ninguna"
+        raise HTTPException(404, f"{e}. Transacciones disponibles: {disponibles}")
+
+    series["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
+    logger.info(
+        f"N4.4: series de '{label}' para {exec_uuid} en {series['elapsed_ms']} ms "
+        f"(bucket {series['interval_seconds']}s, {series['sample_count']} muestras)"
+    )
+    return series
 
 
 @router.get("/executions/{execution_id}/charts", response_model=ChartData)
