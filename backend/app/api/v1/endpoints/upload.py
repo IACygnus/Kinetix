@@ -31,6 +31,11 @@ from app.services.jtl.transaction_series import (                               
     available_labels,
     DEFAULT_INTERVAL_SECONDS,
 )
+from app.services.ai.transaction_report import generate_transaction_report       # N4.6
+from app.db.models.transaction_chart_analysis import (                           # N4.6
+    TransactionChartAnalysis,
+    SECTIONS,
+)
 from app.schemas.test import (
     TestExecutionResponse,
     ChartData,
@@ -679,6 +684,39 @@ async def get_transaction_analyses(
     }
 
 
+def _parse_execution_df(execution):
+    """N4.6: el DataFrame del JTL de una ejecucion, para las series por
+    transaccion. Extraido tal cual del endpoint de N4.4, que ahora lo llama,
+    para no tener dos copias de la misma busqueda de archivo."""
+    upload_dir = Path("/app/uploads")
+    jtl_filenames = execution.jtl_filenames or [execution.jtl_filename]
+    found_paths: List[str] = []
+    for filename in jtl_filenames:
+        matches = list(upload_dir.glob(f"*{filename}"))
+        if matches:
+            found_paths.append(str(matches[0]))
+    if not found_paths:
+        raise HTTPException(
+            404,
+            f"No se encuentra el JTL de esta ejecucion ({', '.join(str(f) for f in jtl_filenames)}). "
+            f"Las series por transaccion se calculan desde el archivo original.",
+        )
+    try:
+        if len(found_paths) == 1:
+            parser = JTLParser(found_paths[0])
+            parser.parse()
+        else:
+            _, _, parser = JTLParser.parse_multiple(found_paths)
+    except Exception as e:
+        logger.exception(f"N4.4: fallo el parseo del JTL de {execution.id}")
+        raise HTTPException(400, f"No se pudo parsear el JTL de esta ejecucion: {e}")
+
+    df = parser.df_main if parser.df_main is not None and len(parser.df_main) > 0 else parser.df
+    if df is None or len(df) == 0:
+        raise HTTPException(400, "El JTL de esta ejecucion no tiene muestras utilizables")
+    return parser, df
+
+
 @router.get("/executions/{execution_id}/transaction-charts")
 async def get_transaction_charts(
     execution_id: str,
@@ -708,34 +746,8 @@ async def get_transaction_charts(
 
     # Mismo criterio de busqueda que /charts, pero sin tocarlo: las series se
     # calculan desde el JTL original, que puede haberse borrado del disco.
-    upload_dir = Path("/app/uploads")
-    jtl_filenames = execution.jtl_filenames or [execution.jtl_filename]
-    found_paths: List[str] = []
-    for filename in jtl_filenames:
-        matches = list(upload_dir.glob(f"*{filename}"))
-        if matches:
-            found_paths.append(str(matches[0]))
-    if not found_paths:
-        raise HTTPException(
-            404,
-            f"No se encuentra el JTL de esta ejecucion ({', '.join(str(f) for f in jtl_filenames)}). "
-            f"Las series por transaccion se calculan desde el archivo original.",
-        )
-
     t0 = time.perf_counter()
-    try:
-        if len(found_paths) == 1:
-            parser = JTLParser(found_paths[0])
-            parser.parse()
-        else:
-            _, _, parser = JTLParser.parse_multiple(found_paths)
-    except Exception as e:
-        logger.exception(f"N4.4: fallo el parseo del JTL de {exec_uuid}")
-        raise HTTPException(400, f"No se pudo parsear el JTL de esta ejecucion: {e}")
-
-    df = parser.df_main if parser.df_main is not None and len(parser.df_main) > 0 else parser.df
-    if df is None or len(df) == 0:
-        raise HTTPException(400, "El JTL de esta ejecucion no tiene muestras utilizables")
+    _, df = _parse_execution_df(execution)
 
     try:
         series = build_transaction_series(df, label, interval_seconds=interval_seconds)
@@ -749,6 +761,105 @@ async def get_transaction_charts(
         f"(bucket {series['interval_seconds']}s, {series['sample_count']} muestras)"
     )
     return series
+
+
+async def _execution_or_404(db, current_user, execution_id: str):
+    """N4.6: valida el id, carga la ejecucion y comprueba el acceso."""
+    try:
+        exec_uuid = uuid.UUID(execution_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, f"ID de ejecucion invalido: '{execution_id}'")
+    result = await db.execute(select(TestExecution).where(TestExecution.id == exec_uuid))
+    execution = result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(404, "Ejecucion no encontrada")
+    await _check_execution_access(db, current_user, execution)
+    return execution
+
+
+@router.post("/executions/{execution_id}/transaction-report")
+async def generate_transaction_report_endpoint(
+    execution_id: str,
+    label: str = Query(..., description="Nombre exacto de la transaccion"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """N4.6: genera las 8 secciones IA del mini-informe de UNA transaccion.
+
+    Bajo demanda y fuera de /upload: son 8 llamadas en serie (~90 s) que solo
+    valen para las transacciones que se abren. Idempotente — regenerar
+    reescribe las mismas 8 filas. El progreso se sigue con el GET de esta misma
+    ruta, que cuenta las filas ya persistidas.
+    """
+    execution = await _execution_or_404(db, current_user, execution_id)
+    parser, df = _parse_execution_df(execution)
+
+    try:
+        series = build_transaction_series(df, label)
+    except ValueError as e:
+        disponibles = ", ".join(available_labels(df)) or "ninguna"
+        raise HTTPException(404, f"{e}. Transacciones disponibles: {disponibles}")
+
+    # Mismas metricas por label que ve el panel de N3.4, sin re-parsear el JTL.
+    summary_df = parser.get_summary_table_data(df)
+    fila = {str(r["label"]): r for _, r in summary_df.iterrows()}.get(label)
+    if fila is None:
+        raise HTTPException(404, f"La transaccion '{label}' no tiene metricas en este JTL")
+    metrics = {k: fila[k] for k in ("muestras", "promedio", "mediana", "min", "p90", "p95", "p99", "max", "errores", "tasa_error", "rendimiento")}
+
+    t0 = time.perf_counter()
+    counters = await generate_transaction_report(
+        db=db, execution_id=execution.id, label=label, metrics=metrics,
+        series=series, test_type=execution.test_type or "load",
+    )
+    counters["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
+    counters["label"] = label
+    # Las 8 llamadas cuentan contra el cupo igual que las del upload.
+    try:
+        await update_ai_usage_in_db(db)
+        await db.commit()
+    except Exception as usage_err:
+        logger.warning(f"N4.6: contadores de IA sin sincronizar: {usage_err}")
+    logger.info(f"N4.6: mini-informe de '{label}' para {execution.id} en {counters['elapsed_ms']} ms {counters}")
+    return counters
+
+
+@router.get("/executions/{execution_id}/transaction-report")
+async def get_transaction_report(
+    execution_id: str,
+    label: str = Query(..., description="Nombre exacto de la transaccion"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """N4.6: las secciones ya persistidas del mini-informe, con su progreso.
+
+    `progress.done` cuenta filas CON texto sobre las 8 de SECTIONS: es el
+    indicador que consumira N4.7 sondeando esta ruta mientras corre el POST.
+    """
+    execution = await _execution_or_404(db, current_user, execution_id)
+    rows = (await db.execute(
+        select(TransactionChartAnalysis)
+        .where(TransactionChartAnalysis.execution_id == execution.id,
+               TransactionChartAnalysis.label == label)
+        .order_by(TransactionChartAnalysis.sort_order)
+    )).scalars().all()
+
+    con_texto = sum(1 for r in rows if r.ai_analysis)
+    return {
+        "label": label,
+        "sections": [
+            {
+                "section": r.section, "ai_analysis": r.ai_analysis, "is_edited": r.is_edited,
+                "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+                "sort_order": r.sort_order,
+            }
+            for r in rows
+        ],
+        "progress": {
+            "done": con_texto, "total": len(SECTIONS), "persisted": len(rows),
+            "pending": [s for s in SECTIONS if s not in {r.section for r in rows if r.ai_analysis}],
+        },
+    }
 
 
 @router.get("/executions/{execution_id}/charts", response_model=ChartData)
