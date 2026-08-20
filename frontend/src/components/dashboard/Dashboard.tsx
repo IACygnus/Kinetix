@@ -83,9 +83,16 @@ interface ScrollableLegendProps {
 }
 
 function ScrollableLegend({ payload, hiddenLines, onToggle, onSetAll }: ScrollableLegendProps & { onSetAll?: (keys: Set<string>) => void }) {
-  if (!payload || payload.length === 0) return null;
+  // FIX leyenda: Recharts NO honra legendType="none" cuando la leyenda usa `content`
+  // propio. getLegendProps (util/getLegendProps.js) arma el payload con TODAS las
+  // series y solo copia legendType en `type`; el descarte vive unicamente en
+  // DefaultLegendContent.js:136 (`if (entry.type === 'none') return null`), que aqui
+  // no se ejecuta. Se filtra en este componente para que las series de maximos no
+  // aporten una segunda entrada por transaccion.
+  const items = (payload || []).filter((e: any) => e && e.type !== 'none');
+  if (items.length === 0) return null;
 
-  const allKeys = payload.map((e: any) => e.dataKey || e.value);
+  const allKeys = items.map((e: any) => e.dataKey || e.value);
   const visibleCount = allKeys.filter((k: string) => !hiddenLines.has(k)).length;
   const allVisible = visibleCount === allKeys.length;
   const noneVisible = visibleCount === 0;
@@ -114,7 +121,7 @@ function ScrollableLegend({ payload, hiddenLines, onToggle, onSetAll }: Scrollab
         className="flex flex-wrap gap-x-4 gap-y-1 justify-center overflow-y-auto"
         style={{ maxHeight: '90px' }}
       >
-        {payload.map((entry: any, idx: number) => {
+        {items.map((entry: any, idx: number) => {
           const isHidden = hiddenLines.has(entry.dataKey || entry.value);
           return (
             <button
