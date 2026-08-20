@@ -43,6 +43,16 @@ type Seccion = { section: string; ai_analysis: string | null; is_edited: boolean
 type Progreso = { done: number; total: number; persisted: number; pending: string[] };
 type Estado = { series?: any; secciones: Seccion[]; progreso?: Progreso; error?: string };
 
+// N4.10: avance de la generacion automatica. El backend lo deriva de las filas
+// ya guardadas, no de memoria de proceso (en produccion son --workers 2).
+type EstadoAuto = {
+  label: string;
+  state: 'pendiente' | 'generando' | 'completo' | 'parcial';
+  done: number; total: number; failed_sections: string[];
+};
+type Auto = { status: 'idle' | 'in_progress' | 'completed'; labels: EstadoAuto[];
+              done_labels: number; total_labels: number; requested: string[] };
+
 const hora = (iso: string | null) => (iso ? new Date(iso + 'Z').toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '');
 
 /** Una grafica de la transaccion. `codes` llega como filas (timestamp, code, value)
@@ -139,6 +149,7 @@ export default function TransactionReportSection({ executionId }: { executionId:
   const [cola, setCola] = useState<string[]>([]);
   const [segundos, setSegundos] = useState(0);
   const [avisoSondeo, setAvisoSondeo] = useState('');
+  const [auto, setAuto] = useState<Auto | null>(null);     // N4.10
   const generandoRef = useRef<string | null>(null);
 
   // 1. Transacciones marcadas como criticas (N3.4). Sin ninguna, el bloque no existe.
@@ -154,6 +165,41 @@ export default function TransactionReportSection({ executionId }: { executionId:
       })
       .catch(() => setLabels([]));
   }, [executionId]);
+
+  const cargarRef = useRef<((l: string) => Promise<void>) | null>(null);
+
+  // 1b. N4.10: la generacion automatica que lanzo el upload. Se sondea el estado
+  // hasta que termina y entonces se recarga lo que quedo guardado, sin que el
+  // usuario tenga que pulsar nada. Si no hay ninguna en curso, un solo GET y ya.
+  useEffect(() => {
+    if (!executionId) return;
+    let vivo = true;
+    let sonda = 0;
+    const mirar = async () => {
+      try {
+        const r = await api.get(`/executions/${executionId}/transaction-reports/status`);
+        if (!vivo) return;
+        const est: Auto = r.data;
+        setAuto(est);
+        // Las marcadas entran en la lista aunque aun no tengan ni una fila.
+        if (est.requested?.length) {
+          setLabels((prev) => Array.from(new Set([...prev, ...est.requested])));
+        }
+        if (est.status !== 'in_progress') {
+          window.clearInterval(sonda);
+          // Al cerrarse, se recarga lo que este abierto para ver el texto nuevo.
+          if (est.done_labels > 0 && abierta) cargarRef.current?.(abierta);
+        }
+      } catch {
+        // El estado es informativo: si falla, la pantalla sigue usable con el
+        // boton manual. No se deja un spinner eterno.
+        if (vivo) { window.clearInterval(sonda); setAuto(null); }
+      }
+    };
+    mirar();
+    sonda = window.setInterval(mirar, POLL_MS);
+    return () => { vivo = false; window.clearInterval(sonda); };
+  }, [executionId, abierta]);
 
   // 2. Carga de una transaccion: series + textos ya guardados.
   const cargar = useCallback(async (label: string) => {
@@ -172,6 +218,8 @@ export default function TransactionReportSection({ executionId }: { executionId:
       },
     }));
   }, [executionId]);
+
+  useEffect(() => { cargarRef.current = cargar; }, [cargar]);
 
   useEffect(() => {
     if (abierta && !datos[abierta]) cargar(abierta);
@@ -258,6 +306,36 @@ export default function TransactionReportSection({ executionId }: { executionId:
         </div>
 
         <div className="p-6 space-y-4">
+          {/* N4.10: la generacion que arranco sola al generar el reporte. */}
+          {auto?.status === 'in_progress' && (
+            <div className="rounded-2xl border-2 border-indigo-200 bg-indigo-50 px-5 py-4">
+              <div className="flex items-center gap-3 text-indigo-800 font-semibold text-lg">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {(() => {
+                  const act = auto.labels.find((l) => l.state === 'generando')
+                    || auto.labels.find((l) => l.state === 'pendiente');
+                  return act
+                    ? `Generando ${act.label} — ${Math.min(act.done + 1, act.total)} de ${act.total}`
+                    : 'Generando los mini-informes...';
+                })()}
+                <span className="text-indigo-600 font-normal">
+                  ({auto.done_labels} de {auto.total_labels} transacciones)
+                </span>
+              </div>
+              <div className="text-sm text-indigo-700 mt-1">
+                Arrancaron solas al generar el reporte. Puedes seguir usando la pagina; se completan aqui mismo.
+              </div>
+            </div>
+          )}
+          {auto?.labels?.some((l) => l.state === 'parcial') && (
+            <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 px-5 py-3 text-base text-amber-800">
+              <AlertTriangle className="w-5 h-5 inline mr-2 -mt-1" />
+              Quedaron secciones sin texto en{' '}
+              {auto.labels.filter((l) => l.state === 'parcial').map((l) => l.label).join(', ')}.
+              Se puede rehacer con el boton de esa transaccion.
+            </div>
+          )}
+
           {cola.length > 0 && (
             <div className="text-base text-indigo-700">En cola: {cola.join(', ')} — se generan de una en una.</div>
           )}
@@ -277,6 +355,16 @@ export default function TransactionReportSection({ executionId }: { executionId:
                     {abierto ? <ChevronDown className="w-6 h-6 text-gray-500" /> : <ChevronRight className="w-6 h-6 text-gray-500" />}
                     <span className="text-2xl font-bold text-gray-800">{label}</span>
                     <span className="text-base text-gray-500">{conTexto} de 8 secciones</span>
+                    {/* N4.10: la que esta esperando o corriendo por su cuenta. */}
+                    {(() => {
+                      const a = auto?.labels.find((l) => l.label === label);
+                      if (!a || enCurso) return null;
+                      if (a.state === 'generando')
+                        return <span className="text-base text-indigo-700 font-semibold">generandose sola...</span>;
+                      if (a.state === 'pendiente')
+                        return <span className="text-base text-gray-500">en cola</span>;
+                      return null;
+                    })()}
                   </button>
                   <button
                     onClick={() => generar(label)}

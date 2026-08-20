@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 import uuid
 import json
+import asyncio
 import logging
 import time
 
@@ -24,7 +25,10 @@ from app.core.security import get_current_active_user, require_role
 from app.services.jtl.jtl_parser import JTLParser, validate_jtl_compatibility
 from app.services.ai.gemini import get_gemini_analyzer, prepare_insights_for_prompt, FallbackAnalyzer, load_ai_config_from_db, update_ai_usage_in_db, compute_verdict, compute_per_transaction_verdicts   # N3.2
 from app.services.ai.analysis_pipeline import run_ai_and_verdict
-from app.services.ai.transaction_analysis import analyze_critical_transactions   # N3.4
+from app.services.ai.transaction_analysis import (                                # N3.4
+    analyze_critical_transactions,
+    MAX_TRANSACTIONS,          # N4.10: mismo tope para registrar y para generar
+)
 from app.db.models.transaction_analysis import TransactionAnalysis               # N3.4
 from app.services.jtl.transaction_series import (                                # N4.4
     build_transaction_series,
@@ -521,6 +525,16 @@ async def upload_jtl(
         except Exception as txn_err:
             logger.error(f"N3.4: analisis por transaccion omitido: {txn_err}")
 
+        # N4.10: los mini-informes de las marcadas arrancan aqui, en background.
+        # La respuesta NO los espera: el usuario recibe su informe general en los
+        # ~2 min de siempre y la pantalla sigue el avance con el estado pollable.
+        # Sin transacciones marcadas no se crea tarea y todo queda como hoy.
+        mini_informes: List[str] = []
+        try:
+            mini_informes = _lanzar_mini_informes(execution.id, acceptance_criteria_dict)
+        except Exception as bg_err:
+            logger.error(f"N4.10: no se pudo lanzar la generacion automatica: {bg_err}")
+
         # Update AI usage counters in DB (non-fatal)
         try:
             await update_ai_usage_in_db(db)
@@ -531,6 +545,9 @@ async def upload_jtl(
         logger.info(f"Ejecucion guardada: {execution.id} (ai_status: {ai_status['provider']}, success={ai_status['success']})")
         response = TestExecutionResponse.model_validate(execution).model_dump(mode='json')
         response['ai_status'] = ai_status
+        # N4.10: las que se estan generando solas, para que la pantalla sepa que
+        # tiene que sondear sin esperar al primer tick.
+        response['auto_transaction_reports'] = mini_informes
         return response
 
     except HTTPException:
@@ -772,6 +789,93 @@ async def get_transaction_charts(
     return series
 
 
+# N4.10: referencias FUERTES a las tareas en vuelo. asyncio solo guarda una
+# referencia debil: sin este set, una generacion de varios minutos puede ser
+# recolectada a mitad de camino y desaparecer sin dejar rastro (leccion de F3.1).
+# N4.10: las metricas que consume el mini-informe. Estaban escritas a mano en
+# el POST manual; ahora las comparte con la generacion automatica para que las
+# dos rutas alimenten a la IA con exactamente lo mismo.
+METRIC_KEYS = ("muestras", "promedio", "mediana", "min", "p90", "p95", "p99",
+               "max", "errores", "tasa_error", "rendimiento")
+
+_MINI_INFORME_TASKS: set = set()
+
+
+async def _generar_mini_informes_bg(execution_id, labels: List[str]) -> None:
+    """N4.10: los mini-informes de las transacciones marcadas, en background.
+
+    Se lanza al terminar /upload y corre FUERA de esa peticion HTTP. El motivo
+    es aritmetico: el upload ya tarda ~2 min y cada transaccion suma ~90 s, asi
+    que 3 marcadas se irian a ~7 min contra un timeout de axios de 600 s. La
+    ejecucion se guarda y responde como siempre; esto pasa despues, sobre una
+    ejecucion que ya existe.
+
+    Abre su PROPIA sesion y recarga la ejecucion por id: la sesion del
+    `Depends(get_db)` muere con la respuesta y el objeto ORM queda desligado.
+
+    No lanza nunca. Un fallo aqui no puede tocar la ejecucion ni su informe
+    general, que ya estan guardados: lo unico que pasa es que esa transaccion
+    se queda sin texto y el usuario la rehace con el boton de la pantalla.
+    """
+    from app.db.session import AsyncSessionLocal
+
+    logger.info(f"N4.10: mini-informes en background de {execution_id} para {labels}")
+    try:
+        async with AsyncSessionLocal() as session:
+            execution = (await session.execute(
+                select(TestExecution).where(TestExecution.id == execution_id)
+            )).scalar_one_or_none()
+            if execution is None:
+                logger.error(f"N4.10: la ejecucion {execution_id} ya no existe")
+                return
+
+            parser, df = _parse_execution_df(execution)     # mismo camino que el POST manual
+            summary_df = parser.get_summary_table_data()
+            por_label = {str(r["label"]): r for _, r in summary_df.iterrows()}
+
+            for label in labels:
+                t0 = time.perf_counter()
+                try:
+                    fila = por_label.get(label)
+                    if fila is None:
+                        logger.warning(f"N4.10: '{label}' no tiene metricas en este JTL; se omite")
+                        continue
+                    metrics = {k: fila[k] for k in METRIC_KEYS}
+                    counters = await generate_transaction_report(
+                        db=session, execution_id=execution.id, label=label,
+                        metrics=metrics, series=build_transaction_series(df, label),
+                        test_type=execution.test_type or "load",
+                    )
+                    logger.info(f"N4.10: '{label}' listo en {round((time.perf_counter() - t0) * 1000)} ms {counters}")
+                except Exception as e:
+                    # Tolerancia POR TRANSACCION: la siguiente se intenta igual.
+                    logger.error(f"N4.10: fallo el mini-informe de '{label}': {e}")
+
+            try:
+                await update_ai_usage_in_db(session)
+                await session.commit()
+            except Exception as e:
+                logger.warning(f"N4.10: contadores de IA sin sincronizar: {e}")
+    except Exception as e:
+        logger.exception(f"N4.10: la generacion en background de {execution_id} se cayo: {e}")
+
+
+def _lanzar_mini_informes(execution_id, acceptance_criteria: Optional[dict]) -> List[str]:
+    """N4.10: arranca la tarea si hay transacciones marcadas. Devuelve las labels.
+
+    Sin `critical_transactions` no crea tarea ninguna y el upload se comporta
+    exactamente como hoy. Se respeta el mismo tope que N3.4 para que lo que se
+    registra y lo que se genera no se descuadren.
+    """
+    labels = list((acceptance_criteria or {}).get("critical_transactions") or [])[:MAX_TRANSACTIONS]
+    if not labels:
+        return []
+    tarea = asyncio.create_task(_generar_mini_informes_bg(execution_id, labels))
+    _MINI_INFORME_TASKS.add(tarea)
+    tarea.add_done_callback(_MINI_INFORME_TASKS.discard)
+    return labels
+
+
 async def _execution_or_404(db, current_user, execution_id: str):
     """N4.6: valida el id, carga la ejecucion y comprueba el acceso."""
     try:
@@ -822,7 +926,7 @@ async def generate_transaction_report_endpoint(
     fila = {str(r["label"]): r for _, r in summary_df.iterrows()}.get(label)
     if fila is None:
         raise HTTPException(404, f"La transaccion '{label}' no tiene metricas en este JTL")
-    metrics = {k: fila[k] for k in ("muestras", "promedio", "mediana", "min", "p90", "p95", "p99", "max", "errores", "tasa_error", "rendimiento")}
+    metrics = {k: fila[k] for k in METRIC_KEYS}
 
     t0 = time.perf_counter()
     counters = await generate_transaction_report(
@@ -876,6 +980,77 @@ async def get_transaction_report(
             "done": con_texto, "total": len(SECTIONS), "persisted": len(rows),
             "pending": [s for s in SECTIONS if s not in {r.section for r in rows if r.ai_analysis}],
         },
+    }
+
+
+@router.get("/executions/{execution_id}/transaction-reports/status")
+async def get_transaction_reports_status(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """N4.10: avance de la generacion automatica de TODAS las marcadas.
+
+    El estado se DERIVA de las filas de `transaction_chart_analyses`, no de una
+    variable en memoria. En produccion el backend corre con `--workers 2`: un
+    diccionario de proceso lo veria solo uno de los dos y el sondeo daria una
+    respuesta distinta segun a quien le tocara. La base la ven los dos. Es el
+    mismo criterio con el que N4.6 cuenta el progreso de una transaccion.
+
+    Estado de cada label, por numero de filas (N4.6 escribe SIEMPRE las 8, con
+    `ai_analysis` en NULL para la que fallo):
+      - `pendiente`  0 filas          — en cola, aun no ha empezado
+      - `generando`  1..7 filas       — a medias
+      - `completo`   8 filas con texto
+      - `parcial`    8 filas, alguna sin texto — fallo alguna seccion
+
+    Limite conocido: si el worker se cae, una label se queda en `pendiente` o
+    `generando` para siempre. No se inventa un timeout — el boton manual de la
+    pantalla es la via de recuperacion, que es justo lo que pide la tolerancia.
+    """
+    execution = await _execution_or_404(db, current_user, execution_id)
+    pedidas = list((execution.acceptance_criteria_json or {}).get("critical_transactions") or [])[:MAX_TRANSACTIONS]
+
+    filas = (await db.execute(
+        select(TransactionChartAnalysis)
+        .where(TransactionChartAnalysis.execution_id == execution.id)
+        .order_by(TransactionChartAnalysis.sort_order)
+    )).scalars().all()
+
+    por_label: dict = {}
+    for f in filas:
+        por_label.setdefault(f.label, []).append(f)
+
+    detalle = []
+    for label in pedidas:
+        suyas = por_label.get(label, [])
+        con_texto = [f for f in suyas if f.ai_analysis]
+        if not suyas:
+            estado_label = "pendiente"
+        elif len(suyas) < len(SECTIONS):
+            estado_label = "generando"
+        elif len(con_texto) == len(SECTIONS):
+            estado_label = "completo"
+        else:
+            estado_label = "parcial"
+        detalle.append({
+            "label": label,
+            "state": estado_label,
+            "done": len(con_texto),
+            "total": len(SECTIONS),
+            "failed_sections": [f.section for f in suyas if not f.ai_analysis],
+        })
+
+    terminadas = [d for d in detalle if d["state"] in ("completo", "parcial")]
+    return {
+        "execution_id": str(execution.id),
+        "requested": pedidas,
+        "status": ("idle" if not pedidas
+                   else "completed" if len(terminadas) == len(pedidas)
+                   else "in_progress"),
+        "labels": detalle,
+        "done_labels": len(terminadas),
+        "total_labels": len(pedidas),
     }
 
 

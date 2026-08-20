@@ -19,6 +19,7 @@ Decisiones de este modulo:
   - Regla 14 (`sanitize_ai_text`) y leccion GRAF1 (el max con su ratio en todos
     los prompts) se respetan igual que en N3.4.
 """
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -233,7 +234,14 @@ async def generate_transaction_report(
         texto = None
         if analyzer is not None:
             try:
-                texto = analyzer._generate(prompts[section], section_name=f"txreport_{section}")
+                # N4.10: `_generate` es SINCRONO. Invocado tal cual desde una
+                # corrutina bloquea el event loop entero, y en background eso
+                # significa que el backend no atiende nada durante los ~90 s —
+                # incluido el sondeo del progreso, que es justo lo que la
+                # pantalla necesita. Misma adaptacion que hizo F3.1 con _call_ai.
+                texto = await asyncio.to_thread(
+                    analyzer._generate, prompts[section], section_name=f"txreport_{section}"
+                )
                 if texto:
                     texto = sanitize_ai_text(texto)   # regla 14
             except Exception as e:
