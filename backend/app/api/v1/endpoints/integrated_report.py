@@ -224,6 +224,13 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
         meta['client_logo'] = await get_client_logo_b64(db, execution)
         # N3.5: las transacciones criticas de ESTA ejecucion, no las de otra
         meta['transaction_analyses'] = await _load_transaction_analyses(db, execution.id)
+        # N4.9: los mini-informes de ESTA ejecucion. Se reusa el constructor de
+        # N4.8 (export_pdf.py) en vez de copiarlo: mismo origen de datos, misma
+        # criticidad y las mismas 5 graficas. Cada seccion del integrado llama a
+        # esta funcion con SU ejecucion, asi que no se mezclan entre ellas.
+        from app.api.v1.endpoints.export_pdf import _build_transaction_reports
+        _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
+        meta['transaction_reports'] = await _build_transaction_reports(db, execution, _df_tx, statistics)
 
         # Generate the full PDF HTML using report_generator's build_pdf_html
         return build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
@@ -376,6 +383,16 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     pie_labels = execution_data['pie_labels']
     pie_values = execution_data['pie_values']
     pie_colors = execution_data['pie_colors']
+    # N4.9: el bloque de mini-informes de ESTA ejecucion. El `prefix` que ya usa
+    # el resto de graficas entra tambien en los id del bloque, para que dos
+    # ejecuciones del mismo informe no colisionen ni se mezclen.
+    from app.api.v1.endpoints.export_html import (
+        transaction_reports_plotly_html, TX_CLASES_INTEGRADO,
+    )
+    tx_body, tx_js = transaction_reports_plotly_html(
+        execution_data.get('transaction_reports'), prefix=prefix,
+        md=_hf10h_markdown_to_html, clases=TX_CLASES_INTEGRADO,
+    )
 
     duration_min = int(meta['duration'] // 60)
     duration_sec = int(meta['duration'] % 60)
@@ -739,6 +756,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 {transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=False)}
 
+{tx_body}
 </div>
 
 <script>
@@ -803,6 +821,7 @@ Plotly.newPlot('{id_pie}', [{{
     margin: {{ l: 20, r: 20, t: 10, b: 20 }},
     legend: {{ orientation: 'h', yanchor: 'top', y: -0.1, xanchor: 'center', x: 0.5 }}
 }}, plotlyConfig);
+{tx_js}
 }})();
 </script>
 '''
@@ -995,8 +1014,16 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
         pie_values = [int(row['count']) for _, row in response_codes.iterrows()]
         pie_colors = [HTTP_CODE_COLORS.get(c, '#94a3b8') for c in pie_labels]
 
+        # N4.9: mini-informes de ESTA ejecucion, con traces de Plotly. Se reusa el
+        # constructor del HTML individual (export_html.py). Vacio -> el bloque no
+        # se pinta y la seccion sale como hoy.
+        from app.api.v1.endpoints.export_html import build_transaction_reports_plotly
+        _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
+        _tx_reports = await build_transaction_reports_plotly(db, execution, _df_tx, statistics)
+
         execution_data = {
             'meta': meta,
+            'transaction_reports': _tx_reports,
             'statistics': statistics,
             'redirect_stats': redirect_stats,
             'ia': ia,
@@ -1269,9 +1296,15 @@ def _strip_pdf_individual_conclusions(html: str) -> str:
     import re as _re
     original_len = len(html)
 
-    # Primary strategy: comment-boundary strip
+    # Primary strategy: comment-boundary strip.
+    # N4.9: el corte para en el marcador de N4.8 ademas de en el de FOOTER.
+    # build_pdf_html emite el mini-informe por transaccion ENTRE las conclusiones
+    # y el pie, asi que el patron original (que barria hasta FOOTER) se lo
+    # llevaba por delante y en el integrado el bloque desaparecia entero. Las
+    # conclusiones individuales se siguen quitando igual — son las consolidadas
+    # las que van al final del informe.
     html = _re.sub(
-        r'<!--\s*=+\s*CONCLUSIONES Y RECOMENDACIONES.*?(?=<!--\s*=+\s*FOOTER)',
+        r'<!--\s*=+\s*CONCLUSIONES Y RECOMENDACIONES.*?(?=<!--\s*=+\s*(?:N4\.8|FOOTER))',
         '', html, flags=_re.DOTALL | _re.IGNORECASE,
     )
     # Fallback: if comment boundary is missing, strip a whole <div class="conclusions-block">

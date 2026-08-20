@@ -26,6 +26,7 @@ from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
 from app.services.export.report_generator import transaction_analyses_html   # N3.5
+from app.services.export.report_generator import TRANSACTION_CHARTS   # N4.8/N4.9
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
@@ -44,6 +45,287 @@ def _find_jtl_files(execution) -> List[str]:
         if matches:
             found.append(str(matches[0]))
     return found
+
+
+_TX_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del mini-informe pero su '
+                 'texto no se genero (fallo o quedo pendiente).</em>')
+
+
+async def build_transaction_reports_plotly(db, execution, df, statistics):
+    """N4.9: los mini-informes de una ejecucion, con traces de Plotly.
+
+    Gemela de `_build_transaction_reports` (N4.8, export_pdf.py) y con el MISMO
+    origen de datos: las transacciones salen de `transaction_chart_analyses`, la
+    criticidad se compone con `_criticidad` (que se importa, no se copia, para
+    que los umbrales de N3.2 tengan una sola fuente) y las series se calculan
+    llamando a `build_transaction_series` (N4.3) en proceso con el DataFrame ya
+    parseado, no por HTTP.
+
+    Lo unico que cambia respecto de N4.8 es la salida: aqui son traces de Plotly
+    en vez de PNG de matplotlib, porque el HTML es interactivo.
+
+    Sin filas devuelve [] y el bloque no se pinta.
+    """
+    from app.db.models.transaction_chart_analysis import TransactionChartAnalysis
+    from app.db.models.transaction_analysis import TransactionAnalysis
+    from app.services.jtl.transaction_series import build_transaction_series
+    from app.api.v1.endpoints.export_pdf import _criticidad
+
+    filas = (await db.execute(
+        select(TransactionChartAnalysis)
+        .where(TransactionChartAnalysis.execution_id == execution.id)
+        .order_by(TransactionChartAnalysis.sort_order)
+    )).scalars().all()
+    if not filas:
+        return []
+
+    textos = {}
+    for f in filas:
+        textos.setdefault(f.label, {})[f.section] = f.ai_analysis
+    orden = {st['label']: i for i, st in enumerate(statistics)}
+    etiquetas = sorted(
+        [lb for lb, sec in textos.items() if any(sec.values())],
+        key=lambda lb: (orden.get(lb, len(orden)), lb),
+    )
+    if not etiquetas:
+        return []
+
+    marcadas = {
+        r.label: (r.marked_by or 'ai')
+        for r in (await db.execute(
+            select(TransactionAnalysis)
+            .where(TransactionAnalysis.execution_id == execution.id)
+        )).scalars().all()
+    }
+    por_label = {st['label']: st for st in statistics}
+
+    reports = []
+    for etiqueta in etiquetas:
+        try:
+            traces = _tx_traces(build_transaction_series(df, etiqueta))
+        except Exception as e:
+            logger.warning(f"N4.9: sin graficas para '{etiqueta}' en {execution.id}: {e}")
+            traces = {}
+        metrics = por_label.get(etiqueta)
+        reports.append({
+            'label': etiqueta,
+            'criticality': _criticidad(metrics, marcadas.get(etiqueta)),
+            'metrics': metrics,
+            'sections': textos[etiqueta],
+            'traces': traces,
+        })
+    logger.info(f"N4.9: {len(reports)} mini-informe(s) al HTML de {execution.id} "
+                f"({', '.join(r['label'] for r in reports)})")
+    return reports
+
+
+def _tx_traces(series):
+    """Las 5 series de UNA transaccion como traces de Plotly.
+
+    Los timestamps ya vienen en ISO desde N4.3, que es justo lo que Plotly
+    espera: aqui no hay que convertir nada (a diferencia del PDF, que necesita
+    pd.Timestamp para matplotlib).
+    """
+    def xs(pts):
+        return [pt['timestamp'] for pt in pts]
+
+    def ys(pts, key='value'):
+        return [float(pt.get(key, 0) or 0) for pt in pts]
+
+    traces = {}
+
+    rt = series.get('response_times') or []
+    if rt:
+        # GRAF1 + reporte 044: el maximo va como serie propia para que el pico no
+        # se promedie, pero con showlegend=False — es la misma transaccion, no
+        # otra, y no debe aportar una segunda entrada de leyenda.
+        traces['response_times'] = [
+            {'x': xs(rt), 'y': ys(rt), 'name': 'Promedio', 'type': 'scatter', 'mode': 'lines',
+             'line': {'color': '#4f46e5', 'width': 2},
+             'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>'},
+            {'x': xs(rt), 'y': ys(rt, 'value_max'), 'name': f'Promedio{MAX_SERIES_SUFFIX}',
+             'type': 'scatter', 'mode': 'lines', 'showlegend': False, 'opacity': 0.85,
+             'line': {'color': '#4f46e5', 'width': 1, 'dash': 'dot'},
+             'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>'},
+        ]
+
+    lat = series.get('latency') or []
+    if lat:
+        traces['latency'] = [{'x': xs(lat), 'y': ys(lat), 'name': 'Latencia', 'type': 'scatter',
+                              'mode': 'lines', 'fill': 'tozeroy', 'line': {'color': '#8b5cf6', 'width': 2},
+                              'fillcolor': 'rgba(139,92,246,0.15)',
+                              'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>'}]
+
+    err = series.get('error_rate') or []
+    if err:
+        traces['error_rate'] = [{'x': xs(err), 'y': ys(err), 'name': 'Error Rate', 'type': 'scatter',
+                                 'mode': 'lines', 'fill': 'tozeroy', 'line': {'color': '#ef4444', 'width': 2},
+                                 'fillcolor': 'rgba(239,68,68,0.15)',
+                                 'hovertemplate': '%{y:,.2f}%<extra>%{fullData.name}</extra>'}]
+
+    cod = series.get('codes') or []
+    if cod:
+        # Vienen aplanados por (bucket, codigo): se agrupan por codigo, igual que
+        # hace el grafico general de codigos.
+        por_codigo = {}
+        for pt in cod:
+            por_codigo.setdefault(str(pt.get('code', '')), []).append(pt)
+        traces['codes'] = [
+            {'x': xs(pts), 'y': ys(pts), 'name': f'HTTP {c}', 'type': 'scatter', 'mode': 'lines',
+             'line': {'color': HTTP_CODE_COLORS.get(c, '#94a3b8'), 'width': 2},
+             'hovertemplate': '%{y:,.2f}/s<extra>%{fullData.name}</extra>'}
+            for c, pts in sorted(por_codigo.items())
+        ]
+
+    tps = series.get('tps') or []
+    if tps:
+        traces['tps'] = [{'x': xs(tps), 'y': ys(tps), 'name': 'TPS', 'type': 'scatter',
+                          'mode': 'lines', 'fill': 'tozeroy', 'line': {'color': '#10b981', 'width': 2},
+                          'fillcolor': 'rgba(16,185,129,0.15)',
+                          'hovertemplate': '%{y:,.2f}/s<extra>%{fullData.name}</extra>'}]
+
+    return traces
+
+
+# N4.9: juego de clases CSS del bloque. El HTML individual usa .section /
+# .ai-box / .chart-title; el informe integrado define las mismas con prefijo
+# `plotly-`. Un solo markup, dos hojas de estilo.
+TX_CLASES_INDIVIDUAL = {
+    'section': 'section', 'section_title': 'section-title', 'table_wrap': 'table-wrap',
+    'chart_section': 'chart-section', 'chart_title': 'chart-title', 'chart_div': 'plotly-chart',
+    'ai_box': 'ai-box', 'ai_title': 'ai-title', 'ai_text': 'ai-text',
+}
+TX_CLASES_INTEGRADO = {
+    'section': 'plotly-section', 'section_title': 'plotly-section-title',
+    'table_wrap': 'plotly-table-wrap', 'chart_section': 'plotly-section',
+    'chart_title': 'plotly-chart-title', 'chart_div': 'plotly-chart-div',
+    'ai_box': 'plotly-ai-box', 'ai_title': 'plotly-ai-title', 'ai_text': 'plotly-ai-text',
+}
+
+_TX_UNIDAD = {'response_times': ',.0f', 'latency': ',.0f',
+              'error_rate': ',.2f', 'codes': ',.2f', 'tps': ',.2f'}
+
+
+def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=None):
+    """N4.9: el bloque de mini-informes para HTML -> (cuerpo, javascript).
+
+    Misma estructura que N4.8 en el PDF: encabezado con la criticidad, tabla de
+    metricas con las columnas del resumen, analisis de resumen, las 5 graficas
+    con su texto debajo, y conclusiones y recomendaciones de la transaccion.
+
+    `prefix` va en los id de los div para que el informe integrado pueda
+    concatenar varias ejecuciones sin que colisionen los graficos (mismo motivo
+    que `_build_plotly_html_isolated`). `clases` elige el juego de clases CSS y
+    `md` el conversor de markdown del documento anfitrion.
+
+    Sin `reports` devuelve ('', '') y el documento sale exactamente como hoy.
+    """
+    if not reports:
+        return '', ''
+    render = md or _markdown_to_html
+    c = clases or TX_CLASES_INDIVIDUAL
+
+    def caja(titulo, texto):
+        cuerpo_txt = render(texto) if texto else _TX_SIN_TEXTO
+        return (f'<div class="{c["ai_box"]}"><div class="{c["ai_title"]}">{titulo}</div>'
+                f'<div class="{c["ai_text"]}">{cuerpo_txt}</div></div>')
+
+    cuerpo, js = [], []
+    for i, r in enumerate(reports):
+        etiqueta = r.get('label', '')
+        m = r.get('metrics') or {}
+        sec = r.get('sections') or {}
+        tr = r.get('traces') or {}
+        crit = r.get('criticality') or ''
+
+        sub = (f'<div style="font-size:.85rem;color:#cbd5e1;margin-top:.35rem">{crit}</div>'
+               if crit else '')
+        cuerpo.append(
+            '<div style="background:#0a1628;color:white;padding:1.1rem 1.4rem;'
+            'border-radius:10px;margin:2rem 0 1rem 0">'
+            '<div style="font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;'
+            'color:#f5a623;font-weight:700">Mini-informe por transaccion</div>'
+            f'<div style="font-size:1.5rem;font-weight:700;margin-top:.3rem">{etiqueta}</div>'
+            f'{sub}</div>'
+        )
+
+        if m:
+            e = ' style="color:#ef4444;font-weight:600"' if float(m.get('errorPct', 0)) > 0 else ''
+            cuerpo.append(
+                f'<div class="{c["section"]}">'
+                f'<div class="{c["section_title"]}">Metricas de la Transaccion</div>'
+                f'<div class="{c["table_wrap"]}"><table><thead><tr>'
+                '<th>Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
+                '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
+                '<th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>'
+                '</tr></thead><tbody><tr>'
+                f'<td style="font-weight:600">{etiqueta}</td>'
+                f'<td>{int(m.get("samples", 0)):,}</td>'
+                f'<td{e}>{int(m.get("errors", 0)):,}</td>'
+                f'<td{e}>{float(m.get("errorPct", 0)):.2f}%</td>'
+                f'<td>{float(m.get("avg", 0)):.2f}</td>'
+                f'<td>{float(m.get("median", 0)):.2f}</td>'
+                f'<td>{float(m.get("p90", 0)):.2f}</td>'
+                f'<td>{float(m.get("p95", 0)):.2f}</td>'
+                f'<td>{float(m.get("p99", 0)):.2f}</td>'
+                f'<td>{float(m.get("min", 0)):.2f}</td>'
+                f'<td>{float(m.get("max", 0)):.2f}</td>'
+                f'<td>{float(m.get("tps", 0)):.2f}</td>'
+                f'<td>{float(m.get("kbRecv", 0)):.2f}</td>'
+                f'<td>{float(m.get("kbSent", 0)):.2f}</td>'
+                '</tr></tbody></table></div></div>'
+            )
+        else:
+            cuerpo.append(f'<div class="{c["ai_box"]}"><div class="{c["ai_text"]}"><em>No se '
+                          'encontraron las metricas de esta transaccion en el resumen de esta '
+                          'ejecucion.</em></div></div>')
+
+        cuerpo.append(caja('Analisis de la Transaccion', sec.get('summary')))
+
+        for clave, titulo, color in TRANSACTION_CHARTS:
+            traces = tr.get(clave)
+            if not traces:
+                # Sin serie no hay grafica, pero el texto de esa seccion no se
+                # pierde: se pinta igual con su caja (criterio de N3.5).
+                if sec.get('chart_' + clave):
+                    cuerpo.append(caja(f'Analisis - {titulo}', sec.get('chart_' + clave)))
+                continue
+            cid = f'{prefix}chart-tx{i}-{clave.replace("_", "-")}'
+            cuerpo.append(
+                f'<div class="{c["chart_section"]}">'
+                f'<div class="{c["chart_title"]}" style="border-left-color:{color}">{titulo}</div>'
+                f'<div id="{cid}" class="{c["chart_div"]}"></div></div>'
+            )
+            cuerpo.append(caja(f'Analisis - {titulo}', sec.get('chart_' + clave)))
+            js.append(
+                "Plotly.newPlot('%s', %s, window.n49Layout('%s'), "
+                "(typeof plotlyConfig !== 'undefined' ? plotlyConfig : {responsive:true}));"
+                % (cid, json.dumps(traces), _TX_UNIDAD[clave])
+            )
+
+        cuerpo.append(caja('Conclusiones de la Transaccion', sec.get('conclusions')))
+        cuerpo.append(caja('Recomendaciones de la Transaccion', sec.get('recommendations')))
+
+    # Layout comun de las graficas del bloque, definido una sola vez aunque el
+    # informe integrado concatene varias ejecuciones.
+    layout = """if (typeof window.n49Layout !== 'function') {
+  window.n49Layout = function(fmt) {
+    return {
+      height: 380, paper_bgcolor: 'white', plot_bgcolor: 'white',
+      margin: { l: 65, r: 20, t: 10, b: 60 },
+      xaxis: { gridcolor: '#e2e8f0', tickfont: { size: 11 } },
+      yaxis: { gridcolor: '#e2e8f0', tickfont: { size: 11 }, tickformat: fmt },
+      legend: { orientation: 'h', yanchor: 'top', y: -0.18, xanchor: 'center', x: 0.5 },
+      hovermode: 'x unified'
+    };
+  };
+}
+"""
+    # Los comentarios van DENTRO de lo que se devuelve, no en la plantilla: asi
+    # un documento sin mini-informes no cambia ni un byte respecto al de hoy.
+    return ('<!-- ===== N4.9: MINI-INFORME POR TRANSACCION ===== -->\n' + ''.join(cuerpo),
+            '// N4.9: graficas del mini-informe por transaccion\n' + layout + '\n'.join(js))
+
 
 
 async def _check_execution_access(db: AsyncSession, user: User, execution) -> None:
@@ -392,6 +674,12 @@ async def export_html(
             for r in _txn.scalars().all()
         ]
 
+        # N4.9: mini-informes de ESTA ejecucion. Sin ninguno, las dos piezas salen
+        # vacias, el bloque no se pinta y el HTML queda exactamente como hoy.
+        _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
+        _tx_reports = await build_transaction_reports_plotly(db, execution, _df_tx, statistics)
+        _tx_body, _tx_js = transaction_reports_plotly_html(_tx_reports)
+
         # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
         html_content = _build_plotly_html(
             meta=meta,
@@ -408,6 +696,8 @@ async def export_html(
             pie_labels=pie_labels,
             pie_values=pie_values,
             pie_colors=pie_colors,
+            tx_body=_tx_body,
+            tx_js=_tx_js,
         )
 
         # KNX-17: Capacity analysis section
@@ -498,8 +788,15 @@ def _build_plotly_html(
     pie_labels: list,
     pie_values: list,
     pie_colors: list,
+    tx_body: str = '',
+    tx_js: str = '',
 ) -> str:
-    """Build complete standalone HTML with Plotly.js interactive charts."""
+    """Build complete standalone HTML with Plotly.js interactive charts.
+
+    N4.9: `tx_body` / `tx_js` traen el bloque de mini-informes por transaccion.
+    Por defecto vienen vacios, asi que cualquier llamada que no los pase produce
+    exactamente el mismo documento que antes.
+    """
 
     duration_min = int(meta['duration'] // 60)
     duration_sec = int(meta['duration'] % 60)
@@ -942,7 +1239,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 {ai_box('conclusions', 'Conclusiones', '#6366f1')}
 {ai_box('recommendations', 'Recomendaciones', '#10b981')}
-
+{tx_body}
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
 sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
@@ -1029,7 +1326,7 @@ Plotly.newPlot('chart-pie', [{{
     margin: {{ l: 20, r: 20, t: 10, b: 20 }},
     legend: {{ orientation: 'h', yanchor: 'top', y: -0.1, xanchor: 'center', x: 0.5 }}
 }}, plotlyConfig);
-
+{tx_js}
 // Resize all charts on window resize
 window.addEventListener('resize', function() {{
     document.querySelectorAll('.plotly-chart').forEach(function(el) {{
