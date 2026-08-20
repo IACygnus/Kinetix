@@ -26,6 +26,7 @@ from app.config.chart_config import TEST_TYPE_LABELS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
+    TRANSACTION_CHARTS,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 
@@ -89,6 +90,165 @@ def _build_codes_series(dataframes):
         vs = _float_list(code_df, 'value')
         series.append((f"HTTP {code}", ts, vs))
     return series
+
+
+def _tx_points(points, value_key='value'):
+    """Puntos de `build_transaction_series` -> (timestamps, valores).
+
+    El servicio de N4.3 devuelve el timestamp en ISO porque su consumidor
+    original era JSON; `make_time_labels` resta timestamps, asi que hay que
+    volverlos pd.Timestamp aqui.
+    """
+    ts = [pd.Timestamp(pt['timestamp']) for pt in points]
+    vs = [float(pt.get(value_key, 0) or 0) for pt in points]
+    return ts, vs
+
+
+def _tx_charts(series):
+    """N4.8: las 5 graficas de UNA transaccion, con las mismas funciones que el
+    resto del PDF. Devuelve {clave_de_TRANSACTION_CHARTS: base64}.
+
+    Una serie vacia (el JTL no traia 'Latency', por ejemplo) no genera grafica:
+    la clave se queda fuera y el bloque salta esa unidad en vez de imprimir un
+    recuadro 'Sin datos' junto a un texto que habla de numeros.
+    """
+    charts = {}
+
+    rt = series.get('response_times') or []
+    if rt:
+        ts, avg = _tx_points(rt)
+        _, mx = _tx_points(rt, 'value_max')
+        # GRAF1: la serie de maximos va aparte para que el pico no se promedie.
+        charts['response_times'] = chart_multiline(
+            [('Promedio', ts, avg), (f'Promedio{MAX_SERIES_SUFFIX}', ts, mx)],
+            'Response Time (ms)', dual_max=True,
+        )
+
+    lat = series.get('latency') or []
+    if lat:
+        ts, vs = _tx_points(lat)
+        charts['latency'] = chart_area(ts, vs, '#8b5cf6', 'Latencia (ms)')
+
+    err = series.get('error_rate') or []
+    if err:
+        ts, vs = _tx_points(err)
+        charts['error_rate'] = chart_area(ts, vs, '#ef4444', 'Error Rate (%)')
+
+    cod = series.get('codes') or []
+    if cod:
+        # Vienen aplanados (un punto por bucket y codigo): se agrupan por codigo
+        # igual que hace `_build_codes_series` con el grafico general.
+        por_codigo = {}
+        for pt in cod:
+            por_codigo.setdefault(str(pt.get('code', '')), []).append(pt)
+        charts['codes'] = chart_multiline(
+            [(f'HTTP {c}',) + _tx_points(pts) for c, pts in sorted(por_codigo.items())],
+            'Codes/s', use_code_colors=True,
+        )
+
+    tps = series.get('tps') or []
+    if tps:
+        ts, vs = _tx_points(tps)
+        charts['tps'] = chart_area(ts, vs, '#10b981', 'TPS')
+
+    return charts
+
+
+def _criticidad(metrics, marcada):
+    """Linea de criticidad del encabezado, determinista y sin IA.
+
+    Mismos disparadores que el premarcado de N3.2 (pico relativo >= 10x el
+    promedio, pico absoluto >= 10 s), mas la marca explicita de N3.4 cuando la
+    transaccion si tiene fila en `transaction_analyses`. Hay ejecuciones con
+    mini-informe y sin esa fila — el registro de criticidad llego despues — y el
+    encabezado no puede quedarse mudo por eso.
+    """
+    partes = []
+    if marcada is not None:
+        quien = 'por el usuario' if marcada == 'user' else 'por el analisis automatico'
+        partes.append(f'Marcada como critica {quien}')
+    if metrics:
+        avg, mx = float(metrics.get('avg', 0)), float(metrics.get('max', 0))
+        if avg > 0 and mx >= 10 * avg:
+            partes.append(f'pico de {mx:,.0f} ms, {mx / avg:.0f}x el promedio')
+        if mx >= 10000:
+            partes.append(f'pico absoluto de {mx:,.0f} ms (>=10 s, posible timeout)')
+    return ' &middot; '.join(partes)
+
+
+async def _build_transaction_reports(db, execution, df, statistics):
+    """N4.8: los bloques de mini-informe que van al PDF, uno por transaccion.
+
+    Fuente de las transacciones: las que TIENEN texto en
+    `transaction_chart_analyses`. No se usa `transaction_analyses` como origen
+    porque la ejecucion de Coomeva tiene mini-informe de 'token' y ninguna fila
+    ahi (el registro de criticidad es posterior); usarla dejaria el bloque sin
+    pintar justo en el caso que hay que validar.
+
+    Las series se calculan llamando al servicio de N4.3 en proceso, no por HTTP:
+    el DataFrame ya esta parseado aqui y una llamada HTTP volveria a leer y
+    parsear el JTL entero por cada transaccion.
+
+    Cualquier fallo de una transaccion la deja fuera y sigue con las demas: un
+    mini-informe no puede tumbar la generacion del PDF completo.
+    """
+    from app.db.models.transaction_chart_analysis import TransactionChartAnalysis
+    from app.db.models.transaction_analysis import TransactionAnalysis
+    from app.services.jtl.transaction_series import build_transaction_series
+
+    filas = (await db.execute(
+        select(TransactionChartAnalysis)
+        .where(TransactionChartAnalysis.execution_id == execution.id)
+        .order_by(TransactionChartAnalysis.sort_order)
+    )).scalars().all()
+    if not filas:
+        return []
+
+    # Orden de aparicion estable: el de la tabla resumen, que es el que el lector
+    # acaba de ver. Las que no esten en el resumen van al final.
+    orden = {s['label']: i for i, s in enumerate(statistics)}
+    textos = {}
+    for f in filas:
+        textos.setdefault(f.label, {})[f.section] = f.ai_analysis
+    etiquetas = sorted(
+        [lb for lb, sec in textos.items() if any(sec.values())],
+        key=lambda lb: (orden.get(lb, len(orden)), lb),
+    )
+    if not etiquetas:
+        return []
+
+    marcadas = {
+        r.label: (r.marked_by or 'ai')
+        for r in (await db.execute(
+            select(TransactionAnalysis)
+            .where(TransactionAnalysis.execution_id == execution.id)
+        )).scalars().all()
+    }
+    por_label = {s['label']: s for s in statistics}
+
+    reports = []
+    for etiqueta in etiquetas:
+        try:
+            series = build_transaction_series(df, etiqueta)
+            charts = _tx_charts(series)
+        except Exception as e:
+            logger.warning(f"N4.8: sin graficas para '{etiqueta}' en {execution.id}: {e}")
+            charts = {}
+        metrics = por_label.get(etiqueta)
+        reports.append({
+            'label': etiqueta,
+            'criticality': _criticidad(metrics, marcadas.get(etiqueta)),
+            'metrics': metrics,
+            'sections': textos[etiqueta],
+            'charts': charts,
+        })
+
+    faltan = [c for r in reports for c, _, _ in TRANSACTION_CHARTS if c not in r['charts']]
+    logger.info(
+        f"N4.8: {len(reports)} mini-informe(s) al PDF de {execution.id} "
+        f"({', '.join(r['label'] for r in reports)}); graficas sin datos: {len(faltan)}"
+    )
+    return reports
 
 
 async def _check_execution_access(db: AsyncSession, user: User, execution) -> None:
@@ -291,6 +451,12 @@ async def export_pdf(
             {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
             for r in _txn.scalars().all()
         ]
+
+        # N4.8: mini-informe por transaccion, despues de las conclusiones generales.
+        # Sin mini-informes la lista queda vacia, el bloque no se pinta y el PDF
+        # sale identico al de siempre (mismo criterio que N1.6 y N3.5).
+        _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
+        meta['transaction_reports'] = await _build_transaction_reports(db, execution, _df_tx, statistics)
 
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 

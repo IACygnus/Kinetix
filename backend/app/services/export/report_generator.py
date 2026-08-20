@@ -243,6 +243,129 @@ def transaction_analyses_html(rows: Optional[List[Dict[str, Any]]], for_pdf: boo
     return titulo + ''.join(cajas)
 
 
+# N4.8: titulos de las 5 graficas del mini-informe y el color de su barra, en el
+# orden aprobado. Las claves son las de CHART_TYPES (N4.3) y las de las secciones
+# 'chart_*' de transaction_chart_analyses (N4.5): una sola lista evita que el
+# orden de las graficas y el de los textos se desalineen.
+TRANSACTION_CHARTS = (
+    ('response_times', 'Tiempos de Respuesta', '#8884d8'),
+    ('latency', 'Latencia', '#9c27b0'),
+    ('error_rate', 'Tasa de Error', '#f44336'),
+    ('codes', 'Codigos de Respuesta', '#4CAF50'),
+    ('tps', 'Transacciones por Segundo', '#2196F3'),
+)
+
+_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del mini-informe pero su '
+              'texto no se genero (fallo o quedo pendiente).</em>')
+
+
+def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
+    """N4.8: el mini-informe por transaccion dentro del PDF individual.
+
+    Un bloque por transaccion con mini-informe generado, cada uno abriendo pagina
+    nueva: encabezado (nombre + criticidad), su tabla de metricas con las mismas
+    columnas del resumen general, su analisis de resumen, sus 5 graficas con el
+    texto al lado (layout denso de N2.1) y sus conclusiones y recomendaciones.
+
+    Sin `reports` devuelve cadena vacia: el PDF sale EXACTAMENTE como antes,
+    mismo conteo de paginas y sin titulo huerfano. Mismo criterio que el logo de
+    N1.6 y que el bloque de N3.5.
+
+    Una grafica cuyo texto fallo o quedo pendiente se pinta igual, con una nota
+    (criterio de N3.5): omitirla en silencio le haria creer a quien lee el
+    reporte que esa grafica no se analizo porque no hacia falta.
+
+    Reutiliza las clases que ya define el CSS de `build_pdf_html`
+    (.section / .chart-unit / .chart-cell / .chart-ai-cell / .ai-box): solo table
+    layouts y unidades mm/pt, sin flex ni grid (reglas 11 y 17).
+    """
+    if not reports:
+        return ''
+
+    def _caja(titulo, texto, permitir_corte=False):
+        """Caja de analisis con el mismo aspecto que `ai_box` del cuerpo general."""
+        cuerpo = markdown_to_html(texto) if texto else _SIN_TEXTO
+        corte = 'break-inside:auto;' if permitir_corte else ''
+        return (f'<div class="ai-box" style="border-left-color:#4f46e5;{corte}">'
+                f'<div class="ai-title">{titulo}</div>'
+                f'<div class="ai-text">{cuerpo}</div></div>')
+
+    def _unidad(titulo, color, img_b64, texto):
+        """N2.1: grafica y su texto lado a lado, como unidad indivisible."""
+        if not img_b64:
+            return ''
+        head = f'<div class="chart-title" style="border-left-color:{color}">{titulo}</div>'
+        img = f'<img class="chart-img" src="data:image/png;base64,{img_b64}" />'
+        lado = _caja(f'Analisis - {titulo}', texto)
+        return (f'<table class="chart-unit"><tr>'
+                f'<td class="chart-cell">{head}{img}</td>'
+                f'<td class="chart-ai-cell">{lado}</td>'
+                f'</tr></table>')
+
+    bloques = []
+    for r in reports:
+        etiqueta = r.get('label', '')
+        criticidad = r.get('criticality') or ''
+        sec = r.get('sections') or {}
+        graf = r.get('charts') or {}
+        m = r.get('metrics') or {}
+
+        # --- encabezado de la transaccion, abriendo pagina
+        sub = (f'<div style="font-size:9pt;color:#cbd5e1;margin-top:1.5mm">{criticidad}</div>'
+               if criticidad else '')
+        cabecera = (
+            '<div style="break-before:page;page-break-before:always;'
+            'background:#0a1628;color:white;padding:5mm 6mm;border-radius:2mm;margin-bottom:4mm">'
+            '<div style="font-size:8pt;letter-spacing:0.4pt;text-transform:uppercase;'
+            'color:#f5a623;font-weight:700">Mini-informe por transaccion</div>'
+            f'<div style="font-size:19pt;font-weight:700;margin-top:1.5mm">{etiqueta}</div>'
+            f'{sub}</div>'
+        )
+
+        # --- tabla de metricas: mismas columnas que el resumen general
+        if m:
+            err = ' style="color:#ef4444;font-weight:600"' if float(m.get('errorPct', 0)) > 0 else ''
+            fila = (
+                f'<tr><td class="label-cell">{etiqueta}</td>'
+                f'<td class="num">{int(m.get("samples", 0)):,}</td>'
+                f'<td class="num"{err}>{int(m.get("errors", 0)):,}</td>'
+                f'<td class="num"{err}>{float(m.get("errorPct", 0)):.2f}%</td>'
+                f'<td class="num">{float(m.get("avg", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("median", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("p90", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("p95", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("p99", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("min", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("max", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("tps", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("kbRecv", 0)):.2f}</td>'
+                f'<td class="num">{float(m.get("kbSent", 0)):.2f}</td></tr>'
+            )
+            tabla = (
+                '<div class="section"><div class="section-header">Metricas de la Transaccion</div>'
+                '<table><thead><tr>'
+                '<th style="text-align:left">Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
+                '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
+                '<th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>'
+                f'</tr></thead><tbody>{fila}</tbody></table></div>'
+            )
+        else:
+            # La transaccion tiene textos pero ya no figura en el resumen de esta
+            # ejecucion. Se dice, no se calla.
+            tabla = ('<div class="ai-box" style="border-left-color:#f5a623"><div class="ai-text">'
+                     '<em>No se encontraron las metricas de esta transaccion en el resumen de '
+                     'esta ejecucion.</em></div></div>')
+
+        partes = [cabecera, tabla, _caja('Analisis de la Transaccion', sec.get('summary'))]
+        for clave, titulo, color in TRANSACTION_CHARTS:
+            partes.append(_unidad(titulo, color, graf.get(clave), sec.get('chart_' + clave)))
+        partes.append(_caja('Conclusiones de la Transaccion', sec.get('conclusions'), permitir_corte=True))
+        partes.append(_caja('Recomendaciones de la Transaccion', sec.get('recommendations'), permitir_corte=True))
+        bloques.append(''.join(partes))
+
+    return ''.join(bloques)
+
+
 def cover_meta_parts(meta: Dict[str, Any]) -> Dict[str, str]:
     """N2.3: piezas de la fila de metadatos de la portada (PDF y HTML).
 
@@ -929,6 +1052,9 @@ tbody tr:nth-child(even) {{
 <!-- ===== CONCLUSIONES Y RECOMENDACIONES ===== -->
 {ai_box('conclusions', 'Conclusiones', '#4f46e5', allow_break=True)}
 {ai_box('recommendations', 'Recomendaciones', '#4f46e5', allow_break=True)}
+
+<!-- ===== N4.8: MINI-INFORME POR TRANSACCION (despues de las conclusiones generales) ===== -->
+{transaction_reports_html(meta.get('transaction_reports'))}
 
 <!-- ===== FOOTER ===== -->
 <div class="report-footer">
