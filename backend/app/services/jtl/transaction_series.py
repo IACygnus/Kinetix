@@ -90,10 +90,12 @@ def build_transaction_series(
 
     # 1. Tiempos de respuesta — agregacion dual (GRAF1)
     rt = sub.groupby("_bucket")["elapsed"].agg(["mean", "max"]).reset_index()
+    # N4.4b: zip sobre las columnas en vez de iterrows(). iterrows() construye una
+    # Series de pandas por fila; con 1.666 buckets x 5 series eso es tiempo que se
+    # nota al cambiar de transaccion en la pantalla de N4.7. La salida es identica.
     response_times = [
-        {"timestamp": _iso(r["_bucket"]), "value": float(r["mean"]),
-         "value_max": float(r["max"])}
-        for _, r in rt.iterrows()
+        {"timestamp": _iso(b), "value": float(v), "value_max": float(mx)}
+        for b, v, mx in zip(rt["_bucket"], rt["mean"], rt["max"])
     ]
 
     # 2. Latencia
@@ -101,8 +103,8 @@ def build_transaction_series(
     if "Latency" in sub.columns:
         lat = sub.groupby("_bucket")["Latency"].mean().reset_index()
         latency = [
-            {"timestamp": _iso(r["_bucket"]), "value": float(r["Latency"])}
-            for _, r in lat.iterrows()
+            {"timestamp": _iso(b), "value": float(v)}
+            for b, v in zip(lat["_bucket"], lat["Latency"])
         ]
     else:
         warnings.append("Sin columna 'Latency': la grafica de latencia queda vacia")
@@ -113,8 +115,8 @@ def build_transaction_series(
         sub["_ok"] = _as_bool(sub["success"])
         er = sub.groupby("_bucket")["_ok"].mean().reset_index()
         error_rate = [
-            {"timestamp": _iso(r["_bucket"]), "value": float(100.0 * (1.0 - r["_ok"]))}
-            for _, r in er.iterrows()
+            {"timestamp": _iso(b), "value": float(100.0 * (1.0 - v))}
+            for b, v in zip(er["_bucket"], er["_ok"])
         ]
     else:
         warnings.append("Sin columna 'success': la grafica de tasa de error queda vacia")
@@ -124,9 +126,8 @@ def build_transaction_series(
     if "responseCode" in sub.columns:
         cd = sub.groupby(["_bucket", "responseCode"]).size().reset_index(name="n")
         codes = [
-            {"timestamp": _iso(r["_bucket"]), "value": float(r["n"]) / interval,
-             "code": str(r["responseCode"])}
-            for _, r in cd.iterrows()
+            {"timestamp": _iso(b), "value": float(n) / interval, "code": str(c)}
+            for b, c, n in zip(cd["_bucket"], cd["responseCode"], cd["n"])
         ]
     else:
         warnings.append("Sin columna 'responseCode': la grafica de codigos queda vacia")
@@ -134,8 +135,8 @@ def build_transaction_series(
     # 5. TPS de la transaccion
     tps_df = sub.groupby("_bucket").size().reset_index(name="n")
     tps = [
-        {"timestamp": _iso(r["_bucket"]), "value": float(r["n"]) / interval}
-        for _, r in tps_df.iterrows()
+        {"timestamp": _iso(b), "value": float(n) / interval}
+        for b, n in zip(tps_df["_bucket"], tps_df["n"])
     ]
 
     logger.info(

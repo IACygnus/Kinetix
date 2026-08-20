@@ -9,6 +9,7 @@ import { testAPI } from '../../services/api';
 // LoadingSpinner replaced with inline loading indicator for better UX
 // Monitoring, Evidence, Capacity, and Comparison moved to standalone pages (R3-A)
 import ChartYAxisZoom from './ChartYAxisZoom';
+import TransactionReportSection from './TransactionReportSection';   // N4.7
 import {
   CHART_LAYOUT,
   CHART_LABELS,
@@ -1237,6 +1238,11 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           </div>
         </div>
         )}
+
+        {/* N4.7: mini-informe por transaccion critica — despues de las secciones
+            generales. Se monta solo aqui; el componente decide si hay algo que
+            mostrar y no altera nada de lo anterior. */}
+        {!embedded && <TransactionReportSection executionId={executionId} />}
 
         {/* PDF PROGRESS */}
         {isExportingPDF && (

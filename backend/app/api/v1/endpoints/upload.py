@@ -666,7 +666,16 @@ async def get_transaction_analyses(
         .order_by(TransactionAnalysis.sort_order)
     )
     rows = result.scalars().all()
+    # N4.7: una transaccion con mini-informe ya generado tiene que verse en la
+    # pantalla aunque no figure como critica — el premarcado es del upload y hay
+    # ejecuciones anteriores a N3.4 que no lo tienen.
+    con_informe = (await db.execute(
+        select(TransactionChartAnalysis.label)
+        .where(TransactionChartAnalysis.execution_id == eid)
+        .distinct()
+    )).scalars().all()
     return {
+        "report_labels": sorted(set(con_informe)),
         "transaction_analyses": [
             {
                 "id": str(r.id),
@@ -868,6 +877,57 @@ async def get_transaction_report(
             "pending": [s for s in SECTIONS if s not in {r.section for r in rows if r.ai_analysis}],
         },
     }
+
+
+class TransactionSectionUpdate(BaseModel):
+    ai_analysis: str
+
+
+@router.put("/executions/{execution_id}/transaction-report/{section}")
+async def update_transaction_report_section(
+    execution_id: str,
+    section: str,
+    payload: TransactionSectionUpdate,
+    label: str = Query(..., description="Nombre exacto de la transaccion"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "analyst"])),
+):
+    """N4.7: editar a mano UNA seccion del mini-informe.
+
+    Marca `is_edited` para que se distinga del texto de la IA, igual que hace el
+    consolidado desde F5. Si la seccion no tiene fila todavia se crea: editar
+    nunca debe fallar por un texto que la IA no llego a generar.
+    """
+    if section not in SECTIONS:
+        raise HTTPException(400, f"Seccion desconocida: {section}. Validas: {', '.join(SECTIONS)}")
+
+    execution = await _execution_or_404(db, current_user, execution_id)
+    row = (await db.execute(
+        select(TransactionChartAnalysis).where(
+            TransactionChartAnalysis.execution_id == execution.id,
+            TransactionChartAnalysis.label == label,
+            TransactionChartAnalysis.section == section,
+        )
+    )).scalar_one_or_none()
+
+    ahora = datetime.utcnow()
+    if row is None:
+        # `generated_at` lo estampa el default de la columna aunque se pase None:
+        # el texto escrito a mano se distingue por `is_edited`, que es lo que mira
+        # la pantalla para no atribuirselo a la IA.
+        row = TransactionChartAnalysis(
+            execution_id=execution.id, label=label, section=section,
+            sort_order=SECTIONS.index(section),
+        )
+        db.add(row)
+    row.ai_analysis = payload.ai_analysis
+    row.is_edited = True
+    row.ai_analysis_updated_at = ahora
+    await db.commit()
+
+    logger.info(f"N4.7: seccion '{section}' de '{label}' editada a mano ({len(payload.ai_analysis)} chars)")
+    return {"section": section, "label": label, "is_edited": True,
+            "ai_analysis_updated_at": ahora.isoformat()}
 
 
 @router.get("/executions/{execution_id}/charts", response_model=ChartData)
