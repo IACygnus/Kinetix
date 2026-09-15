@@ -9,6 +9,8 @@ FallbackAnalyzer para cuando la IA no esta disponible.
 """
 import os
 import time
+import json                                      # E1.2: telemetria por llamada
+from datetime import datetime, timezone          # E1.2: marcas de tiempo ISO 8601
 import google.generativeai as genai
 from typing import Dict, List, Optional, Tuple
 import logging
@@ -173,6 +175,35 @@ def openai_chat_completion(client, model_name: str, messages: list, limit: int, 
         return client.chat.completions.create(
             model=model_name, messages=messages,
             **_openai_token_param(model_name, limit), **kwargs)
+
+
+# ===================== E1.2: telemetria por llamada de IA =====================
+# Una linea `AI_TELEMETRY {json}` por INTENTO de `_generate`. Es solo un log:
+# no toca parametros enviados, ni el valor devuelto, ni el control de flujo.
+# Todo va dentro de try/except — un fallo de telemetria jamas interrumpe la
+# generacion. `usage` solo existe en OpenAI; con Gemini los tokens quedan null.
+def _emit_ai_telemetry(section, provider, model, t0, attempt, limit, prompt_chars,
+                       outcome, response=None, finish_reason=None) -> None:
+    """E1.1 dejo abierta H1 por no capturar `usage`; esto es lo que la cierra."""
+    try:
+        fin = datetime.now(timezone.utc)
+        u = getattr(response, "usage", None)
+        ctd = getattr(u, "completion_tokens_details", None)
+        ptd = getattr(u, "prompt_tokens_details", None)
+        logger.info("AI_TELEMETRY %s", json.dumps({
+            "section": section, "provider": provider, "model": model,
+            "ts_start": t0.isoformat(), "ts_end": fin.isoformat(),
+            "latency_ms": round((fin - t0).total_seconds() * 1000),
+            "attempt": attempt, "max_completion_tokens": limit,
+            "prompt_chars": prompt_chars,
+            "prompt_tokens": getattr(u, "prompt_tokens", None),
+            "completion_tokens": getattr(u, "completion_tokens", None),
+            "reasoning_tokens": getattr(ctd, "reasoning_tokens", None),
+            "cached_tokens": getattr(ptd, "cached_tokens", None),
+            "finish_reason": finish_reason, "outcome": outcome,
+        }, default=str, ensure_ascii=False))
+    except Exception:
+        pass   # la telemetria nunca puede tumbar una generacion
 
 
 # Performance tier thresholds (ms)
@@ -841,16 +872,28 @@ class GeminiAnalyzer:
         """Call AI API with retry logic. Returns None on failure to trigger fallback.
         Circuit breaker: if AI was rate-limited once, skip all subsequent calls immediately."""
 
+        # E1.2: `_t0` se reinicia en cada intento; `_tel` solo evita repetir 8 argumentos.
+        _t0 = datetime.now(timezone.utc)
+
+        def _tel(outcome, attempt, response=None, finish_reason=None):
+            _emit_ai_telemetry(
+                section_name, self.provider, self.model_name, _t0, attempt,
+                _openai_max_tokens_for(self.model_name) if self.provider == "openai" else None,
+                len(prompt), outcome, response, finish_reason)
+
         # Circuit breaker — skip immediately if API already proven unavailable
         if GeminiAnalyzer._circuit_open:
             logger.info(f"AI CIRCUIT OPEN: skipping {section_name} (using fallback)")
             GeminiAnalyzer._total_errors += 1
+            _tel("circuit_open", 0)
             return None
 
         logger.info(f"AI CALL: provider={self.provider}, model={self.model_name}, section={section_name}, prompt_len={len(prompt)}")
         GeminiAnalyzer._total_requests += 1
 
         for attempt in range(max_retries):
+            _t0 = datetime.now(timezone.utc)   # E1.2: latencia POR intento
+            response = None
             try:
                 if self.provider == "gemini":
                     response = self.model.generate_content(prompt)
@@ -876,13 +919,20 @@ class GeminiAnalyzer:
                         logger.error(f"AI EMPTY for {section_name}: {motivo}")
                         GeminiAnalyzer._last_error = motivo
                         GeminiAnalyzer._total_errors += 1
+                        # E1.2: el caso B6.3 (tope agotado por razonamiento) queda
+                        # visible con sus tokens, que es justo lo que faltaba ver.
+                        _tel("empty", attempt + 1, response, fin)
                         return None
                 else:
                     GeminiAnalyzer._total_errors += 1
+                    _tel("error", attempt + 1)
                     return None
 
                 result = sanitize_ai_text(result)
                 logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
+                _tel("ok", attempt + 1, response,
+                     getattr(response.choices[0], "finish_reason", None)
+                     if getattr(response, "choices", None) else None)
                 return result
 
             except Exception as e:
@@ -890,18 +940,21 @@ class GeminiAnalyzer:
                 if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower() or "resource" in error_str.lower():
                     wait_time = min((attempt + 1) * 5, 15)
                     logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
+                    _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
                     time.sleep(wait_time)
                     continue
                 else:
                     logger.error(f"AI ERROR for {section_name}: {error_str}")
                     GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
                     GeminiAnalyzer._total_errors += 1
+                    _tel("error", attempt + 1)
                     return None
 
         # All retries exhausted — open circuit breaker for remaining calls
         logger.warning(f"AI UNAVAILABLE: {section_name} - max retries exceeded. CIRCUIT BREAKER OPEN — all remaining calls will use fallback.")
         GeminiAnalyzer._circuit_open = True
         GeminiAnalyzer._total_errors += 1
+        _tel("fallback", max_retries)
         return None
 
     def analyze_image(
