@@ -16,6 +16,25 @@
   HTML/PDF integrados, monitoreo Grafana/InfluxDB y configuración dinámica de
   IA.
 - **Repositorio:** Git local, branch principal `main`. Último tag publicado: **v3.1.0**.
+- **Ruta local de trabajo:** `C:\proyectos\Kinetix` (el proyecto se migró de PC;
+  cualquier ruta anterior que aparezca en documentos viejos está obsoleta).
+
+### 1.1 REMOTOS GIT
+
+| Remoto | URL | Rol |
+|---|---|---|
+| `github` | `https://github.com/IACygnus/Kinetix.git` | **Repositorio real y ÚNICO destino de push.** |
+| `azure` | `https://dev.azure.com/PlataformasSQA/COE/_git/COE` | **NO recibe commits.** |
+
+- **`github` es el único remoto al que se pushea.** Todo commit va ahí.
+- **`azure` NO recibe commits.** Su push está bloqueado **a propósito** (el
+  remoto de push apunta al placeholder `NO-PUSH-USAR-COMANDO-EXPLICITO` para
+  que un `git push azure` falle en vez de subir algo por error). Más adelante
+  recibirá **solo una parte del producto**, no el repositorio completo.
+- **No existe un remoto llamado `origin`.** Los comandos deben nombrar
+  `github` explícitamente (`git push github <rama>`).
+- **Todo el trabajo vive en la rama `backup-trabajo-local`.** La rama `main`
+  sigue en su commit `Initial commit` y no contiene el producto.
 
 ---
 
@@ -378,6 +397,14 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 ---
 
 ## 6. SISTEMA DE IA
+
+### Modelo activo
+
+- **Provider `openai`, modelo `gpt-5.5`.** Es el modelo en uso y es una
+  **decisión de Fredy**: no se propone ni se sugiere volver a modelos
+  anteriores (gpt-4o, gpt-4.1, gemini-*) en ningún diagnóstico ni refactor.
+  Si un fallo parece del modelo, se investiga la causa real — no se degrada
+  el modelo como atajo.
 
 ### `backend/app/services/ai/gemini.py` (1525 líneas)
 
@@ -773,6 +800,15 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
 18. **`_strip_pdf_individual_conclusions` ANTES de
     `_strip_individual_report_extras`.** El orden inverso elimina las
     conclusiones consolidadas en vez de las individuales.
+19. **Los reportes de Claude Code van SIEMPRE a `docs/reporte_claude_code/`**,
+    numerados **desde `01` de forma consecutiva** (sin huecos), con **hash de
+    commit y fecha en la primera línea** del archivo. **No se crean otras
+    carpetas de reportes.** (`docs/reporte_bug/` y `docs/reports/` son
+    históricas: se conservan, no se amplían.)
+20. **`docs/ESPECIFICACION-informe.md` es la referencia única de cómo debe
+    quedar el informe.** Todo cambio del informe se valida contra ese
+    documento; si el cambio pedido contradice la especificación, se avisa
+    antes de implementarlo.
 
 ---
 
