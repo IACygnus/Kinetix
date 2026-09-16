@@ -206,6 +206,50 @@ _TX_UNIDAD = {'response_times': ',.0f', 'latency': ',.0f',
               'error_rate': ',.2f', 'codes': ',.2f', 'tps': ',.2f'}
 
 
+# ETAPA 2 (D21): las graficas del cuerpo del informe, en orden, con las dos
+# formas de nombrar cada una: la del alcance general (sufijo del id del div y
+# clave del texto en `ia`) y la del alcance por transaccion (clave de las traces
+# y seccion de transaction_chart_analyses). Es la gemela de BODY_CHARTS en
+# report_generator.py: misma idea, otro motor de graficas.
+#   (sufijo_id, titulo, color, texto_general, titulo_ia, clave_tx, seccion_tx)
+HTML_BODY_CHARTS = (
+    ('rt-label', 'Response Times por Transaccion', '#8b5cf6',
+     'responseTimes', 'Analisis - Response Times por Transaccion',
+     'response_times', 'chart_response_times'),
+    ('throughput', 'Throughput Over Time', '#10b981',
+     'throughput', 'Analisis - Throughput', None, None),
+    ('latency', 'Latency Over Time', '#8b5cf6',
+     'latency', 'Analisis - Latency', 'latency', 'chart_latency'),
+    ('error-rate', 'Error Rate Over Time', '#ef4444',
+     'errorRate', 'Analisis - Error Rate', 'error_rate', 'chart_error_rate'),
+    ('codes', 'Response Codes per Second', '#6366f1',
+     'codesPerSecond', 'Analisis - Response Codes', 'codes', 'chart_codes'),
+    ('tps', 'Transactions per Second', '#10b981',
+     'tps', 'Analisis - Transactions per Second', 'tps', 'chart_tps'),
+)
+
+# Solo en el alcance general: los hilos son de toda la prueba (D18).
+HTML_GENERAL_ONLY = (
+    ('threads', 'Active Threads Over Time', '#6366f1', 'activeThreads', 'Analisis - Active Threads'),
+)
+
+
+def _bloque_grafica_html(chart_id: str, titulo: str, color: str, ctrl_html: str,
+                         ai_html: str, clases=None) -> str:
+    """Una grafica con su titulo, sus controles y su caja de analisis debajo.
+
+    La usan los dos alcances —el informe general y el de cada transaccion— para
+    que no puedan divergir (v1.2 §1, D21).
+    """
+    c = clases or TX_CLASES_INDIVIDUAL
+    return (f'<div class="{c["chart_section"]}">\n'
+            f'<div class="{c["chart_title"]}" style="border-left-color:{color}">{titulo}</div>\n'
+            f'<div id="{chart_id}" class="{c["chart_div"]}"></div>\n'
+            f'{ctrl_html}\n'
+            f'</div>\n'
+            f'{ai_html}')
+
+
 def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=None):
     """N4.9: el bloque de mini-informes para HTML -> (cuerpo, javascript).
 
@@ -1038,6 +1082,25 @@ def _build_plotly_html(
         f'{"" if _client_logo else ";margin-top:.5rem"}">{meta["client"] or "N/A"}</div>'
     )
 
+    # ETAPA 2 (D21): el cuerpo de graficas se arma con la MISMA pieza que usa el
+    # bloque por transaccion, en vez de repetir siete veces el mismo HTML dentro
+    # de la plantilla. Los dos alcances ya no pueden divergir por descuido.
+    _zoom = {
+        'chart-rt-label': lambda: _ctrl_y_axis('chart-rt-label', rt_label_p99, rt_label_max),
+        'chart-latency': lambda: _ctrl_y_axis('chart-latency', latency_p99, latency_max),
+    }
+    _bloques = []
+    for _sufijo, _titulo, _color, _ia_key, _ia_title, _, _ in HTML_BODY_CHARTS:
+        _cid = f'chart-{_sufijo}'
+        _ctrl = _zoom[_cid]() if _cid in _zoom else _ctrl_basic(_cid)
+        _bloques.append(_bloque_grafica_html(_cid, _titulo, _color, _ctrl,
+                                             ai_box(_ia_key, _ia_title, '#f97316')))
+    for _sufijo, _titulo, _color, _ia_key, _ia_title in HTML_GENERAL_ONLY:
+        _cid = f'chart-{_sufijo}'
+        _bloques.append(_bloque_grafica_html(_cid, _titulo, _color, _ctrl_basic(_cid),
+                                             ai_box(_ia_key, _ia_title, '#f97316')))
+    cuerpo_graficas = '\n\n'.join(_bloques)
+
     # ---- Full HTML ----
     return f'''<!DOCTYPE html>
 <html lang="es">
@@ -1171,56 +1234,9 @@ tr:hover{{background:#f8fafc}}
 Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble click para resetear &bull; Click en leyenda para ocultar/mostrar series
 </p>
 
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#8b5cf6">Response Times por Transaccion</div>
-<div id="chart-rt-label" class="plotly-chart"></div>
-{_ctrl_y_axis('chart-rt-label', rt_label_p99, rt_label_max)}
-</div>
-{ai_box('responseTimes', 'Analisis - Response Times por Transaccion', '#f97316')}
-
 <!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#10b981">Throughput Over Time</div>
-<div id="chart-throughput" class="plotly-chart"></div>
-{_ctrl_basic('chart-throughput')}
-</div>
-{ai_box('throughput', 'Analisis - Throughput', '#f97316')}
-
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#8b5cf6">Latency Over Time</div>
-<div id="chart-latency" class="plotly-chart"></div>
-{_ctrl_y_axis('chart-latency', latency_p99, latency_max)}
-</div>
-{ai_box('latency', 'Analisis - Latency', '#f97316')}
-
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#ef4444">Error Rate Over Time</div>
-<div id="chart-error-rate" class="plotly-chart"></div>
-{_ctrl_basic('chart-error-rate')}
-</div>
-{ai_box('errorRate', 'Analisis - Error Rate', '#f97316')}
-
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#6366f1">Response Codes per Second</div>
-<div id="chart-codes" class="plotly-chart"></div>
-{_ctrl_basic('chart-codes')}
-</div>
-{ai_box('codesPerSecond', 'Analisis - Response Codes', '#f97316')}
-
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#10b981">Transactions per Second</div>
-<div id="chart-tps" class="plotly-chart"></div>
-{_ctrl_basic('chart-tps')}
-</div>
-{ai_box('tps', 'Analisis - Transactions per Second', '#f97316')}
-
-<div class="chart-section">
-<div class="chart-title" style="border-left-color:#6366f1">Active Threads Over Time</div>
-<div id="chart-threads" class="plotly-chart"></div>
-{_ctrl_basic('chart-threads')}
-</div>
-{ai_box('activeThreads', 'Analisis - Active Threads', '#f97316')}
+{cuerpo_graficas}
 
 <div class="grid-2">
 <div class="chart-section">
