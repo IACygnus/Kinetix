@@ -1,10 +1,13 @@
 """
 N4.6 — Generacion IA del mini-informe de UNA transaccion, bajo demanda.
 
-Ocho secciones (SECTIONS de N4.5): resumen, las 5 graficas y las conclusiones y
-recomendaciones propias de esa transaccion. Vive FUERA de /upload a proposito:
-son 8 llamadas en serie (~90 s) que solo tienen sentido para las transacciones
-que se decide abrir, no para cada carga de JTL.
+ETAPA 2 (D20): SEIS secciones (SECTIONS_GENERADAS) — resumen y las 5 graficas.
+Eran ocho: las conclusiones y recomendaciones por transaccion se retiraron
+(v1.2 §1.1), porque van una sola vez al final del informe. Las filas antiguas de
+esas dos secciones se conservan en base; solo se dejan de generar y de pintar.
+
+Vive FUERA de /upload a proposito: son 6 llamadas en serie que solo tienen
+sentido para las transacciones que se decide abrir, no para cada carga de JTL.
 
 Decisiones de este modulo:
   - Tolerancia por seccion: la fila se escribe SIEMPRE, con texto o sin el. Un
@@ -26,7 +29,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from app.db.models.transaction_chart_analysis import SECTIONS, TransactionChartAnalysis
+from app.db.models.transaction_chart_analysis import (
+    SECTIONS, SECTIONS_GENERADAS, TransactionChartAnalysis)   # ETAPA 2 (D20)
 from app.services.ai.gemini import (
     STYLE_REMINDER,
     SYSTEM_PROMPT,
@@ -153,7 +157,7 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
 - Caudal de la transaccion: {_n(m.get('rendimiento', 0), 2)} por segundo"""
 
     prompts: Dict[str, str] = {}
-    for section in SECTIONS:
+    for section in SECTIONS_GENERADAS:   # ETAPA 2 (D20): ya no se arman los 8
         instruccion, tope = INSTRUCCIONES[section]
         # Las 5 graficas reciben su serie; resumen, conclusiones y recomendaciones
         # reciben las cinco, que es su ambito.
@@ -211,10 +215,15 @@ async def generate_transaction_report(
 ) -> Dict[str, Any]:
     """Genera y persiste las secciones. Nunca lanza por un fallo de IA.
 
-    `sections` limita el trabajo a un subconjunto de SECTIONS (N4.6b): sirve
-    para rehacer una sola seccion sin pagar las ocho. None = las ocho.
+    `sections` limita el trabajo a un subconjunto (N4.6b): sirve para rehacer una
+    sola seccion sin pagar las demas. None = todas las que se generan.
+
+    ETAPA 2 (D20): "todas" son SEIS — resumen + las 5 graficas. Las conclusiones y
+    recomendaciones por transaccion ya no se generan (v1.2 §1.1): van una sola vez
+    al final del informe. Si alguien pide explicitamente una de esas dos por
+    `sections`, se ignora: el filtro parte de SECTIONS_GENERADAS.
     """
-    objetivo = [s for s in SECTIONS if not sections or s in sections]
+    objetivo = [s for s in SECTIONS_GENERADAS if not sections or s in sections]
     counters = {"total": len(objetivo), "generated": 0, "failed": 0}
     prompts = build_section_prompts(label, metrics, series, test_type)
 

@@ -39,6 +39,7 @@ from app.services.ai.transaction_report import generate_transaction_report      
 from app.db.models.transaction_chart_analysis import (                           # N4.6
     TransactionChartAnalysis,
     SECTIONS,
+    SECTIONS_GENERADAS,   # ETAPA 2 (D20)
 )
 from app.schemas.test import (
     TestExecutionResponse,
@@ -954,8 +955,11 @@ async def get_transaction_report(
 ):
     """N4.6: las secciones ya persistidas del mini-informe, con su progreso.
 
-    `progress.done` cuenta filas CON texto sobre las 8 de SECTIONS: es el
-    indicador que consumira N4.7 sondeando esta ruta mientras corre el POST.
+    `progress.done` cuenta filas CON texto sobre las SEIS que se generan hoy
+    (SECTIONS_GENERADAS, D20): es el indicador que consume la pantalla sondeando
+    esta ruta mientras corre el POST. Las filas antiguas de conclusiones y
+    recomendaciones se siguen devolviendo en `sections` — se conservan y se pueden
+    leer y editar — pero no cuentan para el progreso.
     """
     execution = await _execution_or_404(db, current_user, execution_id)
     rows = (await db.execute(
@@ -965,7 +969,9 @@ async def get_transaction_report(
         .order_by(TransactionChartAnalysis.sort_order)
     )).scalars().all()
 
-    con_texto = sum(1 for r in rows if r.ai_analysis)
+    # D20: solo cuentan las secciones que se generan hoy. Sin el filtro, un informe
+    # antiguo de 8 filas con texto mostraria "8/6" en la barra de progreso.
+    con_texto = sum(1 for r in rows if r.ai_analysis and r.section in SECTIONS_GENERADAS)
     return {
         "label": label,
         "sections": [
@@ -977,8 +983,9 @@ async def get_transaction_report(
             for r in rows
         ],
         "progress": {
-            "done": con_texto, "total": len(SECTIONS), "persisted": len(rows),
-            "pending": [s for s in SECTIONS if s not in {r.section for r in rows if r.ai_analysis}],
+            "done": con_texto, "total": len(SECTIONS_GENERADAS), "persisted": len(rows),
+            "pending": [s for s in SECTIONS_GENERADAS
+                        if s not in {r.section for r in rows if r.ai_analysis}],
         },
     }
 
@@ -1021,15 +1028,22 @@ async def get_transaction_reports_status(
     for f in filas:
         por_label.setdefault(f.label, []).append(f)
 
+    # ETAPA 2 (D20): el avance se mide contra las SEIS secciones que se generan hoy,
+    # no contra las ocho historicas. Se filtran las filas por seccion generada, y con
+    # eso un informe ANTIGUO de 8 filas sigue contando como completo: sus 6 relevantes
+    # tienen texto y las 2 sobrantes ni suman ni estorban. Sin el filtro, los informes
+    # nuevos se quedarian en "generando" para siempre (6 < 8).
+    total_secciones = len(SECTIONS_GENERADAS)
     detalle = []
     for label in pedidas:
-        suyas = por_label.get(label, [])
+        todas_suyas = por_label.get(label, [])
+        suyas = [f for f in todas_suyas if f.section in SECTIONS_GENERADAS]
         con_texto = [f for f in suyas if f.ai_analysis]
-        if not suyas:
+        if not todas_suyas:
             estado_label = "pendiente"
-        elif len(suyas) < len(SECTIONS):
+        elif len(suyas) < total_secciones:
             estado_label = "generando"
-        elif len(con_texto) == len(SECTIONS):
+        elif len(con_texto) == total_secciones:
             estado_label = "completo"
         else:
             estado_label = "parcial"
@@ -1037,7 +1051,7 @@ async def get_transaction_reports_status(
             "label": label,
             "state": estado_label,
             "done": len(con_texto),
-            "total": len(SECTIONS),
+            "total": total_secciones,
             "failed_sections": [f.section for f in suyas if not f.ai_analysis],
         })
 

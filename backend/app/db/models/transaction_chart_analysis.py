@@ -42,6 +42,17 @@ SECTIONS = (
     + ("conclusions", "recommendations")
 )
 
+# ETAPA 2 (D20): lo que se GENERA hoy son 6, no 8. La especificacion v1.2 §1.1
+# manda que las conclusiones y recomendaciones vayan una sola vez al final del
+# informe, generales, y no por transaccion.
+#
+# `SECTIONS` NO se recorta a proposito: sigue siendo el conjunto de secciones
+# CONOCIDAS. Las filas 'conclusions'/'recommendations' de los informes ya
+# generados se conservan en base y se siguen aceptando al leer y al editar
+# (regla de la etapa: ocultar, no borrar). Simplemente ya no se crean ni se
+# pintan. Separar los dos conceptos evita tener que migrar datos.
+SECTIONS_GENERADAS = ("summary",) + tuple(f"chart_{c}" for c in CHART_TYPES)
+
 
 class TransactionChartAnalysis(Base):
     __tablename__ = "transaction_chart_analyses"
