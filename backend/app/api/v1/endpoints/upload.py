@@ -1238,14 +1238,12 @@ async def get_execution_charts(
                     label=row['label'],
                 ))
 
-        # Throughput Timeline
-        throughput_timeline = [
-            TimeSeriesPoint(
-                timestamp=row['timestamp'].isoformat(),
-                value=float(row['throughput']),
-            )
-            for _, row in tl_df.iterrows()
-        ]
+        # ETAPA 2 (D19): "Throughput Over Time" se retira del producto (v1.2 §1.2).
+        # La serie deja de calcularse y viaja VACIA. El campo se conserva en el
+        # schema a proposito: la regla de la etapa es ocultar, no borrar, y asi un
+        # cliente que aun lo lea recibe una lista vacia en vez de un KeyError.
+        # El escalar `throughput` (req/s) de la tabla resumen NO se toca.
+        throughput_timeline: List[TimeSeriesPoint] = []
 
         # Latency Timeline
         latency_timeline = [

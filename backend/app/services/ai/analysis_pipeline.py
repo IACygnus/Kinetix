@@ -64,7 +64,9 @@ async def run_ai_and_verdict(
     metric_unit: str,
     db: AsyncSession,
 ) -> AIAnalysisResult:
-    """Bloque AI (12 secciones + sintesis) + verdict, movido VERBATIM de upload.py.
+    """Bloque AI (10 secciones, 11 con redirecciones) + verdict.
+
+    ETAPA 2 (D19): eran 12; Throughput Over Time se retiro del producto.
 
     Args:
         parser: instancia de JTLParser (o equivalente con get_summary_table_data,
@@ -145,7 +147,7 @@ async def run_ai_and_verdict(
         }
 
         # 1. Tabla resumen
-        logger.info("[1/12] Analizando tabla resumen...")
+        logger.info("[1/10] Analizando tabla resumen...")
         ai_analysis_summary = await asyncio.to_thread(
             gemini.analyze_summary_table,
             summary_df, metrics, test_type=test_type,
@@ -159,7 +161,7 @@ async def run_ai_and_verdict(
             ai_status["success"] = True  # Gemini responded for the primary analysis
 
         # 2. Errores
-        logger.info("[2/12] Analizando errores...")
+        logger.info("[2/10] Analizando errores...")
         errors_for_analysis: List[dict] = []
         error_codes_df = parser.df[~parser.df['success']].copy() if parser.df is not None else None
         if error_codes_df is not None and len(error_codes_df) > 0:
@@ -182,7 +184,7 @@ async def run_ai_and_verdict(
             ai_analysis_errors = fallback.analyze_errors(errors_for_analysis, metrics['total_requests'])
 
         # 3-10. Graficos individuales
-        logger.info("[3-9/12] Analizando 7 graficos...")   # UI-2: 8 -> 7 (sin Response Time Over Time)
+        logger.info("[3-8/10] Analizando 6 graficos...")   # UI-2: 8 -> 7 (sin Response Time Over Time)
 
         # Response Times por Transaccion
         rt_lines = []
@@ -211,19 +213,15 @@ async def run_ai_and_verdict(
         # DB no se toca. Se elimina tambien el get_all_charts_data() que solo servia
         # para contar los puntos de esa serie.
 
-        # Throughput
-        ai_analysis_throughput = await asyncio.to_thread(
-            gemini.analyze_chart,
-            'throughput',
-            f"Throughput promedio: {metrics['throughput']:.2f} req/s, "
-            f"Duracion: {metrics['duration_seconds']:.0f}s, "
-            f"Total requests: {metrics['total_requests']:,}",
-            test_type=test_type,
-            test_date=test_date, metric_unit=metric_unit,
-        )
-        if ai_analysis_throughput is None:
-            logger.info("Using FALLBACK for throughput")
-            ai_analysis_throughput = fallback.analyze_chart("throughput", stats_summary)
+        # ETAPA 2 (D19): la grafica "Throughput Over Time" se retira del producto
+        # entero (especificacion v1.2 §1.2), asi que su seccion de IA ya no se
+        # genera: una llamada menos por analisis. Mismo patron que UI-2 justo
+        # arriba. El campo queda vacio para ejecuciones nuevas y lo ya guardado en
+        # DB NO se toca.
+        #
+        # OJO: se retira la GRAFICA y su analisis, no la metrica. El escalar
+        # `metrics['throughput']` (req/s) sigue vivo y lo usan la tabla resumen,
+        # los KPI y el prompt de TPS de aqui abajo.
 
         # Latency
         ai_analysis_latency = await asyncio.to_thread(
@@ -302,7 +300,7 @@ async def run_ai_and_verdict(
         # 11. Redirecciones (si existen)
         redirect_summary = parser.get_redirect_summary_data()
         if redirect_summary is not None and len(redirect_summary) > 0:
-            logger.info("[11/12] Analizando redirecciones...")
+            logger.info("[+1 opcional] Analizando redirecciones...")
             ai_analysis_redirects = await asyncio.to_thread(
                 gemini.analyze_redirects,
                 redirect_summary, metrics, test_type=test_type,
@@ -316,7 +314,7 @@ async def run_ai_and_verdict(
                 )
 
         # 12. Sintesis: Conclusiones + Recomendaciones
-        logger.info("[11-12/12] Sintetizando conclusiones y recomendaciones...")
+        logger.info("[9-10/10] Sintetizando conclusiones y recomendaciones...")
 
         ai_conclusions = await asyncio.to_thread(
             gemini.generate_conclusions,
