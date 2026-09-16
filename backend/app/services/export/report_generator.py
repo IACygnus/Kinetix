@@ -366,6 +366,102 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
     return ''.join(bloques)
 
 
+def _ai_box_html(text: Optional[str], title: str, border: str = '#4f46e5',
+                 allow_break: bool = False) -> str:
+    """Caja de analisis. Sale de `build_pdf_html` para que el cuerpo del informe
+    pueda pintarse tambien fuera de ella (ETAPA 2, D21). Mismo HTML que antes."""
+    if not text:
+        return ''
+    break_style = 'break-inside:auto;' if allow_break else ''
+    return (
+        f'<div class="ai-box" style="border-left-color:{border};{break_style}">'
+        f'<div class="ai-title">{title}</div>'
+        f'<div class="ai-text">{markdown_to_html(text)}</div>'
+        f'</div>'
+    )
+
+
+def _chart_unit_html(title: str, color: str, img_b64: Optional[str],
+                     ia_text: Optional[str], ia_title: str) -> str:
+    """N2.1: grafica + su analisis como UNA unidad indivisible, en dos columnas.
+
+    En A4 landscape la pila vertical (grafica de 80mm + caja de analisis) mide
+    ~133mm de los 175mm utiles: solo cabe un bloque por pagina y el resto es
+    blanco. Lado a lado, la unidad mide lo que el mas alto de los dos (~70mm) y
+    entran dos por pagina. Tabla, no flex/grid (regla 11).
+
+    Sin imagen devuelve cadena vacia — el mismo criterio que ya tenia el bloque
+    por transaccion, y que en el alcance general no cambia nada porque todas las
+    graficas existen.
+    """
+    if not img_b64:
+        return ''
+    ai_html = _ai_box_html(ia_text, ia_title, color)
+    head = f'<div class="chart-title" style="border-left-color:{color}">{title}</div>'
+    img = f'<img class="chart-img" src="data:image/png;base64,{img_b64}" />'
+    if not ai_html:   # sin analisis, la grafica ocupa el ancho completo
+        return f'<table class="chart-unit"><tr><td class="chart-cell" style="width:100%">{head}{img}</td></tr></table>'
+    return (
+        f'<table class="chart-unit"><tr>'
+        f'<td class="chart-cell">{head}{img}</td>'
+        f'<td class="chart-ai-cell">{ai_html}</td>'
+        f'</tr></table>'
+    )
+
+
+# ETAPA 2 (D21): las graficas del cuerpo del informe, en orden, con las dos
+# formas de nombrar cada una: la del alcance general (clave de `charts_b64` y
+# clave del texto en `ia`) y la del alcance por transaccion (clave de
+# `build_transaction_series` y seccion de `transaction_chart_analyses`). Con esta
+# tabla, el MISMO render sirve para los dos alcances, que es lo que pide
+# v1.2 §1: "el informe por transaccion es el informe general, filtrado".
+#   (clave_general, clave_tx, titulo, color, texto_general, seccion_tx, titulo_ia)
+BODY_CHARTS = (
+    ('rt_label', 'response_times', 'Response Times por Transaccion', '#8884d8',
+     'responseTimes', 'chart_response_times', 'Analisis - Response Times por Transaccion'),
+    ('throughput', None, 'Throughput Over Time', '#4CAF50',
+     'throughput', None, 'Analisis - Throughput'),
+    ('latency', 'latency', 'Latency Over Time', '#9c27b0',
+     'latency', 'chart_latency', 'Analisis - Latency'),
+    ('error_rate', 'error_rate', 'Error Rate Over Time', '#f44336',
+     'errorRate', 'chart_error_rate', 'Analisis - Error Rate'),
+    ('codes', 'codes', 'Response Codes per Second', '#4CAF50',
+     'codesPerSecond', 'chart_codes', 'Analisis - Response Codes'),
+    ('tps', 'tps', 'Transactions per Second', '#4CAF50',
+     'tps', 'chart_tps', 'Analisis - Transactions per Second'),
+)
+
+# Solo en el alcance general: los hilos son de toda la prueba (D18) y la
+# distribucion de codigos es del conjunto.
+GENERAL_ONLY_CHARTS = (
+    ('threads', 'Active Threads Over Time', '#2196F3', 'activeThreads', 'Analisis - Active Threads'),
+    ('pie', 'Distribucion de Response Codes', '#ff9800', 'errors', 'Analisis de Errores'),
+)
+
+
+def report_body_html(charts: Dict[str, Any], textos: Dict[str, Any],
+                     scope: str = 'general') -> str:
+    """El cuerpo del informe —las graficas con su analisis— para un alcance.
+
+    `scope` es 'general' o 'transaction'. Lo unico que cambia entre los dos es
+    con que clave se busca cada grafica y cada texto, y que graficas existen.
+    """
+    general = scope == 'general'
+    partes = []
+    for clave_gen, clave_tx, titulo, color, texto_gen, seccion_tx, titulo_ia in BODY_CHARTS:
+        clave = clave_gen if general else clave_tx
+        texto = texto_gen if general else seccion_tx
+        if clave is None:
+            continue
+        partes.append(_chart_unit_html(titulo, color, charts.get(clave),
+                                       textos.get(texto), titulo_ia))
+    if general:
+        for clave, titulo, color, texto, titulo_ia in GENERAL_ONLY_CHARTS:
+            partes.append(_chart_unit_html(titulo, color, charts.get(clave),
+                                           textos.get(texto), titulo_ia))
+    return '\n'.join(partes)
+
+
 def cover_meta_parts(meta: Dict[str, Any]) -> Dict[str, str]:
     """N2.3: piezas de la fila de metadatos de la portada (PDF y HTML).
 
@@ -458,38 +554,10 @@ def build_pdf_html(
     ) if _cm['criteria'] else ''
 
     # ----- helpers -----
+    # El cuerpo (graficas + analisis) y la caja de analisis viven fuera de esta
+    # funcion desde la ETAPA 2 (D21): los usa tambien el bloque por transaccion.
     def ai_box(key, title, border='#4f46e5', allow_break=False):
-        text = ia.get(key, '')
-        if not text:
-            return ''
-        html_text = markdown_to_html(text)
-        break_style = 'break-inside:auto;' if allow_break else ''
-        return (
-            f'<div class="ai-box" style="border-left-color:{border};{break_style}">'
-            f'<div class="ai-title">{title}</div>'
-            f'<div class="ai-text">{html_text}</div>'
-            f'</div>'
-        )
-
-    def chart_unit(title, color, img_key, ia_key, ia_title):
-        """N2.1: grafica + su analisis como UNA unidad indivisible, en dos columnas.
-
-        En A4 landscape la pila vertical (grafica de 80mm + caja de analisis) mide
-        ~133mm de los 175mm utiles: solo cabe un bloque por pagina y el resto es
-        blanco. Lado a lado, la unidad mide lo que el mas alto de los dos (~70mm)
-        y entran dos por pagina. Tabla, no flex/grid (regla 11).
-        """
-        ai_html = ai_box(ia_key, ia_title, color)
-        head = f'<div class="chart-title" style="border-left-color:{color}">{title}</div>'
-        img = f'<img class="chart-img" src="data:image/png;base64,{charts[img_key]}" />'
-        if not ai_html:   # sin analisis, la grafica ocupa el ancho completo
-            return f'<table class="chart-unit"><tr><td class="chart-cell" style="width:100%">{head}{img}</td></tr></table>'
-        return (
-            f'<table class="chart-unit"><tr>'
-            f'<td class="chart-cell">{head}{img}</td>'
-            f'<td class="chart-ai-cell">{ai_html}</td>'
-            f'</tr></table>'
-        )
+        return _ai_box_html(ia.get(key, ''), title, border, allow_break)
 
     # ----- stats table rows -----
     stats_rows = ''
@@ -1037,14 +1105,7 @@ tbody tr:nth-child(even) {{
 {redirect_section}
 
 <!-- ===== CHARTS (N2.1: flujo denso, unidad grafica+analisis) ===== -->
-{chart_unit('Response Times por Transaccion', '#8884d8', 'rt_label', 'responseTimes', 'Analisis - Response Times por Transaccion')}
-{chart_unit('Throughput Over Time', '#4CAF50', 'throughput', 'throughput', 'Analisis - Throughput')}
-{chart_unit('Latency Over Time', '#9c27b0', 'latency', 'latency', 'Analisis - Latency')}
-{chart_unit('Error Rate Over Time', '#f44336', 'error_rate', 'errorRate', 'Analisis - Error Rate')}
-{chart_unit('Response Codes per Second', '#4CAF50', 'codes', 'codesPerSecond', 'Analisis - Response Codes')}
-{chart_unit('Transactions per Second', '#4CAF50', 'tps', 'tps', 'Analisis - Transactions per Second')}
-{chart_unit('Active Threads Over Time', '#2196F3', 'threads', 'activeThreads', 'Analisis - Active Threads')}
-{chart_unit('Distribucion de Response Codes', '#ff9800', 'pie', 'errors', 'Analisis de Errores')}
+{report_body_html(charts, ia, 'general')}
 
 <!-- ===== N3.5: ANALISIS POR TRANSACCION CRITICA (antes de conclusiones) ===== -->
 {transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=True)}
