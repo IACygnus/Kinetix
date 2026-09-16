@@ -158,3 +158,7 @@ export function getXAxisInterval(dataLength: number): number {
 export function shouldRotateLabels(labelCount: number): boolean {
   return labelCount > CHART_LABELS.rotationThreshold;
 }
+
+// ETAPA 2 (D21): vivia en Dashboard.tsx, pero ahora lo usan Dashboard y ReportBody.
+// Se sube aqui para que no haya un import circular entre los dos.
+export const MAX_SUFFIX = ' (max)';
