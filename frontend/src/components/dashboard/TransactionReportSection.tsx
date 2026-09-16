@@ -11,13 +11,11 @@
  *
  * Regla 16: TODOS los hooks se declaran antes de cualquier return.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../../services/api';
-import { getColorForIndex, getCodeColor } from '../../config/chartConfig';
+import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
+import ReportBody, { ReportBodyCtx } from './ReportBody';
 
 // ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
 // transaccion se retiraron (v1.2 §1.1): van una sola vez al final del informe.
@@ -27,20 +25,26 @@ const SECTIONS = ['summary', 'chart_response_times', 'chart_latency', 'chart_err
   'chart_codes', 'chart_tps'] as const;
 
 const TITULOS: Record<string, string> = {
-  summary: 'Resumen de la transaccion',
-  chart_response_times: 'Analisis — Tiempos de respuesta',
-  chart_latency: 'Analisis — Latencia',
-  chart_error_rate: 'Analisis — Tasa de error',
-  chart_codes: 'Analisis — Codigos de respuesta',
-  chart_tps: 'Analisis — Transacciones por segundo',
-  conclusions: 'Conclusiones de la transaccion',
-  recommendations: 'Recomendaciones de la transaccion',
+  summary: 'Resumen de la transacción',
+  chart_response_times: 'Análisis — Tiempos de respuesta',
+  chart_latency: 'Análisis — Latencia',
+  chart_error_rate: 'Análisis — Tasa de error',
+  chart_codes: 'Análisis — Códigos de respuesta',
+  chart_tps: 'Análisis — Transacciones por segundo',
+  conclusions: 'Conclusiones de la transacción',
+  recommendations: 'Recomendaciones de la transacción',
 };
 
-// Que grafica acompana a que texto. Las tres sin grafica son de ambito general.
-const GRAFICA_DE: Record<string, string> = {
-  chart_response_times: 'response_times', chart_latency: 'latency',
-  chart_error_rate: 'error_rate', chart_codes: 'codes', chart_tps: 'tps',
+// ETAPA 2 (D21 · C2): el campo que ReportBody usa para cada caja de analisis, y la
+// seccion de transaction_chart_analyses donde se guarda ese mismo texto cuando el
+// alcance es una transaccion. Este mapa ES el cableado: con el, editar dentro del
+// bloque de una transaccion escribe en su canal y no en el del informe general.
+const SECCION_DE_CAMPO: Record<string, string> = {
+  ai_analysis_response_times: 'chart_response_times',
+  ai_analysis_latency: 'chart_latency',
+  ai_analysis_error_rate: 'chart_error_rate',
+  ai_analysis_codes_per_second: 'chart_codes',
+  ai_analysis_transactions_per_second: 'chart_tps',
 };
 
 const AUTOSAVE_MS = 1800;   // mismo debounce que F3/R1/R2
@@ -63,45 +67,135 @@ type Auto = { status: 'idle' | 'in_progress' | 'completed'; labels: EstadoAuto[]
 
 const hora = (iso: string | null) => (iso ? new Date(iso + 'Z').toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '');
 
-/** Una grafica de la transaccion. `codes` llega como filas (timestamp, code, value)
- *  y se pivota a una serie por codigo. */
-function GraficaTx({ tipo, series }: { tipo: string; series: any }) {
-  const puntos: any[] = series?.[tipo] || [];
-  if (!puntos.length) {
-    return <div className="text-base text-gray-400 italic py-6 text-center">Sin datos para esta grafica.</div>;
-  }
-  let data = puntos;
-  let lineas: { key: string; color: string; nombre: string }[] = [{ key: 'value', color: '#4f46e5', nombre: 'Valor' }];
+const hhmmss = (iso: string) => String(iso).slice(11, 19);
 
-  if (tipo === 'response_times') {
-    lineas = [{ key: 'value', color: '#4f46e5', nombre: 'Promedio' }, { key: 'value_max', color: '#ef4444', nombre: 'Maximo' }];
-  } else if (tipo === 'codes') {
-    const porTs: Record<string, any> = {};
-    const codigos = new Set<string>();
-    puntos.forEach((p: any) => {
-      codigos.add(p.code);
-      porTs[p.timestamp] = { ...(porTs[p.timestamp] || { timestamp: p.timestamp }), [p.code]: p.value };
-    });
-    data = Object.values(porTs);
-    lineas = Array.from(codigos).map((c, i) => ({ key: c, color: getCodeColor(c) || getColorForIndex(i), nombre: c }));
-  }
+/** Traduce las 5 series de /transaction-charts a las estructuras que ReportBody
+ *  espera. No dibuja nada: solo adapta la forma del dato.
+ *
+ *  ETAPA 2 (D21): aqui muere la plantilla paralela. Antes este archivo tenia su
+ *  propia grafica (GraficaTx, 260 px, ejes y tooltip propios) y por eso el informe
+ *  por transaccion no se parecia al general. Ahora pinta el MISMO componente, que
+ *  es lo que hace cierta por construccion la frase de v1.2 §1: "el informe por
+ *  transaccion es el informe general con el mismo diseño, filtrado". */
+function seriesParaReportBody(label: string, series: any) {
+  const rt: any[] = series?.response_times || [];
+  const hayMax = rt.some((p: any) => p.value_max != null);
+  const simple = (arr: any[] | undefined) =>
+    (arr || []).map((p: any) => ({ displayTime: hhmmss(p.timestamp), value: p.value }));
 
-  const unidad = tipo === 'error_rate' ? '%' : tipo === 'tps' || tipo === 'codes' ? '/s' : 'ms';
-  return (
-    <ResponsiveContainer width="100%" height={260}>
-      <LineChart data={data} margin={{ top: 8, right: 20, left: 4, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-        <XAxis dataKey="timestamp" tick={{ fontSize: 11 }} tickFormatter={(t) => String(t).slice(11, 19)} minTickGap={40} />
-        <YAxis tick={{ fontSize: 11 }} width={60} label={{ value: unidad, angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
-        <Tooltip labelFormatter={(t) => String(t).slice(11, 19)} formatter={(v: any) => [`${Number(v).toFixed(2)} ${unidad}`, '']} />
-        {lineas.length > 1 && <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: 12 }} />}
-        {lineas.map((l) => (
-          <Line key={l.key} type="monotone" dataKey={l.key} name={l.nombre} stroke={l.color}
-            strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
-  );
+  // Los codigos llegan como filas (timestamp, code, value) y se pivotan a una
+  // columna por codigo, igual que prepareMultiLineData hace en el general.
+  const porTs = new Map<string, any>();
+  const codigos: string[] = [];
+  (series?.codes || []).forEach((p: any) => {
+    const c = String(p.code);
+    if (!codigos.includes(c)) codigos.push(c);
+    if (!porTs.has(p.timestamp)) porTs.set(p.timestamp, { displayTime: hhmmss(p.timestamp) });
+    porTs.get(p.timestamp)[c] = p.value;
+  });
+
+  return {
+    responseTimesByLabel: {
+      labels: [label],
+      data: rt.map((p: any) => {
+        const fila: any = { displayTime: hhmmss(p.timestamp), [label]: p.value };
+        if (p.value_max != null) fila[`${label}${MAX_SUFFIX}`] = p.value_max;
+        return fila;
+      }),
+    },
+    rtMaxLabels: hayMax ? [label] : [],
+    rtMaxKeys: hayMax ? [`${label}${MAX_SUFFIX}`] : [],
+    latencyData: simple(series?.latency),
+    errorRateData: simple(series?.error_rate),
+    codesPerSecond: { labels: codigos, data: Array.from(porTs.values()) },
+    tpsByLabel: {
+      labels: [label],
+      data: (series?.tps || []).map((p: any) => ({ displayTime: hhmmss(p.timestamp), [label]: p.value })),
+    },
+  };
+}
+
+/** Las graficas de UNA transaccion, pintadas por ReportBody.
+ *
+ *  Es un componente propio porque cada bloque necesita su estado (leyendas
+ *  plegadas y zoom de eje Y) y los hooks no pueden vivir dentro de un .map.
+ *  Regla 16: todos los hooks, antes de cualquier return. */
+function BloqueGraficasTx({ label, series, secciones, guardarSeccion }: {
+  label: string;
+  series: any;
+  secciones: Seccion[];
+  guardarSeccion: (label: string, section: string, texto: string) => Promise<void>;
+}) {
+  const [hiddenRT, setHiddenRT] = useState<Set<string>>(new Set());
+  const [hiddenTPS, setHiddenTPS] = useState<Set<string>>(new Set());
+  const [hiddenCodes, setHiddenCodes] = useState<Set<string>>(new Set());
+  const [rangos, setRangos] = useState<Record<string, { min: number | 'auto'; max: number | 'auto' }>>({});
+
+  const handleYRange = useCallback((key: string, mn: number | 'auto', mx: number | 'auto') => {
+    setRangos((p) => ({ ...p, [key]: { min: mn, max: mx } }));
+  }, []);
+  const getYDomain = useCallback((key: string): [number | string, number | string] => {
+    const r = rangos[key];
+    return r ? [r.min, r.max] : ['auto', 'auto'];
+  }, [rangos]);
+  const extractY = useCallback((data: any[], keys: string[]): number[] => {
+    if (!data) return [];
+    const vals: number[] = [];
+    data.forEach((p) => keys.forEach((k) => { const v = p[k]; if (typeof v === 'number') vals.push(v); }));
+    return vals;
+  }, []);
+  const handleLegendClick = useCallback((dataKey: string, ocultas: Set<string>,
+    setOcultas: React.Dispatch<React.SetStateAction<Set<string>>>) => {
+    const nuevo = new Set(ocultas);
+    if (nuevo.has(dataKey)) nuevo.delete(dataKey); else nuevo.add(dataKey);
+    setOcultas(nuevo);
+  }, []);
+
+  // Identidad estable (deps vacias): si cambiara en cada render, React
+  // desmontaria el textarea y se perderia el foco al escribir.
+  const AnalysisBox = useCallback(({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-bold text-orange-600 text-xl">Análisis</h4>
+        <span className="text-xs text-gray-400 italic">Click para editar</span>
+      </div>
+      <TextoEditable valor={value} editado={false} onGuardar={async (v) => onChange(v)} />
+    </div>
+  ), []);
+
+  // C2: la edicion y el autoguardado de este alcance van al canal de la
+  // transaccion. El setter de ReportBody se respeta en la firma pero no guarda
+  // estado aqui: el texto vive en `secciones`, que se refresca al guardar.
+  const emitEdit = useCallback((campo: string, setter: (v: string) => void) => (valor: string) => {
+    setter(valor);
+    const sec = SECCION_DE_CAMPO[campo];
+    if (!sec) return;   // active_threads no existe por transaccion (D18)
+    guardarSeccion(label, sec, valor);
+  }, [label, guardarSeccion]);
+
+  const datos = useMemo(() => seriesParaReportBody(label, series), [label, series]);
+  const texto = (sec: string) => secciones.find((s) => s.section === sec)?.ai_analysis || '';
+  const nada = () => {};
+
+  const ctx: ReportBodyCtx = {
+    ...datos,
+    throughputData: [],        // D19: la grafica ya no existe
+    activeThreadsData: [],     // D18: solo en el alcance general
+    analysisResponseTimes: texto('chart_response_times'), setAnalysisResponseTimes: nada,
+    analysisThroughput: '', setAnalysisThroughput: nada,
+    analysisLatency: texto('chart_latency'), setAnalysisLatency: nada,
+    analysisErrorRate: texto('chart_error_rate'), setAnalysisErrorRate: nada,
+    analysisCodesPerSecond: texto('chart_codes'), setAnalysisCodesPerSecond: nada,
+    analysisTransactionsPerSecond: texto('chart_tps'), setAnalysisTransactionsPerSecond: nada,
+    analysisActiveThreads: '', setAnalysisActiveThreads: nada,
+    hiddenLinesResponseTimes: hiddenRT, setHiddenLinesResponseTimes: setHiddenRT,
+    hiddenLinesTPS: hiddenTPS, setHiddenLinesTPS: setHiddenTPS,
+    hiddenLinesCodes: hiddenCodes, setHiddenLinesCodes: setHiddenCodes,
+    minH: Math.max(CHART_LAYOUT.minHeight, 700),   // el mismo alto que el general
+    emitEdit, getYDomain, extractY, handleYRange, AnalysisBox, handleLegendClick,
+  };
+
+  return <ReportBody scope={{ kind: 'transaction', label }} ctx={ctx} />;
 }
 
 /** Texto editable con autoguardado (patron F3/R1/R2: debounce + indicador). */
@@ -377,9 +471,14 @@ export default function TransactionReportSection({ executionId }: { executionId:
           {labels.map((label) => {
             const est = datos[label];
             const secciones = est?.secciones || [];
-            const conTexto = secciones.filter((s) => s.ai_analysis).length;
+            // Solo las secciones que hoy se generan (D20). Sin este filtro, una
+            // transaccion antigua con conclusiones y recomendaciones guardadas
+            // mostraba "8 de 6 secciones".
+            const conTexto = secciones.filter(
+              (s) => s.ai_analysis && (SECTIONS as readonly string[]).includes(s.section)).length;
             const enCurso = generando === label;
             const prog = est?.progreso;
+            const total = prog?.total ?? SECTIONS.length;
             // ETAPA 2: sin acordeon. Todos los bloques se ven, igual que el general.
             const abierto = true;
 
@@ -390,7 +489,7 @@ export default function TransactionReportSection({ executionId }: { executionId:
                       sin prefijos ni subtitulos. Ya no es un boton: no hay acordeon. */}
                   <div className="flex items-center gap-3 text-left flex-1">
                     <span className="text-2xl font-bold text-gray-800">{label}</span>
-                    <span className="text-base text-gray-500">{conTexto} de {prog?.total ?? SECTIONS.length} secciones</span>
+                    <span className="text-base text-gray-500">{conTexto} de {total} secciones</span>
                     {/* N4.10: la que esta esperando o corriendo por su cuenta. */}
                     {(() => {
                       const a = auto?.labels.find((l) => l.label === label);
@@ -416,10 +515,12 @@ export default function TransactionReportSection({ executionId }: { executionId:
                   <div className="px-5 py-3 bg-indigo-50 border-t border-indigo-100">
                     <div className="flex items-center gap-3 text-indigo-800 font-semibold text-lg">
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      Generando {Math.min((prog?.done || 0) + 1, 8)} de 8 — {label} · {segundos} s
+                      {/* ETAPA 2 (D20): el total sale del progreso real, no de un 8
+                          escrito a mano que dejo de ser cierto al pasar a 6. */}
+                      Generando {Math.min((prog?.done || 0) + 1, total)} de {total} — {label} · {segundos} s
                     </div>
                     <div className="w-full bg-indigo-200 rounded-full h-2 overflow-hidden mt-2">
-                      <div className="bg-indigo-600 h-2 rounded-full transition-all duration-500" style={{ width: `${((prog?.done || 0) / 8) * 100}%` }} />
+                      <div className="bg-indigo-600 h-2 rounded-full transition-all duration-500" style={{ width: `${((prog?.done || 0) / total) * 100}%` }} />
                     </div>
                     {prog?.pending?.length ? <div className="text-sm text-indigo-700 mt-1">Faltan: {prog.pending.map((p) => TITULOS[p] || p).join(', ')}</div> : null}
                     {avisoSondeo && (
@@ -438,25 +539,39 @@ export default function TransactionReportSection({ executionId }: { executionId:
 
                 {abierto && (
                   <div className="p-5 space-y-6">
-                    {!est && <div className="text-gray-500 text-lg">Cargando graficas y textos...</div>}
-                    {SECTIONS.map((sec) => {
-                      const fila = secciones.find((s) => s.section === sec);
-                      const grafica = GRAFICA_DE[sec];
+                    {!est && <div className="text-gray-500 text-lg">Cargando gráficas y textos...</div>}
+
+                    {/* Resumen de la transaccion: es la unica seccion que no
+                        acompana a una grafica, asi que se pinta aqui arriba.
+                        PENDIENTE (v1.2 §1): le falta su tabla resumen filtrada a
+                        esta transaccion; el dato existe en by_label de /charts. */}
+                    {(() => {
+                      const fila = secciones.find((s) => s.section === 'summary');
                       return (
-                        <div key={sec}>
+                        <div>
                           <h4 className="text-xl font-bold text-gray-800 mb-2 border-l-4 border-indigo-500 pl-3">
-                            {TITULOS[sec]}
+                            {TITULOS.summary}
                             {fila?.generated_at && !fila?.is_edited && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
                           </h4>
-                          {grafica && est?.series && <GraficaTx tipo={grafica} series={est.series} />}
                           <TextoEditable
                             valor={fila?.ai_analysis || ''}
                             editado={!!fila?.is_edited}
-                            onGuardar={(v) => guardarSeccion(label, sec, v)}
+                            onGuardar={(v) => guardarSeccion(label, 'summary', v)}
                           />
                         </div>
                       );
-                    })}
+                    })()}
+
+                    {/* Las 5 graficas con sus analisis, pintadas por el MISMO
+                        componente que el informe general (D21). */}
+                    {est && (
+                      <BloqueGraficasTx
+                        label={label}
+                        series={est.series}
+                        secciones={secciones}
+                        guardarSeccion={guardarSeccion}
+                      />
+                    )}
                   </div>
                 )}
               </div>
