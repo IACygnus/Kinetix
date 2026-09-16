@@ -26,18 +26,31 @@ de pedir datos que ya se piden, y el frontend carga `/charts` de todos modos par
 general: filtrar `by_label` por label en cliente no cuesta una petición extra. Añadirlo sería
 código nuevo que mantener sin ganar nada.
 
-### La fila de `by_label` trae exactamente lo que pide §2.1
+### La fila de `by_label` trae todas las columnas del resumen general
 
 ```
-Transaccion=4. Get_Booking_Id | Muestras=1677 | Promedio=108.3 ms | TPS=5.59 | Errores=692
+label=4. Get_Booking_Id · count=1677 · avg_time=108.3 · min_time=85.0 · max_time=438.0
+p90=123.4 · p95=139.0 · p99=206.0 · success_count=985 · error_count=692
+error_rate=41.26 · throughput=5.59 · kb_received=1389.59 · kb_sent=412.5
 ```
 
-`label` → Transacción · `count` → Muestras · `avg_time` → Promedio · `throughput` → TPS ·
-`error_count` → Errores. Las cinco columnas de la especificación, sin calcular nada nuevo.
+> ### ⚠ CORRECCIÓN — lectura equivocada de §2.1 en la primera versión de este reporte
+>
+> Escribí que la tabla del bloque por transacción llevaría «las cinco columnas de la
+> especificación». **Es un error de lectura: §2.1 describe el PANEL DE SELECCIÓN de la pantalla
+> Nuevo Reporte (Etapa 5), no el informe.**
+>
+> Lo que manda para el informe es §1: «el informe por transacción es el informe general con el
+> **mismo diseño**, filtrado». Es decir, la tabla del bloque por transacción es **el mismo
+> componente/función que la tabla resumen del general, con las mismas columnas**, filtrada a esa
+> transacción. **Queda prohibido crear una tabla de 5 columnas para el informe.**
+>
+> El dato de arriba lo confirma viable sin trabajo extra: `by_label` ya trae la fila completa con
+> todas las columnas del resumen, así que filtrar por label basta y no hay que calcular nada.
 
-**La definición de TPS de v1.2 §2.1 cuadra con el dato real:** 1.677 muestras ÷ 300 s de prueba
-= **5,59**, que es exactamente el `throughput` que devuelve `by_label`. Panel e informe mostrarán
-el mismo número porque salen de la misma fuente.
+**La definición de TPS de v1.2 §2.1 sí cuadra con el dato real:** 1.677 muestras ÷ 300 s de prueba
+= **5,59**, que es exactamente el `throughput` que devuelve `by_label`. Eso vale para cuando la
+Etapa 5 construya el panel: mirará la misma fuente que el informe.
 
 ---
 
