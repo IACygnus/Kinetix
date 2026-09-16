@@ -9,6 +9,14 @@ Etapa 1 (`baseline1.json`, `baseline2.json`, 70 llamadas con `outcome="ok"`) y l
 exactamente las llamadas que la Etapa 2 ha retirado del producto.
 Herramienta: `Kinetix_pruebas/e2e/proyeccion_2_10.py`.
 
+> **AVISO (añadido después): esta proyección NO sirve como dato de la Etapa 2.**
+> La línea base se midió con el `reasoning_effort` **por defecto**, y desde 2.2 la
+> configuración está en **`low`**. Las llamadas que quedan no tardan lo que tardaban
+> entonces, así que restar llamadas de aquel total mezcla dos configuraciones distintas.
+> Lo único que esta proyección sigue demostrando es **cuántas llamadas se retiran y qué
+> parte del tiempo ocupaban en aquella configuración**. El dato bueno es la corrida real:
+> **reporte 28**.
+
 ---
 
 ## 1. Resultado
@@ -53,7 +61,7 @@ crece con el tamaño de la prueba; el de D19 es fijo.**
 
 ---
 
-## 3. Corrida real de confirmación — PARADA, requiere autorización
+## 3. Corrida real de confirmación — AUTORIZADA, ver reporte 28
 
 Confirmar el número con una generación de verdad cuesta **28 llamadas reales** a `gpt-5.5`
 (10 generales + 6 × 3 transacciones), unos **4,7 minutos** y consume cupo de presupuesto:
