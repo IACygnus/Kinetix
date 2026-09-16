@@ -113,6 +113,7 @@ export interface AIConfigInfo {
   id: string;
   provider: string;
   model_name: string;
+  reasoning_effort?: string | null;   // ETAPA 2 (D13): low | medium | high
   api_key_masked: string;
   is_active: boolean;
   daily_request_limit: number;

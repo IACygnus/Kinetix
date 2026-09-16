@@ -21,6 +21,11 @@ class AIConfig(Base):
     # Model name (e.g. "gemini-2.5-flash", "gpt-4o-mini")
     model_name = Column(String(100), nullable=False, default="gemini-2.5-flash")
 
+    # ETAPA 2 (D13): low | medium | high. NULL = low.
+    # Solo se envia a los modelos OpenAI que lo soportan; en Gemini no se manda.
+    # Columna anadida con docs/sql/etapa2_reasoning_effort.sql (regla 10: sin Alembic).
+    reasoning_effort = Column(String(20), nullable=True)
+
     # Fernet-encrypted API key
     api_key_encrypted = Column(Text, nullable=True)
 

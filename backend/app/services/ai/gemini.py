@@ -163,6 +163,26 @@ def _openai_is_token_param_error(err) -> bool:
 _openai_no_temp_cache: Dict[str, bool] = {}
 
 
+# ETAPA 2 (D13/D13a): esfuerzo de razonamiento configurable.
+REASONING_EFFORTS = ("low", "medium", "high")
+REASONING_EFFORT_DEFAULT = "low"
+
+
+def _openai_soporta_reasoning(model_name: str) -> bool:
+    """Mismo criterio de prefijos que `max_completion_tokens` (D13)."""
+    return (model_name or "").lower().startswith(_OPENAI_NEWGEN_PREFIXES)
+
+
+def _openai_reasoning_kwarg(model_name: str, effort: Optional[str]) -> dict:
+    """`reasoning_effort` solo para los modelos que lo admiten. {} si no aplica."""
+    if not _openai_soporta_reasoning(model_name):
+        return {}
+    valor = (effort or REASONING_EFFORT_DEFAULT).lower()
+    if valor not in REASONING_EFFORTS:
+        valor = REASONING_EFFORT_DEFAULT
+    return {"reasoning_effort": valor}
+
+
 def _openai_temperature_kwarg(model_name: str, temperature: float) -> dict:
     """`temperature` solo para los modelos que la admiten."""
     m = (model_name or "").lower()
@@ -274,7 +294,8 @@ def _espera_sugerida(err) -> Optional[float]:
 # Todo va dentro de try/except — un fallo de telemetria jamas interrumpe la
 # generacion. `usage` solo existe en OpenAI; con Gemini los tokens quedan null.
 def _emit_ai_telemetry(section, provider, model, t0, attempt, limit, prompt_chars,
-                       outcome, response=None, finish_reason=None) -> None:
+                       outcome, response=None, finish_reason=None,
+                       reasoning_effort=None) -> None:   # ETAPA 2 (D13e)
     """E1.1 dejo abierta H1 por no capturar `usage`; esto es lo que la cierra."""
     try:
         fin = datetime.now(timezone.utc)
@@ -286,6 +307,7 @@ def _emit_ai_telemetry(section, provider, model, t0, attempt, limit, prompt_char
             "ts_start": t0.isoformat(), "ts_end": fin.isoformat(),
             "latency_ms": round((fin - t0).total_seconds() * 1000),
             "attempt": attempt, "max_completion_tokens": limit,
+            "reasoning_effort": reasoning_effort,   # ETAPA 2 D13e; null si no aplica
             "prompt_chars": prompt_chars,
             "prompt_tokens": getattr(u, "prompt_tokens", None),
             "completion_tokens": getattr(u, "completion_tokens", None),
@@ -988,7 +1010,9 @@ class GeminiAnalyzer:
         if not ya_cerrado:
             cls._abrir_circuito(motivo)             # marca nueva -> otros 60 s
 
-    def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = ""):
+    def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = "",
+                 reasoning_effort: Optional[str] = None):   # ETAPA 2 (D13)
+        self.reasoning_effort = reasoning_effort or REASONING_EFFORT_DEFAULT
         self.provider = provider or DEFAULT_PROVIDER
         self.model_name = model_name or MODEL_NAME
         self._api_key = api_key or os.getenv("GEMINI_API_KEY", "")
@@ -1032,10 +1056,19 @@ class GeminiAnalyzer:
         _t0 = datetime.now(timezone.utc)
 
         def _tel(outcome, attempt, response=None, finish_reason=None):
+            # Los argumentos se evaluan ANTES de entrar en el try/except de
+            # `_emit_ai_telemetry`, asi que aqui no puede haber nada que lance:
+            # romperia el invariante de E1.2 (la telemetria nunca tumba una
+            # generacion). De ahi el getattr con defecto.
             _emit_ai_telemetry(
                 section_name, self.provider, self.model_name, _t0, attempt,
                 _openai_max_tokens_for(self.model_name) if self.provider == "openai" else None,
-                len(prompt), outcome, response, finish_reason)
+                len(prompt), outcome, response, finish_reason,
+                # ETAPA 2 (D13e): el valor REALMENTE enviado, o null si no aplica.
+                _openai_reasoning_kwarg(
+                    self.model_name, getattr(self, "reasoning_effort", None)
+                ).get("reasoning_effort")
+                if self.provider == "openai" else None)
 
         # Circuit breaker — skip immediately if API already proven unavailable.
         # ETAPA 1.5 (D2): pasado el enfriamiento, esta llamada pasa como prueba.
@@ -1067,6 +1100,9 @@ class GeminiAnalyzer:
                             ],
                             _openai_max_tokens_for(self.model_name),
                             temperature=GENERATION_CONFIG["temperature"],
+                            # ETAPA 2 (D13): viaja solo si el modelo lo soporta.
+                            **_openai_reasoning_kwarg(
+                                self.model_name, getattr(self, "reasoning_effort", None)),
                         )
                         result = response.choices[0].message.content if response.choices else None
                         if not result:
@@ -1117,7 +1153,11 @@ class GeminiAnalyzer:
                         wait_time = _espera_sugerida(e) or min((attempt + 1) * 5, 15)
                         logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
                         _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
-                        time.sleep(wait_time)
+                        # ETAPA 2 (D14): sin dormir tras el ultimo intento — mismo
+                        # criterio que los transitorios. Ahorra los 15 s finales,
+                        # que se esperaban para nada antes de rendirse.
+                        if attempt + 1 < max_retries:
+                            time.sleep(wait_time)
                         continue
 
                     if tipo == "transient":
@@ -1809,17 +1849,23 @@ def get_gemini_analyzer(
     provider: str = "",
     model_name: str = "",
     api_key: str = "",
+    reasoning_effort: str = "",          # ETAPA 2 (D13c)
 ) -> GeminiAnalyzer:
     """Obtener instancia de GeminiAnalyzer (lazy init, recreates on config change)"""
     global _analyzer_instance, _analyzer_config_key
 
-    config_key = f"{provider}:{model_name}:{api_key[:8] if api_key else ''}"
+    # D13c: el effort forma parte de la clave. Sin esto, cambiarlo en la pantalla de
+    # configuracion no tendria efecto hasta reiniciar el proceso: el singleton se
+    # reutilizaria con el valor viejo.
+    efecto = (reasoning_effort or REASONING_EFFORT_DEFAULT).lower()
+    config_key = f"{provider}:{model_name}:{api_key[:8] if api_key else ''}:{efecto}"
 
     if _analyzer_instance is None or (config_key and config_key != _analyzer_config_key):
         _analyzer_instance = GeminiAnalyzer(
             provider=provider,
             model_name=model_name,
             api_key=api_key,
+            reasoning_effort=efecto,
         )
         _analyzer_config_key = config_key
 
@@ -1923,6 +1969,8 @@ async def load_ai_config_from_db(db) -> dict:
             "provider": config.provider or "gemini",
             "model_name": config.model_name or "gemini-2.5-flash",
             "api_key": api_key,
+            # ETAPA 2 (D13): NULL en base significa 'low'.
+            "reasoning_effort": config.reasoning_effort or REASONING_EFFORT_DEFAULT,
         }
     except Exception as e:
         logger.warning(f"Error al cargar AI config desde DB: {e}")

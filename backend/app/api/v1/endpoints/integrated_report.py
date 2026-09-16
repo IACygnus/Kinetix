@@ -1571,6 +1571,7 @@ async def generate_integrated_report(
                 provider=ai_conf.get("provider", ""),
                 model_name=ai_conf.get("model_name", ""),
                 api_key=ai_conf.get("api_key", ""),
+                reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
             )
             prompt = f"""{SYSTEM_PROMPT}
 
@@ -1980,6 +1981,7 @@ async def generate_consolidated_analysis(
         provider=ai_conf.get("provider", ""),
         model_name=ai_conf.get("model_name", ""),
         api_key=ai_conf.get("api_key", ""),
+        reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
     )
 
     consolidated = {}

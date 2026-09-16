@@ -19,6 +19,8 @@ export default function AIConfigPage() {
   const [isActive, setIsActive] = useState(true);
   const [dailyLimit, setDailyLimit] = useState(1000);
   const [monthlyLimit, setMonthlyLimit] = useState(20000);
+  // ETAPA 2 (D13): esfuerzo de razonamiento. Solo aplica a modelos OpenAI que lo soportan.
+  const [reasoningEffort, setReasoningEffort] = useState('low');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,6 +69,7 @@ export default function AIConfigPage() {
       setProviders(modelsData);
       setSelectedProvider(cfgData.provider);
       setSelectedModel(cfgData.model_name);
+      setReasoningEffort(cfgData.reasoning_effort || 'low');   // ETAPA 2 (D13)
       setIsActive(cfgData.is_active);
       setDailyLimit(cfgData.daily_request_limit);
       setMonthlyLimit(cfgData.monthly_request_limit);
@@ -97,6 +100,13 @@ export default function AIConfigPage() {
     fetchLiveModels(newProvider);
   };
 
+  // ETAPA 2 (D13): mismo criterio de prefijos que usa el backend para
+  // max_completion_tokens (_OPENAI_NEWGEN_PREFIXES en gemini.py). Si cambia alli,
+  // hay que cambiarlo aqui: es la unica duplicacion consciente de esta etapa.
+  const soportaRazonamiento =
+    selectedProvider === 'openai' &&
+    /^(gpt-5|o1|o3|o4)/i.test(selectedModel || '');
+
   const handleSave = async () => {
     setSaving(true);
     setError('');
@@ -105,6 +115,9 @@ export default function AIConfigPage() {
       const payload: Record<string, unknown> = {
         provider: selectedProvider,
         model_name: selectedModel,
+        // ETAPA 2 (D13): solo se manda si el modelo lo soporta; si no, la fila
+        // conserva lo que tuviera y el backend no lo usa.
+        ...(soportaRazonamiento ? { reasoning_effort: reasoningEffort } : {}),
         is_active: isActive,
         daily_request_limit: dailyLimit,
         monthly_request_limit: monthlyLimit,
@@ -274,6 +287,31 @@ export default function AIConfigPage() {
             )}
           </div>
         </div>
+
+        {/* ===== ETAPA 2 (D13): Esfuerzo de razonamiento =====
+            Va junto al modelo porque depende de el: solo se muestra cuando el
+            modelo elegido lo admite. En Gemini y en modelos que no lo soportan,
+            el selector no aparece y el valor no se envia. */}
+        {soportaRazonamiento && (
+          <div>
+            <label className="block text-xl font-medium text-gray-300 mb-2">
+              Esfuerzo de razonamiento
+            </label>
+            <select
+              value={reasoningEffort}
+              onChange={(e) => setReasoningEffort(e.target.value)}
+              className="w-full px-4 py-3 bg-[#1a2942] border border-gray-600 rounded-lg text-white text-lg focus:outline-none focus:border-[#f5a623]"
+            >
+              <option value="low">Bajo (low)</option>
+              <option value="medium">Medio (medium)</option>
+              <option value="high">Alto (high)</option>
+            </select>
+            <p className="text-sm text-gray-400 mt-2">
+              Cuanto piensa el modelo antes de escribir. Mas esfuerzo suele dar analisis
+              mas profundos, pero cada seccion tarda mas.
+            </p>
+          </div>
+        )}
 
         {/* ===== SECTION 3: API Key ===== */}
         <div>

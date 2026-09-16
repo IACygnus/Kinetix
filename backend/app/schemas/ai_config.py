@@ -19,6 +19,7 @@ class AIConfigRead(BaseModel):
     id: UUID
     provider: str = "gemini"
     model_name: str = "gemini-2.5-flash"
+    reasoning_effort: Optional[str] = None   # ETAPA 2 D13: None = low
     api_key_masked: str = ""
     is_active: bool = True
     daily_request_limit: int = 1000
@@ -38,6 +39,7 @@ class AIConfigCreate(BaseModel):
     """Create/update schema"""
     provider: Optional[str] = None
     model_name: Optional[str] = None
+    reasoning_effort: Optional[str] = None   # ETAPA 2 D13
     api_key: Optional[str] = None
     is_active: Optional[bool] = None
     daily_request_limit: Optional[int] = None

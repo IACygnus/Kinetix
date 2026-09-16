@@ -19,6 +19,10 @@ import base64
 
 from app.db.session import get_db
 from app.db.models.ai_config import AIConfig
+from app.services.ai.gemini import (   # ETAPA 2 (D13)
+    REASONING_EFFORTS,
+    REASONING_EFFORT_DEFAULT,
+)
 from app.schemas.ai_config import (
     AIConfigRead, AIConfigCreate, AIProviderInfo, AITestResult, LiveModelsResponse,
 )
@@ -187,6 +191,8 @@ def _config_to_read(config: AIConfig) -> AIConfigRead:
         id=config.id,
         provider=config.provider or "gemini",
         model_name=config.model_name or "gemini-2.5-flash",
+        # ETAPA 2 (D13): NULL en base se muestra como 'low'.
+        reasoning_effort=config.reasoning_effort or REASONING_EFFORT_DEFAULT,
         api_key_masked=_mask_key(config.api_key_encrypted),
         is_active=config.is_active if config.is_active is not None else True,
         daily_request_limit=config.daily_request_limit or 1000,
@@ -238,6 +244,16 @@ async def create_or_update_ai_config(
         if not model_name:
             raise HTTPException(400, "El nombre del modelo no puede estar vacio.")
         config.model_name = model_name
+
+    # ETAPA 2 (D13): esfuerzo de razonamiento. Se valida contra la lista corta a
+    # proposito: exponer valores que el modelo rechaza reproduciria el patron B6.3
+    # (400 en mitad de una generacion, ya con el informe a medias).
+    if data.reasoning_effort is not None:
+        effort = (data.reasoning_effort or "").strip().lower()
+        if effort not in REASONING_EFFORTS:
+            raise HTTPException(
+                400, f"Esfuerzo de razonamiento invalido. Opciones: {', '.join(REASONING_EFFORTS)}")
+        config.reasoning_effort = effort
 
     # API key handling: only encrypt if it's a real new plaintext key.
     # If it's "****", "•...", or empty → keep the existing encrypted key in DB.
@@ -366,6 +382,10 @@ async def test_ai_connection(
     # Use payload values if provided, otherwise DB config
     provider = (payload or {}).get("provider") or config.provider or "gemini"
     model = (payload or {}).get("model_name") or config.model_name or "gemini-2.5-flash"
+    # ETAPA 2 (D13d): se prueba con el effort que se va a usar de verdad, para que una
+    # incompatibilidad salga aqui y no a mitad de un informe.
+    effort = ((payload or {}).get("reasoning_effort")
+              or config.reasoning_effort or REASONING_EFFORT_DEFAULT)
 
     # Determine API key: payload > DB > error
     payload_key = (payload or {}).get("api_key", "")
@@ -435,11 +455,14 @@ async def test_ai_connection(
             # B6.2: helper compartido — soporta modelos que exigen max_completion_tokens.
             # Los de razonamiento gastan el tope en tokens internos: con 10 responden
             # vacio, asi que se les da 256 (coste igualmente despreciable en un test).
-            from app.services.ai.gemini import openai_chat_completion, _openai_token_param
+            from app.services.ai.gemini import (
+                openai_chat_completion, _openai_token_param, _openai_reasoning_kwarg)
             _limit = 256 if "max_completion_tokens" in _openai_token_param(model, 1) else 10
             response = await asyncio.to_thread(
                 openai_chat_completion,
                 client, model, [{"role": "user", "content": "Responde solo: OK"}], _limit,
+                # ETAPA 2 (D13d): mismo kwarg que usara la generacion real.
+                **_openai_reasoning_kwarg(model, effort),
             )
             text = response.choices[0].message.content if response.choices else ""
             return AITestResult(

@@ -103,6 +103,7 @@ async def generate_monitoring_analysis(
             provider=ai_conf.get("provider", ""),
             model_name=ai_conf.get("model_name", ""),
             api_key=ai_conf.get("api_key", ""),
+            reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
         full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
         analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="monitoring_analysis") or ""
@@ -207,6 +208,7 @@ async def generate_evidence_analysis(
             provider=ai_conf.get("provider", ""),
             model_name=ai_conf.get("model_name", ""),
             api_key=ai_conf.get("api_key", ""),
+            reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
         full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
         analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="evidence_analysis") or ""
@@ -282,6 +284,7 @@ def _get_analyzer(ai_conf: dict):
         provider=ai_conf.get("provider", ""),
         model_name=ai_conf.get("model_name", ""),
         api_key=ai_conf.get("api_key", ""),
+        reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
     )
 
 

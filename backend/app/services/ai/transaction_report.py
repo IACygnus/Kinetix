@@ -224,6 +224,7 @@ async def generate_transaction_report(
             analyzer = get_gemini_analyzer(
                 provider=conf.get("provider", ""), model_name=conf.get("model_name", ""),
                 api_key=conf.get("api_key", ""),
+                reasoning_effort=(conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
             )
         except Exception as e:
             logger.error(f"N4.6: sin analizador disponible ({e}); las 8 secciones quedan sin texto")
