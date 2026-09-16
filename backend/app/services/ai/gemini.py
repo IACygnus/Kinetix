@@ -914,18 +914,39 @@ class GeminiAnalyzer:
         logger.info("AI CIRCUIT CLOSED: el proveedor responde de nuevo.")
 
     @classmethod
-    def _circuito_bloquea(cls) -> bool:
-        """True = no llamar. D2: pasado el enfriamiento deja pasar UNA sola prueba."""
+    def _circuito_bloquea(cls) -> Tuple[bool, bool]:
+        """(bloquea, es_prueba). D2: pasado el enfriamiento deja pasar UNA sola prueba.
+
+        Devuelve tambien si ESTA llamada es la prueba, porque quien la recibe tiene
+        que liberar el flag pase lo que pase (ADENDA A).
+        """
         with cls._lock:
             if not cls._circuit_open:
-                return False
+                return False, False
             abierto_desde = cls._circuit_opened_at
             if abierto_desde is None or (time.monotonic() - abierto_desde) < CIRCUITO_ENFRIAMIENTO_S:
-                return True
+                return True, False
             if cls._probe_in_flight:       # ya hay otra prueba en curso
-                return True
+                return True, False
             cls._probe_in_flight = True    # esta llamada es la prueba
-            return False
+            return False, True
+
+    @classmethod
+    def _fin_de_prueba(cls, motivo: str) -> None:
+        """ADENDA A: cierra el ciclo de una llamada de prueba, gane o pierda.
+
+        Va en un `finally`: antes, tres caminos (respuesta vacia por `length`, error
+        no-rate-limit y provider no soportado) salian con `return None` sin soltar
+        `_probe_in_flight`. Como `_circuito_bloquea` corta en seco si el flag esta
+        puesto, el circuito quedaba bloqueado PARA SIEMPRE: ni el enfriamiento ni un
+        proveedor ya sano lo recuperaban. Regla: solo el exito cierra el circuito;
+        cualquier otro desenlace lo reabre con marca nueva y otro enfriamiento.
+        """
+        with cls._lock:
+            ya_cerrado = not cls._circuit_open      # el exito lo cerro por su cuenta
+            cls._probe_in_flight = False
+        if not ya_cerrado:
+            cls._abrir_circuito(motivo)             # marca nueva -> otros 60 s
 
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = ""):
         self.provider = provider or DEFAULT_PROVIDER
@@ -977,7 +998,8 @@ class GeminiAnalyzer:
 
         # Circuit breaker — skip immediately if API already proven unavailable.
         # ETAPA 1.5 (D2): pasado el enfriamiento, esta llamada pasa como prueba.
-        if GeminiAnalyzer._circuito_bloquea():
+        bloquea, es_prueba = GeminiAnalyzer._circuito_bloquea()
+        if bloquea:
             logger.info(f"AI CIRCUIT OPEN: skipping {section_name} (using fallback)")
             GeminiAnalyzer._total_errors += 1
             _tel("circuit_open", 0)
@@ -986,90 +1008,96 @@ class GeminiAnalyzer:
         logger.info(f"AI CALL: provider={self.provider}, model={self.model_name}, section={section_name}, prompt_len={len(prompt)}")
         GeminiAnalyzer._total_requests += 1
 
-        for attempt in range(max_retries):
-            _t0 = datetime.now(timezone.utc)   # E1.2: latencia POR intento
-            response = None
-            try:
-                if self.provider == "gemini":
-                    response = self.model.generate_content(prompt)
-                    result = response.text
-                elif self.provider == "openai":
-                    response = openai_chat_completion(   # B6.2
-                        self._openai_client,
-                        self.model_name,
-                        [
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": prompt},
-                        ],
-                        _openai_max_tokens_for(self.model_name),
-                        temperature=GENERATION_CONFIG["temperature"],
-                    )
-                    result = response.choices[0].message.content if response.choices else None
-                    if not result:
-                        # B6.3: antes esto volvia None en silencio — sin log y sin
-                        # motivo — y por eso el fallback era invisible (error=null).
-                        fin = getattr(response.choices[0], "finish_reason", "?") if response.choices else "sin choices"
-                        motivo = (f"{self.model_name} devolvio contenido vacio "
-                                  f"(finish_reason={fin})")
-                        logger.error(f"AI EMPTY for {section_name}: {motivo}")
+        try:
+            for attempt in range(max_retries):
+                _t0 = datetime.now(timezone.utc)   # E1.2: latencia POR intento
+                response = None
+                try:
+                    if self.provider == "gemini":
+                        response = self.model.generate_content(prompt)
+                        result = response.text
+                    elif self.provider == "openai":
+                        response = openai_chat_completion(   # B6.2
+                            self._openai_client,
+                            self.model_name,
+                            [
+                                {"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": prompt},
+                            ],
+                            _openai_max_tokens_for(self.model_name),
+                            temperature=GENERATION_CONFIG["temperature"],
+                        )
+                        result = response.choices[0].message.content if response.choices else None
+                        if not result:
+                            # B6.3: antes esto volvia None en silencio — sin log y sin
+                            # motivo — y por eso el fallback era invisible (error=null).
+                            fin = getattr(response.choices[0], "finish_reason", "?") if response.choices else "sin choices"
+                            motivo = (f"{self.model_name} devolvio contenido vacio "
+                                      f"(finish_reason={fin})")
+                            logger.error(f"AI EMPTY for {section_name}: {motivo}")
+                            GeminiAnalyzer._last_error = motivo
+                            GeminiAnalyzer._total_errors += 1
+                            # E1.2: el caso B6.3 (tope agotado por razonamiento) queda
+                            # visible con sus tokens, que es justo lo que faltaba ver.
+                            _tel("empty", attempt + 1, response, fin)
+                            return None
+                    else:
+                        GeminiAnalyzer._total_errors += 1
+                        _tel("error", attempt + 1)
+                        return None
+
+                    result = sanitize_ai_text(result)
+                    # ETAPA 1.5 (D2): exito = el proveedor responde; el circuito se cierra.
+                    GeminiAnalyzer._cerrar_circuito()
+                    logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
+                    _tel("ok", attempt + 1, response,
+                         getattr(response.choices[0], "finish_reason", None)
+                         if getattr(response, "choices", None) else None)
+                    return result
+
+                except Exception as e:
+                    error_str = str(e)
+                    # ETAPA 1.5 (D3): por TIPO/codigo, nunca por subcadenas del mensaje.
+                    tipo = _clasificar_error(e)
+
+                    if tipo == "quota_exhausted":
+                        # D4: reintentar no sirve. Fallo rapido, motivo visible y circuito
+                        # abierto para no quemar las llamadas restantes contra un muro.
+                        motivo = f"{self.model_name}: cuota agotada (insufficient_quota)"
+                        logger.error(f"AI QUOTA EXHAUSTED for {section_name}: {error_str[:180]}")
                         GeminiAnalyzer._last_error = motivo
                         GeminiAnalyzer._total_errors += 1
-                        # E1.2: el caso B6.3 (tope agotado por razonamiento) queda
-                        # visible con sus tokens, que es justo lo que faltaba ver.
-                        _tel("empty", attempt + 1, response, fin)
+                        GeminiAnalyzer._abrir_circuito(f"cuota agotada en {section_name}")
+                        _tel("quota_exhausted", attempt + 1)
                         return None
-                else:
+
+                    if tipo == "rate_limit":
+                        # D5: se respeta Retry-After si el proveedor lo manda; si no, 5/10/15.
+                        wait_time = _espera_sugerida(e) or min((attempt + 1) * 5, 15)
+                        logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
+                        _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
+                        time.sleep(wait_time)
+                        continue
+
+                    # D3: cualquier otro error NO es rate-limit: sin espera y SIN abrir el
+                    # circuito. Un fallo puntual de una seccion no puede dejar sin IA al resto.
+                    logger.error(f"AI ERROR for {section_name}: {error_str}")
+                    GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
                     GeminiAnalyzer._total_errors += 1
                     _tel("error", attempt + 1)
                     return None
 
-                result = sanitize_ai_text(result)
-                # ETAPA 1.5 (D2): exito = el proveedor responde; el circuito se cierra.
-                GeminiAnalyzer._cerrar_circuito()
-                logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
-                _tel("ok", attempt + 1, response,
-                     getattr(response.choices[0], "finish_reason", None)
-                     if getattr(response, "choices", None) else None)
-                return result
-
-            except Exception as e:
-                error_str = str(e)
-                # ETAPA 1.5 (D3): por TIPO/codigo, nunca por subcadenas del mensaje.
-                tipo = _clasificar_error(e)
-
-                if tipo == "quota_exhausted":
-                    # D4: reintentar no sirve. Fallo rapido, motivo visible y circuito
-                    # abierto para no quemar las llamadas restantes contra un muro.
-                    motivo = f"{self.model_name}: cuota agotada (insufficient_quota)"
-                    logger.error(f"AI QUOTA EXHAUSTED for {section_name}: {error_str[:180]}")
-                    GeminiAnalyzer._last_error = motivo
-                    GeminiAnalyzer._total_errors += 1
-                    GeminiAnalyzer._abrir_circuito(f"cuota agotada en {section_name}")
-                    _tel("quota_exhausted", attempt + 1)
-                    return None
-
-                if tipo == "rate_limit":
-                    # D5: se respeta Retry-After si el proveedor lo manda; si no, 5/10/15.
-                    wait_time = _espera_sugerida(e) or min((attempt + 1) * 5, 15)
-                    logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
-                    _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
-                    time.sleep(wait_time)
-                    continue
-
-                # D3: cualquier otro error NO es rate-limit: sin espera y SIN abrir el
-                # circuito. Un fallo puntual de una seccion no puede dejar sin IA al resto.
-                logger.error(f"AI ERROR for {section_name}: {error_str}")
-                GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
-                GeminiAnalyzer._total_errors += 1
-                _tel("error", attempt + 1)
-                return None
-
-        # All retries exhausted — open circuit breaker for remaining calls
-        logger.warning(f"AI UNAVAILABLE: {section_name} - max retries exceeded. CIRCUIT BREAKER OPEN — all remaining calls will use fallback.")
-        GeminiAnalyzer._abrir_circuito(f"{max_retries} intentos agotados en {section_name}")
-        GeminiAnalyzer._total_errors += 1
-        _tel("fallback", max_retries)
-        return None
+            # All retries exhausted — open circuit breaker for remaining calls
+            logger.warning(f"AI UNAVAILABLE: {section_name} - max retries exceeded. CIRCUIT BREAKER OPEN — all remaining calls will use fallback.")
+            GeminiAnalyzer._abrir_circuito(f"{max_retries} intentos agotados en {section_name}")
+            GeminiAnalyzer._total_errors += 1
+            _tel("fallback", max_retries)
+            return None
+        finally:
+            # ADENDA A: la prueba suelta el flag pase lo que pase.
+            if es_prueba:
+                GeminiAnalyzer._fin_de_prueba(
+                    f"la llamada de prueba de {section_name} no tuvo exito")
 
     def analyze_image(
         self,
