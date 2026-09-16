@@ -1,9 +1,13 @@
 /**
- * N4.7 — Mini-informe por transaccion critica: 5 graficas (N4.4) + 8 textos (N4.6).
+ * Informe por transaccion: 5 graficas (N4.4) + 6 textos.
  *
- * Vive aparte de Dashboard.tsx (protegido), que solo lo monta. Todo el estado del
- * mini-informe —series, textos, generacion, sondeo y autoguardado— es de este
- * componente.
+ * ETAPA 2: eran 8 textos; conclusiones y recomendaciones por transaccion salieron
+ * (D20, v1.2 §1.1). Los bloques se muestran ABIERTOS al abrir el informe y sus
+ * datos se piden solos: antes era un acordeon con carga bajo demanda, y eso
+ * contradecia "el mismo informe general, filtrado" de §1.
+ *
+ * Vive aparte de Dashboard.tsx (protegido), que solo lo monta. Todo el estado
+ * —series, textos, generacion, sondeo y autoguardado— es de este componente.
  *
  * Regla 16: TODOS los hooks se declaran antes de cualquier return.
  */
@@ -11,12 +15,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { ChevronDown, ChevronRight, Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
+import { Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../../services/api';
 import { getColorForIndex, getCodeColor } from '../../config/chartConfig';
 
+// ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
+// transaccion se retiraron (v1.2 §1.1): van una sola vez al final del informe.
+// Esta lista duplicaba la del backend (SECTIONS_GENERADAS); se mantiene el duplicado
+// porque el frontend no importa constantes del backend, pero ahora coinciden.
 const SECTIONS = ['summary', 'chart_response_times', 'chart_latency', 'chart_error_rate',
-  'chart_codes', 'chart_tps', 'conclusions', 'recommendations'] as const;
+  'chart_codes', 'chart_tps'] as const;
 
 const TITULOS: Record<string, string> = {
   summary: 'Resumen de la transaccion',
@@ -124,7 +132,7 @@ function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: 
           timer.current = window.setTimeout(() => { timer.current = null; guardar(v); }, AUTOSAVE_MS);
         }}
         onBlur={() => { if (timer.current) clearTimeout(timer.current); guardar(local); }}
-        placeholder="Sin texto todavia. Genera el mini-informe o escribelo a mano."
+        placeholder="Sin texto todavia. Genera el analisis o escribelo a mano."
         className="w-full p-4 border-2 border-gray-300 rounded-xl text-lg text-gray-800 focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-500 resize-y hover:border-indigo-300 transition-colors"
         style={{ minHeight: '150px' }}
       />
@@ -221,9 +229,13 @@ export default function TransactionReportSection({ executionId }: { executionId:
 
   useEffect(() => { cargarRef.current = cargar; }, [cargar]);
 
+  // ETAPA 2: los bloques salen ABIERTOS, asi que sus datos se piden solos al abrir
+  // el informe, no al desplegar. Antes esto cargaba unicamente la transaccion que
+  // el usuario abria, y por eso la pagina no pintaba ninguna grafica por
+  // transaccion hasta que alguien pulsaba. La carga sigue siendo asincrona.
   useEffect(() => {
-    if (abierta && !datos[abierta]) cargar(abierta);
-  }, [abierta, datos, cargar]);
+    labels.forEach((l) => { if (!datos[l]) cargar(l); });
+  }, [labels, datos, cargar]);
 
   // 3. Sondeo del progreso mientras se genera. Si el GET falla varias veces
   // seguidas se avisa y se deja de sondear: el usuario ve las secciones reales
@@ -294,7 +306,7 @@ export default function TransactionReportSection({ executionId }: { executionId:
     <div className="mb-8">
       <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
         <div className="bg-[#0a1628] px-6 py-4 flex items-center justify-between gap-4">
-          <h2 className="text-3xl font-bold text-white">Mini-informe por Transaccion</h2>
+          <h2 className="text-3xl font-bold text-white">Informe por Transaccion</h2>
           <button
             onClick={() => setCola(labels.filter((l) => l !== generandoRef.current))}
             disabled={!!generando || !!cola.length}
@@ -316,7 +328,7 @@ export default function TransactionReportSection({ executionId }: { executionId:
                     || auto.labels.find((l) => l.state === 'pendiente');
                   return act
                     ? `Generando ${act.label} — ${Math.min(act.done + 1, act.total)} de ${act.total}`
-                    : 'Generando los mini-informes...';
+                    : 'Generando los analisis por transaccion...';
                 })()}
                 <span className="text-indigo-600 font-normal">
                   ({auto.done_labels} de {auto.total_labels} transacciones)
@@ -346,15 +358,17 @@ export default function TransactionReportSection({ executionId }: { executionId:
             const conTexto = secciones.filter((s) => s.ai_analysis).length;
             const enCurso = generando === label;
             const prog = est?.progreso;
-            const abierto = abierta === label;
+            // ETAPA 2: sin acordeon. Todos los bloques se ven, igual que el general.
+            const abierto = true;
 
             return (
               <div key={label} className="border-2 border-gray-200 rounded-2xl overflow-hidden">
                 <div className="flex items-center justify-between gap-4 px-5 py-4 bg-gray-50">
-                  <button onClick={() => setAbierta(abierto ? null : label)} className="flex items-center gap-3 text-left flex-1">
-                    {abierto ? <ChevronDown className="w-6 h-6 text-gray-500" /> : <ChevronRight className="w-6 h-6 text-gray-500" />}
+                  {/* ETAPA 2 (D16): el titulo es el nombre EXACTO de la transaccion,
+                      sin prefijos ni subtitulos. Ya no es un boton: no hay acordeon. */}
+                  <div className="flex items-center gap-3 text-left flex-1">
                     <span className="text-2xl font-bold text-gray-800">{label}</span>
-                    <span className="text-base text-gray-500">{conTexto} de 8 secciones</span>
+                    <span className="text-base text-gray-500">{conTexto} de {prog?.total ?? SECTIONS.length} secciones</span>
                     {/* N4.10: la que esta esperando o corriendo por su cuenta. */}
                     {(() => {
                       const a = auto?.labels.find((l) => l.label === label);
@@ -365,14 +379,14 @@ export default function TransactionReportSection({ executionId }: { executionId:
                         return <span className="text-base text-gray-500">en cola</span>;
                       return null;
                     })()}
-                  </button>
+                  </div>
                   <button
                     onClick={() => generar(label)}
                     disabled={!!generando || !!cola.length}
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-base font-semibold rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50"
                   >
                     {enCurso ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                    {conTexto ? 'Regenerar' : 'Generar mini-informe'}
+                    {conTexto ? 'Regenerar' : 'Generar analisis'}
                   </button>
                 </div>
 

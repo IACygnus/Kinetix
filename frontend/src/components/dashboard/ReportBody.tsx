@@ -220,10 +220,11 @@ export interface ReportBodyCtx {
 
 export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: ReportBodyCtx }) {
   const {
-    responseTimesByLabel, rtMaxKeys, rtMaxLabels, throughputData, latencyData,
+    responseTimesByLabel, rtMaxKeys, rtMaxLabels, latencyData,
     errorRateData, codesPerSecond, tpsByLabel, activeThreadsData,
     analysisResponseTimes, setAnalysisResponseTimes,
-    analysisThroughput, setAnalysisThroughput,
+    // D19: throughputData y analysisThroughput siguen en el ctx (el llamador los
+    // pasa) pero ya no se desestructuran: la grafica salio del producto.
     analysisLatency, setAnalysisLatency,
     analysisErrorRate, setAnalysisErrorRate,
     analysisCodesPerSecond, setAnalysisCodesPerSecond,
@@ -234,7 +235,10 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
     hiddenLinesCodes, setHiddenLinesCodes,
     minH, emitEdit, getYDomain, extractY, handleYRange, AnalysisBox, handleLegendClick,
   } = ctx;
-  void scope;   // en este paso solo existe 'general'; el filtrado llega despues
+  // ETAPA 2 (D18/D21): el unico punto donde el alcance cambia lo que se pinta.
+  // Todo lo demas es identico en general y en transaccion, que es justamente lo
+  // que pide v1.2 §1: "el mismo informe general, filtrado".
+  const esGeneral = scope.kind === 'general';
 
   return (
           <div className="bg-white rounded-b-2xl shadow-lg p-6 space-y-10 border border-gray-200 border-t-0">
@@ -271,22 +275,10 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 dual avg/max. El analisis IA ya guardado se sigue cargando y guardando,
                 solo deja de pintarse. */}
 
-            {/* 3. Throughput */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-              <h3 className="text-3xl font-bold text-gray-800 mb-4 border-l-4 border-[#0a1628] pl-4">Throughput Over Time</h3>
-              <ResponsiveContainer width="100%" height={minH}>
-                <AreaChart data={throughputData} margin={CHART_LAYOUT.padding}>
-                  <defs><linearGradient id="colorThroughput" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#06b6d4" stopOpacity={0.8}/><stop offset="95%" stopColor="#06b6d4" stopOpacity={0.1}/></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis {...getXAxisProps(throughputData.length)} />
-                  <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('throughput')} allowDataOverflow={true} label={{ value: 'Requests/sec', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
-                  <Tooltip content={<CustomChartTooltip unit="req/s" />} />
-                  <Area type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={1.5} dot={false} fillOpacity={0.15} fill="url(#colorThroughput)" connectNulls isAnimationActive={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-              <ChartYAxisZoom dataValues={extractY(throughputData, ['value'])} onRangeChange={(mn, mx) => handleYRange('throughput', mn, mx)} />
-              <AnalysisBox value={analysisThroughput} onChange={emitEdit('ai_analysis_throughput', setAnalysisThroughput)} />
-            </div>
+            {/* ETAPA 2 (D19): "Throughput Over Time" se retiro del producto entero
+                (especificacion v1.2 §1.2). Iba aqui, entre Response Times y Latency.
+                El escalar `throughput` (req/s) de la tabla resumen y de los KPI NO
+                se toca: lo que sale es la GRAFICA y su analisis. */}
 
             {/* 4. Latency */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
@@ -362,6 +354,9 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
             </div>
 
             {/* 8. Active Threads */}
+            {/* ETAPA 2 (D18): los hilos son de TODA la prueba, no de una transaccion
+                (v1.2 §1.2), asi que esta grafica solo aparece en el alcance general. */}
+            {esGeneral && (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
               <h3 className="text-3xl font-bold text-gray-800 mb-4 border-l-4 border-[#0a1628] pl-4">Active Threads Over Time</h3>
               <ResponsiveContainer width="100%" height={minH}>
@@ -377,6 +372,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
               <ChartYAxisZoom dataValues={extractY(activeThreadsData, ['value'])} onRangeChange={(mn, mx) => handleYRange('threads', mn, mx)} />
               <AnalysisBox value={analysisActiveThreads} onChange={emitEdit('ai_analysis_active_threads', setAnalysisActiveThreads)} />
             </div>
+            )}
           </div>
   );
 }
