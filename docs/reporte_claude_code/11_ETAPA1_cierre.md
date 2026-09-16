@@ -22,13 +22,15 @@ se activó.
 | 1.6 Corrida 2 (después) | `08_ETAPA1_6_corrida2_baseline.md` | `5d2193c` | **`0c49419`** |
 | Adenda A | `09_ETAPA1_adendaA_liberacion_flag_prueba.md` | `0c49419` | **`fc7168e`** |
 | 1.7 Análisis | `10_ETAPA1_7_analisis_linea_base.md` | `fc7168e` | **`3f62086`** |
-| 1.8 Cierre | `11_ETAPA1_cierre.md` | `3f62086` | *(este commit)* |
+| 1.8 Cierre | `11_ETAPA1_cierre.md` | `3f62086` | **`5e8b863`** |
+| Adenda B | `12_ETAPA1_adendaB_errores_transitorios.md` | `5e8b863` | *(commit de la adenda B)* |
 
 El hash base de cada reporte coincide con el commit del sub-paso anterior: la cadena es continua
 y cada reporte declara sobre qué estado del repositorio se escribió.
 
-> Nota de numeración: la secuencia se corrió respecto al plan original porque la adenda A añadió
-> un reporte (09). Por eso 1.7 es el 10 y el cierre el 11.
+> Nota de numeración: la secuencia se corrió respecto al plan original porque las adendas
+> añadieron dos reportes (09 y 12). Por eso 1.7 es el 10 y el cierre el 11, y la adenda B queda
+> después del cierre por ser posterior a él.
 
 ---
 
@@ -55,9 +57,28 @@ Tres defectos encadenados, todos corregidos:
    `"Failed to generate response"` (contiene *rate*) dormía 30 s para nada.
 3. El cliente sumaba **hasta 9 peticiones HTTP** por sección, invisibles para la telemetría.
 
+### Adenda B — los fallos recuperables vuelven a reintentarse (D9-D12)
+
+D5 había puesto `max_retries=0` en el cliente para hacer visible cada intento, y con eso desactivó
+también el reintento de **siete tipos de fallo transitorio** que el SDK sí reintentaba
+(desconexión, timeout, 408, 409, 5xx, y los equivalentes de Gemini). Un corte de red de un
+segundo dejaba la sección sin texto.
+
+| | Decisión | Efecto |
+|---|---|---|
+| D9 | Clase `transient` con reintento propio (2 s y 4 s) | El reintento vuelve, y ahora **cada intento deja su línea de telemetría** |
+| D10 | Transitorio agotado → abre el circuito con enfriamiento | Mismo camino que `rate_limit`; no hizo falta código nuevo |
+| D11 | `timeout=120.0` en el cliente | Era `read=600 s`: una llamada colgada retenía un hilo diez minutos |
+| D12 | 4xx no listados → error seco, sin abrir el circuito | Ya era así; verificado, no cambia |
+
+Validado con 8 escenarios (3/8 pasaban antes, 8/8 ahora) más la regresión completa de 1.5 y de
+la adenda A.
+
 ### Telemetría (E1.2, previa a la etapa)
 
 Una línea por llamada con latencia y tokens. Sin ella, H1 no se podía responder.
+La adenda B añade el outcome `transient_error`; el resto queda intacto y las corridas siguen
+siendo comparables.
 
 ---
 
@@ -101,10 +122,10 @@ secuencialidad, no por lo que se hizo aquí.
 ## 6. Verificación final
 
 - `git status`: limpio.
-- 9 commits de la etapa, todos en `github/backup-trabajo-local`.
-- Reportes 03-11 en `docs/reporte_claude_code/`, numeración consecutiva sin huecos.
+- 11 commits de la etapa, todos en `github/backup-trabajo-local`.
+- Reportes 03-12 en `docs/reporte_claude_code/`, numeración consecutiva sin huecos.
 - `py_compile` verde en los 9 archivos tocados a lo largo de la etapa.
-- Escenarios con stubs: **12/12** (HF-2) + **8/8** (adenda A) + event loop, todos con
+- Escenarios con stubs: **12/12** (HF-2) + **8/8** (adenda A) + **8/8** (adenda B) + event loop, todos con
   **0 llamadas reales**.
 
 ---
@@ -114,5 +135,5 @@ secuencialidad, no por lo que se hizo aquí.
 La validación de Fredy desde la interfaz, con el guion de `/tmp/reporte-para-fredy-etapa1.md`.
 
 **HF-2 no se puede provocar desde la interfaz**: requiere que el proveedor devuelva un 429 o
-agote la cuota. Su evidencia son los 20 escenarios con stubs de los reportes 07 y 09, no una
+agote la cuota. Su evidencia son los 28 escenarios con stubs de los reportes 07, 09 y 12, no una
 prueba manual.

@@ -37,6 +37,23 @@ try:
 except ImportError:
     _GoogleResourceExhausted = None
 
+# ADENDA B (D9): fallos de red o del servidor que SI merecen reintento. Son los que
+# el SDK reintentaba por su cuenta hasta que D5 le puso max_retries=0; sin esto, una
+# desconexion puntual tumbaba la seccion al primer intento.
+try:
+    from openai import APIConnectionError as _OpenAIAPIConnectionError
+    from openai import APITimeoutError as _OpenAIAPITimeoutError
+except ImportError:
+    _OpenAIAPIConnectionError = _OpenAIAPITimeoutError = None
+try:
+    from google.api_core.exceptions import (
+        ServiceUnavailable as _GoogleServiceUnavailable,
+        InternalServerError as _GoogleInternalServerError,
+        DeadlineExceeded as _GoogleDeadlineExceeded,
+    )
+except ImportError:
+    _GoogleServiceUnavailable = _GoogleInternalServerError = _GoogleDeadlineExceeded = None
+
 logger = logging.getLogger(__name__)
 
 # ==================== CONSTANTS ====================
@@ -197,10 +214,15 @@ def openai_chat_completion(client, model_name: str, messages: list, limit: int, 
 # "Failed to generate response" o un "resource not found" pagaban 30 s de espera
 # por nada. Ahora se mira el tipo de excepcion y el codigo HTTP.
 CIRCUITO_ENFRIAMIENTO_S = 60          # D2: tiempo antes de permitir una llamada de prueba
+# ADENDA B (D11): el defecto del SDK era read=600 s. Una seccion colgada retenia un hilo
+# diez minutos y el informe entero se quedaba esperando. 120 s sobra: la llamada mas lenta
+# medida en las dos corridas de linea base fue de 15,9 s.
+CLIENTE_TIMEOUT_S = 120.0
+ESPERA_TRANSITORIA_S = 2              # D9: esperas de 2 s y 4 s entre intentos transitorios
 
 
 def _clasificar_error(err) -> str:
-    """'quota_exhausted' | 'rate_limit' | 'error'. Sin heuristicas de texto."""
+    """'quota_exhausted' | 'rate_limit' | 'transient' | 'error'. Sin heuristicas de texto."""
     # D4: cuota agotada. Es un 429 tambien, asi que se mira ANTES que el rate-limit.
     codigo = getattr(getattr(err, "body", None), "get", lambda *_: None)("code") \
         if isinstance(getattr(err, "body", None), dict) else None
@@ -209,12 +231,30 @@ def _clasificar_error(err) -> str:
     if codigo == "insufficient_quota":
         return "quota_exhausted"
 
+    # RateLimitError va ANTES que APIStatusError: es subclase suya.
     if _OpenAIRateLimitError is not None and isinstance(err, _OpenAIRateLimitError):
         return "rate_limit"
     if _OpenAIAPIStatusError is not None and isinstance(err, _OpenAIAPIStatusError):
-        return "rate_limit" if getattr(err, "status_code", None) == 429 else "error"
+        estado = getattr(err, "status_code", None)
+        if estado == 429:
+            return "rate_limit"
+        # ADENDA B (D9): los mismos codigos que el SDK reintentaba.
+        if estado in (408, 409) or (isinstance(estado, int) and estado >= 500):
+            return "transient"
+        # D12: el resto de 4xx (400, 401, 403, 404...) es culpa de la peticion.
+        # Reintentar no cambia nada: error seco, sin espera y sin abrir el circuito.
+        return "error"
+    # APITimeoutError es subclase de APIConnectionError; basta comprobar la base.
+    if _OpenAIAPIConnectionError is not None and isinstance(err, _OpenAIAPIConnectionError):
+        return "transient"
     if _GoogleResourceExhausted is not None and isinstance(err, _GoogleResourceExhausted):
         return "rate_limit"
+    transitorias_gemini = tuple(
+        c for c in (_GoogleServiceUnavailable, _GoogleInternalServerError, _GoogleDeadlineExceeded)
+        if c is not None
+    )
+    if transitorias_gemini and isinstance(err, transitorias_gemini):
+        return "transient"
     return "error"
 
 
@@ -978,7 +1018,8 @@ class GeminiAnalyzer:
             # sumado al bucle propio de 3 intentos, una sola seccion podia lanzar hasta
             # 9 peticiones HTTP invisibles para la telemetria. Los reintentos los hace
             # SOLO el bucle de `_generate`, y asi cada intento deja su linea.
-            self._openai_client = OpenAI(api_key=self._api_key, max_retries=0)
+            self._openai_client = OpenAI(
+                api_key=self._api_key, max_retries=0, timeout=CLIENTE_TIMEOUT_S)
             logger.info(f"AIAnalyzer v4.0 iniciado: provider=openai, model={self.model_name}")
         else:
             raise ValueError(f"Proveedor no soportado: {self.provider}")
@@ -1077,6 +1118,20 @@ class GeminiAnalyzer:
                         logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
                         _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
                         time.sleep(wait_time)
+                        continue
+
+                    if tipo == "transient":
+                        # ADENDA B (D9): red caida, timeout o 5xx. Son los casos que el SDK
+                        # reintentaba antes de D5; sin este reintento, un corte de un segundo
+                        # dejaba la seccion sin texto. Esperas cortas: 2 s y 4 s.
+                        wait_time = ESPERA_TRANSITORIA_S * (attempt + 1)
+                        logger.warning(f"AI TRANSIENT (attempt {attempt+1}/{max_retries}) for {section_name}: {error_str[:120]}. Waiting {wait_time}s...")
+                        GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"
+                        _tel("transient_error", attempt + 1)
+                        # Sin dormir tras el ultimo intento: no queda nada que esperar.
+                        # Con max_retries=3 las esperas son 2 s y 4 s, no 2/4/6.
+                        if attempt + 1 < max_retries:
+                            time.sleep(wait_time)
                         continue
 
                     # D3: cualquier otro error NO es rate-limit: sin espera y SIN abrir el
