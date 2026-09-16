@@ -1087,8 +1087,12 @@ _SECCION_LABEL = {
     "ai_analysis_summary": "Resumen general",
     "ai_analysis_errors": "Analisis de errores",
     "ai_analysis_response_times": "Tiempos de respuesta por transaccion",
-    "ai_analysis_response_time_over_time": "Tiempo de respuesta en el tiempo",
-    "ai_analysis_throughput": "Throughput",
+    # ETAPA 2 (D19/D23): "Tiempo de respuesta en el tiempo" y "Throughput" salieron
+    # del producto y NO deben alimentar el consolidado. Quitarlas de aqui es lo que
+    # de verdad las saca: para una ejecucion nueva el campo va vacio y el filtro
+    # `if not texto` ya las descartaba, pero si la seccion tiene un OVERRIDE editado
+    # a mano (y en la base hay informes reales que lo tienen), ese texto SI entraba
+    # en el prompt del consolidado. Las filas de override no se borran: se ignoran.
     "ai_analysis_latency": "Latencia",
     "ai_analysis_error_rate": "Tasa de error",
     "ai_analysis_codes_per_second": "Codigos HTTP por segundo",

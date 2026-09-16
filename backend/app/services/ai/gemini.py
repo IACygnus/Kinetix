@@ -1606,6 +1606,8 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
         ai_analysis_summary: str,
         ai_analysis_errors: str,
         ai_analysis_response_times: str,
+        # ETAPA 2 (D19): se siguen aceptando para no tocar a los llamadores, pero
+        # YA NO ENTRAN en el prompt: las dos secciones salieron del producto.
         ai_analysis_response_time_over_time: str,
         ai_analysis_throughput: str,
         ai_analysis_latency: str,
@@ -1688,25 +1690,19 @@ ANALISIS REALIZADOS:
 3. RESPONSE TIMES POR TRANSACCION:
 {ai_analysis_response_times}
 
-4. RESPONSE TIME OVER TIME:
-{ai_analysis_response_time_over_time}
-
-5. THROUGHPUT:
-{ai_analysis_throughput}
-
-6. LATENCY:
+4. LATENCY:
 {ai_analysis_latency}
 
-7. ERROR RATE:
+5. ERROR RATE:
 {ai_analysis_error_rate}
 
-8. CODIGOS HTTP:
+6. CODIGOS HTTP:
 {ai_analysis_codes_per_second}
 
-9. TPS:
+7. TPS:
 {ai_analysis_transactions_per_second}
 
-10. ACTIVE THREADS:
+8. ACTIVE THREADS:
 {ai_analysis_active_threads}
 {redirect_section}
 Escribe 6 conclusiones ejecutivas como parrafos completos. Maximo 350 palabras total.
@@ -1729,6 +1725,8 @@ CADA conclusion debe sintetizar multiples analisis y nombrar transacciones espec
         ai_analysis_summary: str,
         ai_analysis_errors: str,
         ai_analysis_response_times: str,
+        # ETAPA 2 (D19): se siguen aceptando para no tocar a los llamadores, pero
+        # YA NO ENTRAN en el prompt: las dos secciones salieron del producto.
         ai_analysis_response_time_over_time: str,
         ai_analysis_throughput: str,
         ai_analysis_latency: str,
@@ -1804,10 +1802,8 @@ ERRORES:
 
 PATRONES DE TIEMPOS:
 {ai_analysis_response_times}
-{ai_analysis_response_time_over_time}
 
 CAPACIDAD:
-{ai_analysis_throughput}
 {ai_analysis_transactions_per_second}
 
 INFRAESTRUCTURA:
