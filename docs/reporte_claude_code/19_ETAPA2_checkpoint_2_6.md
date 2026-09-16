@@ -56,6 +56,11 @@ Reportes 13 a 18 en `docs/reporte_claude_code/`. Reglas 19 y 20 de CLAUDE.md: lo
 
 ## 3. Qué falta para cerrar 2.6
 
+> **AL DÍA (`adeebcc`): los tres ajustes de esta sección están hechos**, más D17 en
+> pantalla. El detalle y las mediciones, en el **reporte 20**. Lo que sigue pendiente
+> se lista en el §5 de ese reporte. Se conserva el enunciado original para que se vea
+> qué se pidió.
+
 Ajustes pedidos por Fredy después de 2.6b:
 
 1. **Quitar el encabezado de grupo «Informe por Transaccion».** Tras el informe general, cada
