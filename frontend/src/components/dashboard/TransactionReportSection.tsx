@@ -16,6 +16,7 @@ import { Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../../services/api';
 import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
 import ReportBody, { ReportBodyCtx } from './ReportBody';
+import SummaryTable, { SummaryRow } from './SummaryTable';
 
 // ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
 // transaccion se retiraron (v1.2 §1.1): van una sola vez al final del informe.
@@ -241,7 +242,13 @@ function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: 
   );
 }
 
-export default function TransactionReportSection({ executionId }: { executionId: string }) {
+export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0 }: {
+  executionId: string;
+  /** ETAPA 2 (D15): las filas de by_label que Dashboard ya pidio a /charts. Se pasan
+   *  en vez de volver a pedir el endpoint entero (850 KB) solo para una fila. */
+  byLabel?: SummaryRow[];
+  durationSeconds?: number;
+}) {
   const [labels, setLabels] = useState<string[]>([]);
   const [abierta, setAbierta] = useState<string | null>(null);
   const [datos, setDatos] = useState<Record<string, Estado>>({});
@@ -539,24 +546,30 @@ export default function TransactionReportSection({ executionId }: { executionId:
                   <div className="p-5 space-y-6">
                     {!est && <div className="text-gray-500 text-lg">Cargando gráficas y textos...</div>}
 
-                    {/* Resumen de la transaccion: es la unica seccion que no
-                        acompana a una grafica, asi que se pinta aqui arriba.
-                        PENDIENTE (v1.2 §1): le falta su tabla resumen filtrada a
-                        esta transaccion; el dato existe en by_label de /charts. */}
+                    {/* ETAPA 2 (D15, v1.2 §1): la MISMA tabla resumen del informe
+                        general, filtrada a esta transaccion, y debajo su analisis.
+                        Sin fila TOTAL: con una sola transaccion seria la misma cifra
+                        repetida. */}
                     {(() => {
                       const fila = secciones.find((s) => s.section === 'summary');
+                      const filaTabla = byLabel.filter((r) => r.label === label);
                       return (
-                        <div>
-                          <h4 className="text-xl font-bold text-gray-800 mb-2 border-l-4 border-indigo-500 pl-3">
-                            {TITULOS.summary}
-                            {fila?.generated_at && !fila?.is_edited && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
-                          </h4>
-                          <TextoEditable
-                            valor={fila?.ai_analysis || ''}
-                            editado={!!fila?.is_edited}
-                            onGuardar={(v) => guardarSeccion(label, 'summary', v)}
-                          />
-                        </div>
+                        <>
+                          {filaTabla.length > 0 && (
+                            <SummaryTable rows={filaTabla} durationSeconds={durationSeconds} />
+                          )}
+                          <div>
+                            <h4 className="text-xl font-bold text-gray-800 mb-2 border-l-4 border-indigo-500 pl-3">
+                              {TITULOS.summary}
+                              {fila?.generated_at && !fila?.is_edited && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
+                            </h4>
+                            <TextoEditable
+                              valor={fila?.ai_analysis || ''}
+                              editado={!!fila?.is_edited}
+                              onGuardar={(v) => guardarSeccion(label, 'summary', v)}
+                            />
+                          </div>
+                        </>
                       );
                     })()}
 

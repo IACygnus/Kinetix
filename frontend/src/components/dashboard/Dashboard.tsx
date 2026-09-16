@@ -906,7 +906,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             entre el informe general y las conclusiones — v1.2 §1 pone las
             conclusiones una sola vez y al final, sobre toda la prueba. Antes se
             montaba despues de ellas. El componente decide si hay algo que mostrar. */}
-        {!embedded && <TransactionReportSection executionId={executionId} />}
+        {!embedded && (
+          <TransactionReportSection
+            executionId={executionId}
+            byLabel={charts.by_label || []}
+            durationSeconds={execution.duration_seconds}
+          />
+        )}
 
         {/* CONCLUSIONES Y RECOMENDACIONES — hidden when embedded in integrated report */}
         {!embedded && (
