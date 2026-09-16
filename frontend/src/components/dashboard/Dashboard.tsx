@@ -8,6 +8,7 @@ import { testAPI } from '../../services/api';
 // LoadingSpinner replaced with inline loading indicator for better UX
 // Monitoring, Evidence, Capacity, and Comparison moved to standalone pages (R3-A)
 import ReportBody from './ReportBody';   // ETAPA 2 (D21): el cuerpo del informe
+import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
 import {
   CHART_LAYOUT,
@@ -691,69 +692,14 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
 
         {/* REPORTE RESUMEN TABLE */}
         <div className="mb-8">
-          <div className="w-full overflow-x-auto rounded-2xl shadow-lg border border-gray-200">
-            <div className="bg-[#0a1628] px-6 py-4">
-              <h2 className="text-3xl font-bold text-white">Reporte Resumen</h2>
-            </div>
-            <table className="w-full table-auto text-lg">
-              <thead className="bg-[#0a1628]">
-                <tr>
-                  <th className="px-3 py-2 text-left text-base font-bold text-white uppercase">Transaccion</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Muestras</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Errores</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">% Error</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Promedio</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Mediana</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">90%</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">95%</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">99%</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Min</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Max</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">TPS</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">KB/s Rec</th>
-                  <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">KB/s Env</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-100">
-                {(charts.by_label || []).map((row: any, idx: number) => (
-                  <tr key={idx} className="hover:bg-blue-50/50 transition-colors">
-                    <td className="px-3 py-2 text-base font-medium text-gray-900 max-w-[250px] truncate" title={row.label}>{row.label}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.count.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-base text-right text-red-600 font-semibold">{(row.error_count ?? (row.count - row.success_count)).toLocaleString()}</td>
-                    <td className={`px-3 py-2 text-base text-right font-semibold ${(row.error_rate ?? 0) === 0 ? 'text-green-600' : (row.error_rate ?? 0) < 5 ? 'text-orange-600 bg-orange-50' : 'text-red-600 bg-red-50'}`}>
-                      {(row.error_rate ?? ((row.count - row.success_count) / row.count * 100)).toFixed(2)}%
-                    </td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.avg_time >= 1000 ? Math.round(row.avg_time).toLocaleString() : row.avg_time.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.avg_time >= 1000 ? Math.round(row.avg_time).toLocaleString() : row.avg_time.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{(row.p90 ?? row.avg_time * 1.5) >= 1000 ? Math.round(row.p90 ?? row.avg_time * 1.5).toLocaleString() : (row.p90 ?? row.avg_time * 1.5).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{(row.p95 ?? row.avg_time * 2) >= 1000 ? Math.round(row.p95 ?? row.avg_time * 2).toLocaleString() : (row.p95 ?? row.avg_time * 2).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{(row.p99 ?? row.avg_time * 3) >= 1000 ? Math.round(row.p99 ?? row.avg_time * 3).toLocaleString() : (row.p99 ?? row.avg_time * 3).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.min_time >= 1000 ? Math.round(row.min_time).toLocaleString() : row.min_time.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.max_time >= 1000 ? Math.round(row.max_time).toLocaleString() : row.max_time.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-blue-700 font-semibold">{(row.throughput ?? (row.count / (execution.duration_seconds || 1))).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.kb_received?.toFixed(2) || '--'}</td>
-                    <td className="px-3 py-2 text-base text-right text-gray-700">{row.kb_sent?.toFixed(2) || '--'}</td>
-                  </tr>
-                ))}
-                <tr className="bg-[#0a1628] text-white font-bold">
-                  <td className="px-3 py-2 text-base">TOTAL PRINCIPALES</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.total_requests.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.total_errors.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.error_rate.toFixed(2)}%</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.avg_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.median_response_time?.toFixed(2) || '--'}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.p90_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.p95_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.p99_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.min_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.max_response_time.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.throughput.toFixed(2)}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.kb_per_sec_received?.toFixed(2) || '--'}</td>
-                  <td className="px-3 py-2 text-base text-right">{execution.kb_per_sec_sent?.toFixed(2) || '--'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          {/* ETAPA 2 (D15/D21): la tabla vive en SummaryTable.tsx (no protegido) para
+              que el bloque de cada transaccion pinte EXACTAMENTE esta misma tabla,
+              filtrada a una fila. */}
+          <SummaryTable
+            rows={charts.by_label || []}
+            durationSeconds={execution.duration_seconds}
+            total={execution}
+          />
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
             <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
             <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
