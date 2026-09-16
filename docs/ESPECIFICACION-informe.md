@@ -1,6 +1,6 @@
 # Especificación funcional del informe — Kinetix Pro
 
-**Versión 1.1 · Aprobada por Fredy Bonilla**
+**Versión 1.2 · Aprobada por Fredy Bonilla**
 
 Referencia única de cómo debe quedar el informe. Todo prompt de desarrollo se valida
 contra este documento, no contra mensajes anteriores.
@@ -77,6 +77,10 @@ Mismas tablas, mismas gráficas, mismo estilo visual. No es un formato nuevo.
 | Transacción · Muestras · Promedio · P90 · Max · Errores | **Transacción · Muestras · Promedio · TPS · Errores** |
 
 Se quitan P90 y Max. Se añade TPS.
+
+**Definición de TPS:** muestras de la transacción divididas por la duración total de la
+prueba. Es la misma definición que usa la tabla resumen del informe
+(`get_summary_table_data`), para que panel e informe muestren el mismo número.
 
 ### 2.2 Criterios por transacción, dentro de la tabla
 
@@ -170,12 +174,15 @@ Al pulsar Generar PDF o Generar HTML, el sistema **pregunta qué incluir**:
 
 Aplica a las dos salidas.
 
+**Alcance:** el selector aplica a los exports individuales (PDF y HTML). En el informe
+integrado no se implementa por ahora: combina varias ejecuciones y se evaluará después.
+
 ---
 
 ## 7. Salidas
 
 Todo lo anterior aplica igual en: pantalla, PDF individual, HTML individual e informe
-integrado (PDF y HTML).
+integrado (PDF y HTML), con la excepción indicada en §6 para el selector de exportación.
 
 ---
 
@@ -187,4 +194,13 @@ integrado (PDF y HTML).
 | Remoto `azure` | No recibe commits. Push bloqueado a propósito |
 | Carpeta de reportes | `docs/reporte_claude_code/` — única, no se crean otras |
 | Numeración de reportes | desde `01`, consecutiva, con hash de commit y fecha en la primera línea |
-| Validación | Claude Code prueba todo lo que pueda; Fredy valida al final del ciclo |
+| Validación | Claude Code prueba todo lo que pueda y encadena los sub-pasos de cada etapa. Fredy valida cada etapa cuando está completa y es probable de punta a punta desde la interfaz |
+
+---
+
+## Historial de versiones
+
+| Versión | Cambio |
+|---|---|
+| 1.1 | Versión aprobada inicial |
+| 1.2 | Definición de TPS (§2.1) · selector de exportación solo en individuales (§6, §7) · validación por etapa completa (§8) |
