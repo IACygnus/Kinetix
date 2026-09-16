@@ -956,6 +956,12 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           )}
         </div>
 
+        {/* N4.7: el informe de cada transaccion critica. ETAPA 2 (D17): va AQUI,
+            entre el informe general y las conclusiones — v1.2 §1 pone las
+            conclusiones una sola vez y al final, sobre toda la prueba. Antes se
+            montaba despues de ellas. El componente decide si hay algo que mostrar. */}
+        {!embedded && <TransactionReportSection executionId={executionId} />}
+
         {/* CONCLUSIONES Y RECOMENDACIONES — hidden when embedded in integrated report */}
         {!embedded && (
         <div className="mb-8">
@@ -981,11 +987,6 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           </div>
         </div>
         )}
-
-        {/* N4.7: mini-informe por transaccion critica — despues de las secciones
-            generales. Se monta solo aqui; el componente decide si hay algo que
-            mostrar y no altera nada de lo anterior. */}
-        {!embedded && <TransactionReportSection executionId={executionId} />}
 
         {/* PDF PROGRESS */}
         {isExportingPDF && (
