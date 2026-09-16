@@ -37,8 +37,25 @@ COMMENT ON COLUMN ai_config.reasoning_effort IS '...';
 ```
 
 > **Para el despliegue:** este script hay que ejecutarlo en el servidor **antes** de desplegar el
-> código de la Etapa 2. Sin la columna, el arranque falla al mapear el modelo. Va al checklist
-> de despliegue y se repite en el cierre de la etapa.
+> código de la Etapa 2.
+>
+> **Corrección sobre lo que decía la primera versión de este reporte.** Escribí que «el arranque
+> falla al mapear el modelo». **Es falso, y el modo de fallo real es peor porque es silencioso:**
+>
+> - `Base.metadata.create_all` (`main.py:93`) **no altera tablas existentes**, así que el backend
+>   **arranca sin problema**.
+> - La primera lectura de `ai_config` incluye la columna inexistente y revienta en Postgres.
+> - Ese error lo atrapa el `except Exception` de `load_ai_config_from_db`, que lo degrada a
+>   **`logger.warning`** y cae al fallback por variables de entorno. Sin key en el entorno
+>   devuelve `{}`, no se construye el analizador y **todos los informes salen con texto de
+>   `FallbackAnalyzer`**.
+> - `GET /ai-config` sí responde **500**.
+>
+> Es decir: no hay un fallo ruidoso que avise. Los informes se seguirían generando, con texto
+> genérico, hasta que alguien lo notara leyéndolos.
+>
+> **Verificación posterior al despliegue:** `GET /ai-config` debe responder **200** e incluir
+> `reasoning_effort`. Va al checklist y se repite en el cierre de la etapa.
 
 `NULL ⇒ low` se resuelve en tres capas (modelo, lectura de config y helper del kwarg), así que
 una fila antigua sin valor se comporta igual que una con `low` explícito.
@@ -56,6 +73,12 @@ una fila antigua sin valor se comporta igual que una con `low` explícito.
 | Singleton (D13c) | `gemini.py` | la clave pasa de `provider:model:key[:8]` a `provider:model:key[:8]:effort` |
 | Carga de config | `gemini.py` | `load_ai_config_from_db` devuelve `reasoning_effort` |
 | Propagación | `analysis_ai.py` (3), `integrated_report.py` (2), `compare.py`, `analysis_pipeline.py`, `transaction_report.py` | los **8** sitios que construyen el analizador pasan el effort |
+
+**El effort aplica a TODOS los caminos de IA, no solo al informe.** Los 8 sitios cubren: informe
+general (`analysis_pipeline`), informe por transacción (`transaction_report`), conclusiones
+unificadas y consolidado del integrado (`integrated_report`, 2), reporte comparativo (`compare`),
+y análisis de monitoreo, de evidencias y de visión (`analysis_ai`, 3). Cambiar el valor en la
+pantalla de configuración los afecta a todos a la vez.
 | Telemetría (D13e) | `gemini.py` | campo `reasoning_effort` en `AI_TELEMETRY` |
 | Endpoint | `api/v1/endpoints/ai_config.py` | lectura, guardado con validación, y **test con el effort real (D13d)** |
 | Pantalla | `AIConfigPage.tsx`, `types/index.ts` | selector junto al modelo, visible solo si aplica |
