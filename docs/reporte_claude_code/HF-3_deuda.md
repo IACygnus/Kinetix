@@ -1,6 +1,6 @@
 # HF-3 — Rate limit de /auth/login (DEUDA, no se implementa en la Etapa 2)
 
-> Este documento vivia en `/tmp` y en `C:proyectosKinetix_pruebas`. Desde ahora TODOS los
+> Este documento vivia en `/tmp` y en `C:\proyectos\Kinetix_pruebas`. Desde ahora TODOS los
 > reportes (tecnicos, resumenes para Fredy, paradas y notas de deuda) viven en
 > `docs/reporte_claude_code/`. En `Kinetix_pruebas` quedan solo herramientas y datos crudos.
 
