@@ -68,13 +68,8 @@ export const CHARTS_SPEC = {
     type: 'line-area',
     color: '#3b82f6',
   },
-  throughputOverTime: {
-    title: 'Throughput Over Time',
-    xAxis: { label: 'Tiempo', type: 'time' },
-    yAxis: { label: 'Requests/s', unit: 'req/s' },
-    type: 'line-area',
-    color: '#10b981',
-  },
+  // ETAPA 2 (D19): "throughputOverTime" se retira. Ninguna salida pinta ya esa
+  // grafica, asi que su configuracion sobraba.
   latencyOverTime: {
     title: 'Latency Over Time',
     xAxis: { label: 'Tiempo', type: 'time' },

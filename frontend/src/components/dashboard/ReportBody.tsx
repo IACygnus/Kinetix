@@ -176,7 +176,6 @@ export interface ReportBodyCtx {
   responseTimesByLabel: any;
   rtMaxKeys: string[];
   rtMaxLabels: string[];
-  throughputData: any[];
   latencyData: any[];
   errorRateData: any[];
   codesPerSecond: any;
@@ -185,8 +184,6 @@ export interface ReportBodyCtx {
   // textos de IA y sus setters
   analysisResponseTimes: string;
   setAnalysisResponseTimes: (v: string) => void;
-  analysisThroughput: string;
-  setAnalysisThroughput: (v: string) => void;
   analysisLatency: string;
   setAnalysisLatency: (v: string) => void;
   analysisErrorRate: string;
@@ -223,8 +220,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
     responseTimesByLabel, rtMaxKeys, rtMaxLabels, latencyData,
     errorRateData, codesPerSecond, tpsByLabel, activeThreadsData,
     analysisResponseTimes, setAnalysisResponseTimes,
-    // D19: throughputData y analysisThroughput siguen en el ctx (el llamador los
-    // pasa) pero ya no se desestructuran: la grafica salio del producto.
+    // D19: sin throughputData ni analysisThroughput: la grafica salio del producto.
     analysisLatency, setAnalysisLatency,
     analysisErrorRate, setAnalysisErrorRate,
     analysisCodesPerSecond, setAnalysisCodesPerSecond,

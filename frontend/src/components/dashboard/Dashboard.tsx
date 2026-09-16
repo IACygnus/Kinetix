@@ -441,7 +441,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   );
 
   // ===== DATA PROCESSING =====
-  const throughputData = prepareChartData(charts.throughput_timeline || []);
+  // ETAPA 2 (D19): throughput_timeline ya no se prepara: la grafica salio del
+  // producto. El escalar throughput (req/s) de la tabla y los KPI no se toca.
   const latencyData = prepareChartData(charts.latency_timeline || []);
   const errorRateData = prepareChartData(charts.error_rate_timeline || []);
   const activeThreadsData = prepareChartData(charts.active_threads_timeline || []);
@@ -939,10 +940,9 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
 
           {chartsExpanded && (
             <ReportBody scope={{ kind: 'general' }} ctx={{
-              responseTimesByLabel, rtMaxKeys, rtMaxLabels, throughputData, latencyData,
+              responseTimesByLabel, rtMaxKeys, rtMaxLabels, latencyData,
               errorRateData, codesPerSecond, tpsByLabel, activeThreadsData,
               analysisResponseTimes, setAnalysisResponseTimes,
-              analysisThroughput, setAnalysisThroughput,
               analysisLatency, setAnalysisLatency,
               analysisErrorRate, setAnalysisErrorRate,
               analysisCodesPerSecond, setAnalysisCodesPerSecond,

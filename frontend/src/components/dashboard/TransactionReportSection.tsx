@@ -179,10 +179,8 @@ function BloqueGraficasTx({ label, series, secciones, guardarSeccion }: {
 
   const ctx: ReportBodyCtx = {
     ...datos,
-    throughputData: [],        // D19: la grafica ya no existe
     activeThreadsData: [],     // D18: solo en el alcance general
     analysisResponseTimes: texto('chart_response_times'), setAnalysisResponseTimes: nada,
-    analysisThroughput: '', setAnalysisThroughput: nada,
     analysisLatency: texto('chart_latency'), setAnalysisLatency: nada,
     analysisErrorRate: texto('chart_error_rate'), setAnalysisErrorRate: nada,
     analysisCodesPerSecond: texto('chart_codes'), setAnalysisCodesPerSecond: nada,
