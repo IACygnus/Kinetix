@@ -232,10 +232,28 @@ export default function TransactionReportSection({ executionId }: { executionId:
   // ETAPA 2: los bloques salen ABIERTOS, asi que sus datos se piden solos al abrir
   // el informe, no al desplegar. Antes esto cargaba unicamente la transaccion que
   // el usuario abria, y por eso la pagina no pintaba ninguna grafica por
-  // transaccion hasta que alguien pulsaba. La carga sigue siendo asincrona.
+  // transaccion hasta que alguien pulsaba.
+  //
+  // EN SERIE, una transaccion tras otra. Cada peticion parsea el JTL entero en el
+  // servidor; lanzarlas a la vez multiplicaba ese trabajo por el numero de
+  // transacciones y dejaba al backend sin atender nada mas. El Set de intentados
+  // se marca ANTES del await, que es lo que impide que un re-render dispare la
+  // misma carga dos veces.
+  const intentadosRef = useRef<Set<string>>(new Set());
+  useEffect(() => { intentadosRef.current = new Set(); }, [executionId]);
   useEffect(() => {
-    labels.forEach((l) => { if (!datos[l]) cargar(l); });
-  }, [labels, datos, cargar]);
+    if (!labels.length) return;
+    let vivo = true;
+    (async () => {
+      for (const l of labels) {
+        if (!vivo) return;
+        if (intentadosRef.current.has(l)) continue;
+        intentadosRef.current.add(l);
+        await cargar(l);
+      }
+    })();
+    return () => { vivo = false; };
+  }, [labels, cargar]);
 
   // 3. Sondeo del progreso mientras se genera. Si el GET falla varias veces
   // seguidas se avisa y se deja de sondear: el usuario ve las secciones reales

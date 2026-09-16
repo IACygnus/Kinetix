@@ -774,13 +774,23 @@ async def get_transaction_charts(
     # Mismo criterio de busqueda que /charts, pero sin tocarlo: las series se
     # calculan desde el JTL original, que puede haberse borrado del disco.
     t0 = time.perf_counter()
-    _, df = _parse_execution_df(execution)
 
-    try:
-        series = build_transaction_series(df, label, interval_seconds=interval_seconds)
-    except ValueError as e:
-        disponibles = ", ".join(available_labels(df)) or "ninguna"
-        raise HTTPException(404, f"{e}. Transacciones disponibles: {disponibles}")
+    # ETAPA 2: parsear el JTL y calcular los buckets es CPU pura y sincrona, y
+    # hasta ahora corria DENTRO del event loop: mientras duraba, el proceso no
+    # atendia ninguna otra peticion (mismo H4 que se corrigio en 1.4 con D1).
+    # Con los bloques por transaccion abiertos de entrada esto se pide una vez
+    # por transaccion, asi que el bloqueo se multiplicaba. Va entero a un hilo:
+    # el parseo y las series juntos, para un solo salto por peticion.
+    # jtl_parser.py es un archivo protegido: se envuelve la LLAMADA, no el parser.
+    def _calcular_series():
+        _, df = _parse_execution_df(execution)
+        try:
+            return build_transaction_series(df, label, interval_seconds=interval_seconds)
+        except ValueError as e:
+            disponibles = ", ".join(available_labels(df)) or "ninguna"
+            raise HTTPException(404, f"{e}. Transacciones disponibles: {disponibles}")
+
+    series = await asyncio.to_thread(_calcular_series)
 
     series["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
     logger.info(
