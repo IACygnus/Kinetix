@@ -18,7 +18,9 @@ const AI_SECTIONS = [
   { key: 'ai_analysis_summary', label: 'Resumen General' },
   { key: 'ai_analysis_errors', label: 'Analisis de Errores' },
   { key: 'ai_analysis_response_times', label: 'Tiempos de Respuesta' },
-  { key: 'ai_analysis_throughput', label: 'Throughput' },
+  // ETAPA 2 (D19 + D23): "Throughput" sale del producto. La seccion deja de
+  // ofrecerse para editar aqui; el override que ya exista en la base NO se borra,
+  // simplemente no se pinta.
   { key: 'ai_analysis_latency', label: 'Latencia' },
   { key: 'ai_analysis_error_rate', label: 'Tasa de Error' },
   { key: 'ai_analysis_codes_per_second', label: 'Codigos por Segundo' },
@@ -139,19 +141,9 @@ export default function ExecutionReportSection({ executionId, onAnalysisEdit }: 
               </ResponsiveContainer>
             </div>
 
-            {/* Throughput */}
-            <div className="border border-gray-100 rounded-xl p-3">
-              <h4 className="text-sm font-bold text-gray-700 mb-2">Throughput</h4>
-              <ResponsiveContainer width="100%" height={250}>
-                <AreaChart data={prepareTimeline(charts?.throughput_timeline || [])}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} tickCount={8} />
-                  <Tooltip />
-                  <Area type="monotone" dataKey="value" stroke="#10b981" fill="#10b981" fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            {/* ETAPA 2 (D19): la vista previa de "Throughput Over Time" se retira,
+                igual que en las cuatro salidas. El KPI Throughput (req/s) de arriba
+                se queda: es la metrica, no la grafica. */}
 
             {/* Error Rate */}
             <div className="border border-gray-100 rounded-xl p-3">

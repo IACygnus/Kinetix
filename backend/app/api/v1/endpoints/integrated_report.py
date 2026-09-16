@@ -149,7 +149,9 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
                 dual_max=True,              # GRAF1-C
             ),
             # UI-2: 'rt_time' (Response Time Over Time) retirada del PDF integrado.
-            'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
+            # ETAPA 2 (D19): 'throughput' (Throughput Over Time) sale del producto
+            # entero. Ya no se genera la imagen. El escalar throughput (req/s) del
+            # KPI y de la tabla resumen NO se toca.
             'latency': chart_area(tl_timestamps, [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else [], '#8b5cf6', 'Latencia (ms)'),
             'error_rate': chart_area(tl_timestamps, _float_list(tl, 'error_rate'), '#ef4444', 'Error Rate (%)'),
             'codes': chart_multiline(_build_codes_series(charts_data.get('codes_per_second', [])), 'Codes/s', use_code_colors=True),
@@ -187,7 +189,8 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
             'summary': execution.ai_analysis_summary or '', 'errors': execution.ai_analysis_errors or '',
             'responseTimes': execution.ai_analysis_response_times or '',
             'responseTimeOverTime': execution.ai_analysis_response_time_over_time or '',
-            'throughput': execution.ai_analysis_throughput or '', 'latency': execution.ai_analysis_latency or '',
+            # ETAPA 2 (D19): ai_analysis_throughput ya no viaja al informe integrado.
+            'latency': execution.ai_analysis_latency or '',
             'errorRate': execution.ai_analysis_error_rate or '',
             'codesPerSecond': execution.ai_analysis_codes_per_second or '',
             'tps': execution.ai_analysis_transactions_per_second or '',
@@ -375,7 +378,6 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     redirect_stats = execution_data['redirect_stats']
     ia = execution_data['ia']
     rt_by_label_traces = execution_data['rt_by_label_traces']
-    throughput_traces = execution_data['throughput_traces']
     latency_traces = execution_data['latency_traces']
     error_rate_traces = execution_data['error_rate_traces']
     codes_traces = execution_data['codes_traces']
@@ -595,7 +597,6 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 
     # Prefixed div IDs
     id_rt_label = f"{prefix}chart-rt-label"
-    id_throughput = f"{prefix}chart-throughput"
     id_latency = f"{prefix}chart-latency"
     id_error_rate = f"{prefix}chart-error-rate"
     id_codes = f"{prefix}chart-codes"
@@ -701,13 +702,6 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 <!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
 <div class="plotly-chart-section">
-<div class="plotly-chart-title" style="border-left-color:#10b981">Throughput Over Time</div>
-<div id="{id_throughput}" class="plotly-chart-div"></div>
-{_ctrl_basic(id_throughput)}
-</div>
-{ai_box('throughput', 'Analisis - Throughput')}
-
-<div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#8b5cf6">Latency Over Time</div>
 <div id="{id_latency}" class="plotly-chart-div"></div>
 {_ctrl_y_axis(id_latency, latency_p99, latency_max)}
@@ -803,7 +797,6 @@ if (typeof window.hf10hShowAll !== 'function') {{
 (function() {{
 var plotlyConfig = {jd(plotly_config)};
 Plotly.newPlot('{id_rt_label}', {jd(rt_by_label_traces)}, {jd(make_layout('Response Time (ms)', 420, ',.0f'))}, plotlyConfig);
-Plotly.newPlot('{id_throughput}', {jd(throughput_traces)}, {jd(make_layout('Requests/s', 420, ',.2f'))}, plotlyConfig);
 Plotly.newPlot('{id_latency}', {jd(latency_traces)}, {jd(make_layout('Latencia (ms)', 420, ',.0f'))}, plotlyConfig);
 Plotly.newPlot('{id_error_rate}', {jd(error_rate_traces)}, {jd(make_layout('Error Rate (%)', 420, ',.2f'))}, plotlyConfig);
 Plotly.newPlot('{id_codes}', {jd(codes_traces)}, {jd(make_layout('Codes/s', 420, ',.0f'))}, plotlyConfig);
@@ -881,7 +874,8 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'summary': execution.ai_analysis_summary or '', 'errors': execution.ai_analysis_errors or '',
             'responseTimes': execution.ai_analysis_response_times or '',
             'responseTimeOverTime': execution.ai_analysis_response_time_over_time or '',
-            'throughput': execution.ai_analysis_throughput or '', 'latency': execution.ai_analysis_latency or '',
+            # ETAPA 2 (D19): ai_analysis_throughput ya no viaja al informe integrado.
+            'latency': execution.ai_analysis_latency or '',
             'errorRate': execution.ai_analysis_error_rate or '',
             'codesPerSecond': execution.ai_analysis_codes_per_second or '',
             'tps': execution.ai_analysis_transactions_per_second or '',
@@ -952,13 +946,7 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
 
         # UI-2: traces de "Response Time Over Time" retirados del export.
 
-        throughput_traces = [{
-            'x': tl_timestamps,
-            'y': [float(row['throughput']) for _, row in tl.iterrows()] if len(tl) > 0 else [],
-            'name': 'Throughput', 'type': 'scatter', 'mode': 'lines', 'fill': 'tozeroy',
-            'line': {'color': '#10b981', 'width': 2}, 'fillcolor': 'rgba(16,185,129,0.15)',
-            'hovertemplate': '%{y:,.2f} req/s<extra>%{fullData.name}</extra>',
-        }]
+        # ETAPA 2 (D19): traces de "Throughput Over Time" retirados del export.
 
         latency_values = [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else []
         latency_traces = [{
@@ -1029,7 +1017,6 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'redirect_stats': redirect_stats,
             'ia': ia,
             'rt_by_label_traces': rt_by_label_traces,
-            'throughput_traces': throughput_traces,
             'latency_traces': latency_traces,
             'error_rate_traces': error_rate_traces,
             'codes_traces': codes_traces,
@@ -1068,7 +1055,10 @@ _IA_KEY_BY_COLUMN = {
     "ai_analysis_errors": "errors",
     "ai_analysis_response_times": "responseTimes",
     "ai_analysis_response_time_over_time": "responseTimeOverTime",
-    "ai_analysis_throughput": "throughput",
+    # ETAPA 2 (D19 + D23): la clave sale del mapa, asi que un override guardado
+    # para "ai_analysis_throughput" deja de pintarse. Las filas NO se borran: en
+    # la base hay informes reales que lo tienen editado a mano y se conservan por
+    # si la decision cambia. Ignorar, no borrar.
     "ai_analysis_latency": "latency",
     "ai_analysis_error_rate": "errorRate",
     "ai_analysis_codes_per_second": "codesPerSecond",
@@ -1302,12 +1292,11 @@ def _strip_pdf_individual_conclusions(html: str) -> str:
     original_len = len(html)
 
     # Primary strategy: comment-boundary strip.
-    # N4.9: el corte para en el marcador de N4.8 ademas de en el de FOOTER.
-    # build_pdf_html emite el mini-informe por transaccion ENTRE las conclusiones
-    # y el pie, asi que el patron original (que barria hasta FOOTER) se lo
-    # llevaba por delante y en el integrado el bloque desaparecia entero. Las
-    # conclusiones individuales se siguen quitando igual — son las consolidadas
-    # las que van al final del informe.
+    # ETAPA 2 (D17): el informe de cada transaccion ya no va ENTRE las conclusiones
+    # y el pie, sino ANTES de las conclusiones, asi que el corte vuelve a ir de
+    # CONCLUSIONES a FOOTER sin llevarse por delante los bloques por transaccion.
+    # Se acepta tambien el marcador viejo de N4.8 por si se procesa el HTML de un
+    # informe generado antes de este cambio.
     html = _re.sub(
         r'<!--\s*=+\s*CONCLUSIONES Y RECOMENDACIONES.*?(?=<!--\s*=+\s*(?:N4\.8|FOOTER))',
         '', html, flags=_re.DOTALL | _re.IGNORECASE,
