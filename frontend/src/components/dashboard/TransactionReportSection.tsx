@@ -302,11 +302,15 @@ export default function TransactionReportSection({ executionId }: { executionId:
 
   if (!labels.length) return null;   // regla 16: despues de TODOS los hooks
 
+  // ETAPA 2 (v1.2 §0 y §1): NO hay encabezado de grupo. Tras el informe general,
+  // cada bloque empieza directamente con el nombre de la transaccion como titulo.
+  // Se va tambien la tarjeta que los envolvia a todos: era la que pedia ese titulo.
+  // Lo unico que sobrevive de aquella barra es el boton de generar todas, que es
+  // funcion y no encabezado.
   return (
     <div className="mb-8">
-      <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
-        <div className="bg-[#0a1628] px-6 py-4 flex items-center justify-between gap-4">
-          <h2 className="text-3xl font-bold text-white">Informe por Transaccion</h2>
+      <div>
+        <div className="flex justify-end mb-4">
           <button
             onClick={() => setCola(labels.filter((l) => l !== generandoRef.current))}
             disabled={!!generando || !!cola.length}
@@ -317,7 +321,7 @@ export default function TransactionReportSection({ executionId }: { executionId:
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="space-y-4">
           {/* N4.10: la generacion que arranco sola al generar el reporte. */}
           {auto?.status === 'in_progress' && (
             <div className="rounded-2xl border-2 border-indigo-200 bg-indigo-50 px-5 py-4">
