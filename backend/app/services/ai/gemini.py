@@ -10,6 +10,7 @@ FallbackAnalyzer para cuando la IA no esta disponible.
 import os
 import time
 import json                                      # E1.2: telemetria por llamada
+import threading                                 # ETAPA 1.5 (D6): estado de clase compartido
 from datetime import datetime, timezone          # E1.2: marcas de tiempo ISO 8601
 import google.generativeai as genai
 from typing import Dict, List, Optional, Tuple
@@ -22,6 +23,19 @@ try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+
+# ETAPA 1.5 (D3): las clases reales que lanza cada SDK, para clasificar por TIPO y
+# no por subcadenas del mensaje. Guardadas igual que el import de arriba: si un SDK
+# no esta, su comprobacion simplemente no aplica.
+try:
+    from openai import RateLimitError as _OpenAIRateLimitError
+    from openai import APIStatusError as _OpenAIAPIStatusError
+except ImportError:
+    _OpenAIRateLimitError = _OpenAIAPIStatusError = None
+try:
+    from google.api_core.exceptions import ResourceExhausted as _GoogleResourceExhausted
+except ImportError:
+    _GoogleResourceExhausted = None
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +189,43 @@ def openai_chat_completion(client, model_name: str, messages: list, limit: int, 
         return client.chat.completions.create(
             model=model_name, messages=messages,
             **_openai_token_param(model_name, limit), **kwargs)
+
+
+# ============ ETAPA 1.5 (HF-2): clasificacion de errores por TIPO ============
+# D3: nunca por subcadenas. Antes, cualquier mensaje que contuviera "429", "rate",
+# "quota" o "resource" se trataba como rate-limit y dormia 5+10+15 s: un
+# "Failed to generate response" o un "resource not found" pagaban 30 s de espera
+# por nada. Ahora se mira el tipo de excepcion y el codigo HTTP.
+CIRCUITO_ENFRIAMIENTO_S = 60          # D2: tiempo antes de permitir una llamada de prueba
+
+
+def _clasificar_error(err) -> str:
+    """'quota_exhausted' | 'rate_limit' | 'error'. Sin heuristicas de texto."""
+    # D4: cuota agotada. Es un 429 tambien, asi que se mira ANTES que el rate-limit.
+    codigo = getattr(getattr(err, "body", None), "get", lambda *_: None)("code") \
+        if isinstance(getattr(err, "body", None), dict) else None
+    if codigo is None:
+        codigo = getattr(err, "code", None)
+    if codigo == "insufficient_quota":
+        return "quota_exhausted"
+
+    if _OpenAIRateLimitError is not None and isinstance(err, _OpenAIRateLimitError):
+        return "rate_limit"
+    if _OpenAIAPIStatusError is not None and isinstance(err, _OpenAIAPIStatusError):
+        return "rate_limit" if getattr(err, "status_code", None) == 429 else "error"
+    if _GoogleResourceExhausted is not None and isinstance(err, _GoogleResourceExhausted):
+        return "rate_limit"
+    return "error"
+
+
+def _espera_sugerida(err) -> Optional[float]:
+    """Segundos de `Retry-After` si el proveedor los manda (D5). None si no vienen."""
+    try:
+        cabeceras = getattr(getattr(err, "response", None), "headers", None) or {}
+        valor = cabeceras.get("retry-after") or cabeceras.get("Retry-After")
+        return float(valor) if valor is not None else None
+    except Exception:
+        return None
 
 
 # ===================== E1.2: telemetria por llamada de IA =====================
@@ -838,12 +889,51 @@ class GeminiAnalyzer:
     _circuit_open: bool = False
     _last_error: Optional[str] = None   # B6.3: motivo del ultimo fallo, para ai_status
 
+    # ETAPA 1.5 (D2): cuando se abrio, para dejar pasar UNA prueba tras el enfriamiento.
+    _circuit_opened_at: Optional[float] = None
+    _probe_in_flight: bool = False
+    # D6: tras H4 hay varios hilos (to_thread) tocando este estado a la vez.
+    _lock = threading.Lock()
+
+    @classmethod
+    def _abrir_circuito(cls, motivo: str) -> None:
+        with cls._lock:
+            cls._circuit_open = True
+            cls._circuit_opened_at = time.monotonic()
+            cls._probe_in_flight = False
+        logger.warning(f"AI CIRCUIT OPEN: {motivo}. Enfriamiento {CIRCUITO_ENFRIAMIENTO_S}s.")
+
+    @classmethod
+    def _cerrar_circuito(cls) -> None:
+        with cls._lock:
+            if not cls._circuit_open and not cls._probe_in_flight:
+                return
+            cls._circuit_open = False
+            cls._circuit_opened_at = None
+            cls._probe_in_flight = False
+        logger.info("AI CIRCUIT CLOSED: el proveedor responde de nuevo.")
+
+    @classmethod
+    def _circuito_bloquea(cls) -> bool:
+        """True = no llamar. D2: pasado el enfriamiento deja pasar UNA sola prueba."""
+        with cls._lock:
+            if not cls._circuit_open:
+                return False
+            abierto_desde = cls._circuit_opened_at
+            if abierto_desde is None or (time.monotonic() - abierto_desde) < CIRCUITO_ENFRIAMIENTO_S:
+                return True
+            if cls._probe_in_flight:       # ya hay otra prueba en curso
+                return True
+            cls._probe_in_flight = True    # esta llamada es la prueba
+            return False
+
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = ""):
         self.provider = provider or DEFAULT_PROVIDER
         self.model_name = model_name or MODEL_NAME
         self._api_key = api_key or os.getenv("GEMINI_API_KEY", "")
 
         # Reset circuit breaker on new instance
+        GeminiAnalyzer._cerrar_circuito()   # ETAPA 1.5: limpia tambien marca y prueba
         GeminiAnalyzer._circuit_open = False
         GeminiAnalyzer._last_error = None   # B6.3
 
@@ -863,7 +953,11 @@ class GeminiAnalyzer:
         elif self.provider == "openai":
             if OpenAI is None:
                 raise ValueError("SDK de OpenAI no disponible: falta el paquete 'openai'")
-            self._openai_client = OpenAI(api_key=self._api_key)
+            # ETAPA 1.5 (D5): max_retries=0. El SDK reintentaba 2 veces por su cuenta y,
+            # sumado al bucle propio de 3 intentos, una sola seccion podia lanzar hasta
+            # 9 peticiones HTTP invisibles para la telemetria. Los reintentos los hace
+            # SOLO el bucle de `_generate`, y asi cada intento deja su linea.
+            self._openai_client = OpenAI(api_key=self._api_key, max_retries=0)
             logger.info(f"AIAnalyzer v4.0 iniciado: provider=openai, model={self.model_name}")
         else:
             raise ValueError(f"Proveedor no soportado: {self.provider}")
@@ -881,8 +975,9 @@ class GeminiAnalyzer:
                 _openai_max_tokens_for(self.model_name) if self.provider == "openai" else None,
                 len(prompt), outcome, response, finish_reason)
 
-        # Circuit breaker — skip immediately if API already proven unavailable
-        if GeminiAnalyzer._circuit_open:
+        # Circuit breaker — skip immediately if API already proven unavailable.
+        # ETAPA 1.5 (D2): pasado el enfriamiento, esta llamada pasa como prueba.
+        if GeminiAnalyzer._circuito_bloquea():
             logger.info(f"AI CIRCUIT OPEN: skipping {section_name} (using fallback)")
             GeminiAnalyzer._total_errors += 1
             _tel("circuit_open", 0)
@@ -929,6 +1024,8 @@ class GeminiAnalyzer:
                     return None
 
                 result = sanitize_ai_text(result)
+                # ETAPA 1.5 (D2): exito = el proveedor responde; el circuito se cierra.
+                GeminiAnalyzer._cerrar_circuito()
                 logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
                 _tel("ok", attempt + 1, response,
                      getattr(response.choices[0], "finish_reason", None)
@@ -937,22 +1034,39 @@ class GeminiAnalyzer:
 
             except Exception as e:
                 error_str = str(e)
-                if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower() or "resource" in error_str.lower():
-                    wait_time = min((attempt + 1) * 5, 15)
+                # ETAPA 1.5 (D3): por TIPO/codigo, nunca por subcadenas del mensaje.
+                tipo = _clasificar_error(e)
+
+                if tipo == "quota_exhausted":
+                    # D4: reintentar no sirve. Fallo rapido, motivo visible y circuito
+                    # abierto para no quemar las llamadas restantes contra un muro.
+                    motivo = f"{self.model_name}: cuota agotada (insufficient_quota)"
+                    logger.error(f"AI QUOTA EXHAUSTED for {section_name}: {error_str[:180]}")
+                    GeminiAnalyzer._last_error = motivo
+                    GeminiAnalyzer._total_errors += 1
+                    GeminiAnalyzer._abrir_circuito(f"cuota agotada en {section_name}")
+                    _tel("quota_exhausted", attempt + 1)
+                    return None
+
+                if tipo == "rate_limit":
+                    # D5: se respeta Retry-After si el proveedor lo manda; si no, 5/10/15.
+                    wait_time = _espera_sugerida(e) or min((attempt + 1) * 5, 15)
                     logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
                     _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
                     time.sleep(wait_time)
                     continue
-                else:
-                    logger.error(f"AI ERROR for {section_name}: {error_str}")
-                    GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
-                    GeminiAnalyzer._total_errors += 1
-                    _tel("error", attempt + 1)
-                    return None
+
+                # D3: cualquier otro error NO es rate-limit: sin espera y SIN abrir el
+                # circuito. Un fallo puntual de una seccion no puede dejar sin IA al resto.
+                logger.error(f"AI ERROR for {section_name}: {error_str}")
+                GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
+                GeminiAnalyzer._total_errors += 1
+                _tel("error", attempt + 1)
+                return None
 
         # All retries exhausted — open circuit breaker for remaining calls
         logger.warning(f"AI UNAVAILABLE: {section_name} - max retries exceeded. CIRCUIT BREAKER OPEN — all remaining calls will use fallback.")
-        GeminiAnalyzer._circuit_open = True
+        GeminiAnalyzer._abrir_circuito(f"{max_retries} intentos agotados en {section_name}")
         GeminiAnalyzer._total_errors += 1
         _tel("fallback", max_retries)
         return None
@@ -1595,6 +1709,17 @@ Cada recomendacion debe nombrar las transacciones afectadas con datos.
 # Instancia global - lazy initialization
 _analyzer_instance: Optional[GeminiAnalyzer] = None
 _analyzer_config_key: str = ""
+
+
+def reset_circuit_breaker() -> None:
+    """ETAPA 1.5 (D2): cierra el circuito a mano.
+
+    Lo llama el guardado de config de IA: si el circuito se abrio por una key
+    caducada o una cuota agotada, cambiar la config debe volver a habilitar la IA
+    sin esperar el enfriamiento y sin reiniciar el proceso.
+    """
+    GeminiAnalyzer._cerrar_circuito()
+    GeminiAnalyzer._last_error = None
 
 
 def get_gemini_analyzer(

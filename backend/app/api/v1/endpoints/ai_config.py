@@ -267,6 +267,12 @@ async def create_or_update_ai_config(
     # Invalidate live models cache so next fetch uses new key/provider
     _invalidate_models_cache(provider=config.provider)
 
+    # ETAPA 1.5 (D2): si el circuito estaba abierto por una key caducada o por cuota
+    # agotada, guardar la config nueva es justo la accion que debe rehabilitar la IA.
+    # Antes solo se cerraba al reiniciar el proceso.
+    from app.services.ai.gemini import reset_circuit_breaker
+    reset_circuit_breaker()
+
     logger.info(f"AI config updated by {_current_user.username}: provider={config.provider}, model={config.model_name}")
     return _config_to_read(config)
 
