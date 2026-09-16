@@ -192,7 +192,10 @@ async def _build_transaction_reports(db, execution, df, statistics):
     Cualquier fallo de una transaccion la deja fuera y sigue con las demas: un
     mini-informe no puede tumbar la generacion del PDF completo.
     """
-    from app.db.models.transaction_chart_analysis import TransactionChartAnalysis
+    from app.db.models.transaction_chart_analysis import (
+        TransactionChartAnalysis,
+        SECTIONS_GENERADAS,   # ETAPA 2 (D20)
+    )
     from app.db.models.transaction_analysis import TransactionAnalysis
     from app.services.jtl.transaction_series import build_transaction_series
 
@@ -209,6 +212,12 @@ async def _build_transaction_reports(db, execution, df, statistics):
     orden = {s['label']: i for i, s in enumerate(statistics)}
     textos = {}
     for f in filas:
+        # ETAPA 2 (D20): las conclusiones y recomendaciones por transaccion no se
+        # piden ni se pintan. Las filas antiguas siguen en la base y se pueden
+        # seguir editando; simplemente no entran al PDF. Sin este filtro, una
+        # transaccion que SOLO tuviera esas dos abriria un bloque entero vacio.
+        if f.section not in SECTIONS_GENERADAS:
+            continue
         textos.setdefault(f.label, {})[f.section] = f.ai_analysis
     etiquetas = sorted(
         [lb for lb, sec in textos.items() if any(sec.values())],
@@ -326,7 +335,10 @@ async def export_pdf(
                 dual_max=True,              # GRAF1-C
             ),
             # UI-2: 'rt_time' (Response Time Over Time) retirada del PDF — ya no se renderiza.
-            'throughput': chart_area(tl_timestamps, _float_list(tl, 'throughput'), '#10b981', 'Requests/s'),
+            # ETAPA 2 (D19): 'throughput' (Throughput Over Time) sale del producto
+            # entero (v1.2 §1.2). Ya no se genera ni la imagen: era trabajo de
+            # matplotlib para algo que nadie pinta. El escalar throughput (req/s)
+            # de la portada y de la tabla resumen NO se toca.
             'latency': chart_area(tl_timestamps, [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else [], '#8b5cf6', 'Latencia (ms)'),
             'error_rate': chart_area(tl_timestamps, _float_list(tl, 'error_rate'), '#ef4444', 'Error Rate (%)'),
             'codes': chart_multiline(
@@ -391,7 +403,8 @@ async def export_pdf(
             'errors': execution.ai_analysis_errors or '',
             'responseTimes': execution.ai_analysis_response_times or '',
             'responseTimeOverTime': execution.ai_analysis_response_time_over_time or '',
-            'throughput': execution.ai_analysis_throughput or '',
+            # ETAPA 2 (D19): ai_analysis_throughput ya no viaja al PDF. La columna
+            # se conserva en la base con sus datos historicos (ocultar, no borrar).
             'latency': execution.ai_analysis_latency or '',
             'errorRate': execution.ai_analysis_error_rate or '',
             'codesPerSecond': execution.ai_analysis_codes_per_second or '',

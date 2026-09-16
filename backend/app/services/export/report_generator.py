@@ -255,17 +255,23 @@ TRANSACTION_CHARTS = (
     ('tps', 'Transacciones por Segundo', '#2196F3'),
 )
 
-_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del mini-informe pero su '
-              'texto no se genero (fallo o quedo pendiente).</em>')
+_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del informe de la '
+              'transaccion pero su texto no se genero (fallo o quedo pendiente).</em>')
 
 
 def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
-    """N4.8: el mini-informe por transaccion dentro del PDF individual.
+    """El informe de cada transaccion dentro del PDF individual.
 
-    Un bloque por transaccion con mini-informe generado, cada uno abriendo pagina
-    nueva: encabezado (nombre + criticidad), su tabla de metricas con las mismas
-    columnas del resumen general, su analisis de resumen, sus 5 graficas con el
-    texto al lado (layout denso de N2.1) y sus conclusiones y recomendaciones.
+    Un bloque por transaccion, cada uno abriendo pagina nueva (D24): el nombre de
+    la transaccion como titulo y nada mas (D16), su tabla de metricas con las
+    mismas columnas del resumen general, su analisis de resumen y sus 5 graficas
+    con el texto al lado.
+
+    ETAPA 2 (D21): las graficas y sus analisis los pinta `report_body_html`, el
+    MISMO render que el informe general. Antes esta funcion tenia su propia
+    plantilla y por eso el bloque por transaccion no se parecia al general.
+    ETAPA 2 (D20): sin conclusiones ni recomendaciones por transaccion; van una
+    sola vez, al final y sobre toda la prueba (v1.2 §1.1).
 
     Sin `reports` devuelve cadena vacia: el PDF sale EXACTAMENTE como antes,
     mismo conteo de paginas y sin titulo huerfano. Mismo criterio que el logo de
@@ -290,36 +296,21 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
                 f'<div class="ai-title">{titulo}</div>'
                 f'<div class="ai-text">{cuerpo}</div></div>')
 
-    def _unidad(titulo, color, img_b64, texto):
-        """N2.1: grafica y su texto lado a lado, como unidad indivisible."""
-        if not img_b64:
-            return ''
-        head = f'<div class="chart-title" style="border-left-color:{color}">{titulo}</div>'
-        img = f'<img class="chart-img" src="data:image/png;base64,{img_b64}" />'
-        lado = _caja(f'Analisis - {titulo}', texto)
-        return (f'<table class="chart-unit"><tr>'
-                f'<td class="chart-cell">{head}{img}</td>'
-                f'<td class="chart-ai-cell">{lado}</td>'
-                f'</tr></table>')
-
     bloques = []
     for r in reports:
         etiqueta = r.get('label', '')
-        criticidad = r.get('criticality') or ''
         sec = r.get('sections') or {}
         graf = r.get('charts') or {}
         m = r.get('metrics') or {}
 
-        # --- encabezado de la transaccion, abriendo pagina
-        sub = (f'<div style="font-size:9pt;color:#cbd5e1;margin-top:1.5mm">{criticidad}</div>'
-               if criticidad else '')
+        # --- encabezado de la transaccion, abriendo pagina (D24)
+        # ETAPA 2 (D16, v1.2 §0): el titulo es el nombre de la transaccion y nada
+        # mas. Antes llevaba encima el rotulo "Mini-informe por transaccion" y
+        # debajo la criticidad; los dos se retiran.
         cabecera = (
             '<div style="break-before:page;page-break-before:always;'
             'background:#0a1628;color:white;padding:5mm 6mm;border-radius:2mm;margin-bottom:4mm">'
-            '<div style="font-size:8pt;letter-spacing:0.4pt;text-transform:uppercase;'
-            'color:#f5a623;font-weight:700">Mini-informe por transaccion</div>'
-            f'<div style="font-size:19pt;font-weight:700;margin-top:1.5mm">{etiqueta}</div>'
-            f'{sub}</div>'
+            f'<div style="font-size:19pt;font-weight:700">{etiqueta}</div></div>'
         )
 
         # --- tabla de metricas: mismas columnas que el resumen general
@@ -356,33 +347,43 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
                      '<em>No se encontraron las metricas de esta transaccion en el resumen de '
                      'esta ejecucion.</em></div></div>')
 
-        partes = [cabecera, tabla, _caja('Analisis de la Transaccion', sec.get('summary'))]
-        for clave, titulo, color in TRANSACTION_CHARTS:
-            partes.append(_unidad(titulo, color, graf.get(clave), sec.get('chart_' + clave)))
-        partes.append(_caja('Conclusiones de la Transaccion', sec.get('conclusions'), permitir_corte=True))
-        partes.append(_caja('Recomendaciones de la Transaccion', sec.get('recommendations'), permitir_corte=True))
+        # El cuerpo es el del informe general, filtrado a esta transaccion (D21).
+        # `_SIN_TEXTO` conserva el criterio de N3.5: una grafica cuyo analisis
+        # fallo o quedo pendiente se pinta igual y se dice por que.
+        partes = [cabecera, tabla, _caja('Analisis de la Transaccion', sec.get('summary')),
+                  report_body_html(graf, sec, 'transaction', _SIN_TEXTO)]
         bloques.append(''.join(partes))
 
     return ''.join(bloques)
 
 
 def _ai_box_html(text: Optional[str], title: str, border: str = '#4f46e5',
-                 allow_break: bool = False) -> str:
+                 allow_break: bool = False, vacio_html: Optional[str] = None) -> str:
     """Caja de analisis. Sale de `build_pdf_html` para que el cuerpo del informe
-    pueda pintarse tambien fuera de ella (ETAPA 2, D21). Mismo HTML que antes."""
+    pueda pintarse tambien fuera de ella (ETAPA 2, D21). Mismo HTML que antes.
+
+    `vacio_html` es HTML ya formado que se pinta cuando NO hay texto, en vez de
+    omitir la caja. Lo usa el bloque por transaccion para conservar el aviso de
+    N3.5: una grafica sin analisis se pinta igual y se dice por que.
+    """
     if not text:
-        return ''
+        if not vacio_html:
+            return ''
+        cuerpo = vacio_html
+    else:
+        cuerpo = markdown_to_html(text)
     break_style = 'break-inside:auto;' if allow_break else ''
     return (
         f'<div class="ai-box" style="border-left-color:{border};{break_style}">'
         f'<div class="ai-title">{title}</div>'
-        f'<div class="ai-text">{markdown_to_html(text)}</div>'
+        f'<div class="ai-text">{cuerpo}</div>'
         f'</div>'
     )
 
 
 def _chart_unit_html(title: str, color: str, img_b64: Optional[str],
-                     ia_text: Optional[str], ia_title: str) -> str:
+                     ia_text: Optional[str], ia_title: str,
+                     vacio_html: Optional[str] = None) -> str:
     """N2.1: grafica + su analisis como UNA unidad indivisible, en dos columnas.
 
     En A4 landscape la pila vertical (grafica de 80mm + caja de analisis) mide
@@ -396,7 +397,7 @@ def _chart_unit_html(title: str, color: str, img_b64: Optional[str],
     """
     if not img_b64:
         return ''
-    ai_html = _ai_box_html(ia_text, ia_title, color)
+    ai_html = _ai_box_html(ia_text, ia_title, color, vacio_html=vacio_html)
     head = f'<div class="chart-title" style="border-left-color:{color}">{title}</div>'
     img = f'<img class="chart-img" src="data:image/png;base64,{img_b64}" />'
     if not ai_html:   # sin analisis, la grafica ocupa el ancho completo
@@ -419,8 +420,9 @@ def _chart_unit_html(title: str, color: str, img_b64: Optional[str],
 BODY_CHARTS = (
     ('rt_label', 'response_times', 'Response Times por Transaccion', '#8884d8',
      'responseTimes', 'chart_response_times', 'Analisis - Response Times por Transaccion'),
-    ('throughput', None, 'Throughput Over Time', '#4CAF50',
-     'throughput', None, 'Analisis - Throughput'),
+    # ETAPA 2 (D19): "Throughput Over Time" iba aqui y se retiro del producto
+    # entero (v1.2 §1.2). El escalar throughput (req/s) de la portada y de la
+    # tabla resumen NO se toca: lo que sale es la GRAFICA y su analisis.
     ('latency', 'latency', 'Latency Over Time', '#9c27b0',
      'latency', 'chart_latency', 'Analisis - Latency'),
     ('error_rate', 'error_rate', 'Error Rate Over Time', '#f44336',
@@ -440,11 +442,12 @@ GENERAL_ONLY_CHARTS = (
 
 
 def report_body_html(charts: Dict[str, Any], textos: Dict[str, Any],
-                     scope: str = 'general') -> str:
+                     scope: str = 'general', sin_texto: Optional[str] = None) -> str:
     """El cuerpo del informe —las graficas con su analisis— para un alcance.
 
     `scope` es 'general' o 'transaction'. Lo unico que cambia entre los dos es
     con que clave se busca cada grafica y cada texto, y que graficas existen.
+    `sin_texto` es el aviso que se pinta cuando una grafica no tiene analisis.
     """
     general = scope == 'general'
     partes = []
@@ -454,11 +457,11 @@ def report_body_html(charts: Dict[str, Any], textos: Dict[str, Any],
         if clave is None:
             continue
         partes.append(_chart_unit_html(titulo, color, charts.get(clave),
-                                       textos.get(texto), titulo_ia))
+                                       textos.get(texto), titulo_ia, sin_texto))
     if general:
         for clave, titulo, color, texto, titulo_ia in GENERAL_ONLY_CHARTS:
             partes.append(_chart_unit_html(titulo, color, charts.get(clave),
-                                           textos.get(texto), titulo_ia))
+                                           textos.get(texto), titulo_ia, sin_texto))
     return '\n'.join(partes)
 
 
@@ -1110,12 +1113,12 @@ tbody tr:nth-child(even) {{
 <!-- ===== N3.5: ANALISIS POR TRANSACCION CRITICA (antes de conclusiones) ===== -->
 {transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=True)}
 
-<!-- ===== CONCLUSIONES Y RECOMENDACIONES ===== -->
+<!-- ===== INFORME DE CADA TRANSACCION (ETAPA 2, D17: ANTES de las conclusiones) ===== -->
+{transaction_reports_html(meta.get('transaction_reports'))}
+
+<!-- ===== CONCLUSIONES Y RECOMENDACIONES (una sola vez, de toda la prueba) ===== -->
 {ai_box('conclusions', 'Conclusiones', '#4f46e5', allow_break=True)}
 {ai_box('recommendations', 'Recomendaciones', '#4f46e5', allow_break=True)}
-
-<!-- ===== N4.8: MINI-INFORME POR TRANSACCION (despues de las conclusiones generales) ===== -->
-{transaction_reports_html(meta.get('transaction_reports'))}
 
 <!-- ===== FOOTER ===== -->
 <div class="report-footer">
