@@ -47,8 +47,8 @@ def _find_jtl_files(execution) -> List[str]:
     return found
 
 
-_TX_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del mini-informe pero su '
-                 'texto no se genero (fallo o quedo pendiente).</em>')
+_TX_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del informe de la '
+                 'transaccion pero su texto no se genero (fallo o quedo pendiente).</em>')
 
 
 async def build_transaction_reports_plotly(db, execution, df, statistics):
@@ -66,7 +66,10 @@ async def build_transaction_reports_plotly(db, execution, df, statistics):
 
     Sin filas devuelve [] y el bloque no se pinta.
     """
-    from app.db.models.transaction_chart_analysis import TransactionChartAnalysis
+    from app.db.models.transaction_chart_analysis import (
+        TransactionChartAnalysis,
+        SECTIONS_GENERADAS,   # ETAPA 2 (D20)
+    )
     from app.db.models.transaction_analysis import TransactionAnalysis
     from app.services.jtl.transaction_series import build_transaction_series
     from app.api.v1.endpoints.export_pdf import _criticidad
@@ -81,6 +84,11 @@ async def build_transaction_reports_plotly(db, execution, df, statistics):
 
     textos = {}
     for f in filas:
+        # ETAPA 2 (D20): las conclusiones y recomendaciones por transaccion no se
+        # piden ni se pintan. Sin este filtro, una transaccion que SOLO tuviera
+        # esas dos filas antiguas abriria un bloque entero vacio.
+        if f.section not in SECTIONS_GENERADAS:
+            continue
         textos.setdefault(f.label, {})[f.section] = f.ai_analysis
     orden = {st['label']: i for i, st in enumerate(statistics)}
     etiquetas = sorted(
@@ -216,8 +224,9 @@ HTML_BODY_CHARTS = (
     ('rt-label', 'Response Times por Transaccion', '#8b5cf6',
      'responseTimes', 'Analisis - Response Times por Transaccion',
      'response_times', 'chart_response_times'),
-    ('throughput', 'Throughput Over Time', '#10b981',
-     'throughput', 'Analisis - Throughput', None, None),
+    # ETAPA 2 (D19): "Throughput Over Time" iba aqui y se retiro del producto
+    # entero (v1.2 §1.2). El escalar throughput (req/s) del KPI y de la tabla
+    # resumen NO se toca: lo que sale es la GRAFICA y su analisis.
     ('latency', 'Latency Over Time', '#8b5cf6',
      'latency', 'Analisis - Latency', 'latency', 'chart_latency'),
     ('error-rate', 'Error Rate Over Time', '#ef4444',
@@ -232,6 +241,28 @@ HTML_BODY_CHARTS = (
 HTML_GENERAL_ONLY = (
     ('threads', 'Active Threads Over Time', '#6366f1', 'activeThreads', 'Analisis - Active Threads'),
 )
+
+
+# Las graficas del alcance por transaccion, derivadas de la tabla de arriba para
+# que no haya dos listas que mantener: clave de las traces, y el titulo, el color
+# y la seccion que les corresponden en el informe general.
+_TX_GRAFICAS = tuple(
+    (clave_tx, titulo, color, seccion_tx)
+    for _s, titulo, color, _t, _ti, clave_tx, seccion_tx in HTML_BODY_CHARTS
+    if clave_tx
+)
+
+
+def _ctrl_basic(chart_id):
+    """Botones de mostrar/ocultar series. Sube a nivel de modulo en la ETAPA 2
+    porque ahora tambien los lleva cada grafica del bloque por transaccion: los
+    dos alcances tienen los mismos controles (D21)."""
+    return (
+        f'<div class="chart-controls">'
+        f'<button class="ctrl-btn" onclick="hf10hShowAll(\'{chart_id}\')">Mostrar todas</button>'
+        f'<button class="ctrl-btn" onclick="hf10hHideAll(\'{chart_id}\')">Ocultar todas</button>'
+        f'</div>'
+    )
 
 
 def _bloque_grafica_html(chart_id: str, titulo: str, color: str, ctrl_html: str,
@@ -282,15 +313,13 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
         tr = r.get('traces') or {}
         crit = r.get('criticality') or ''
 
-        sub = (f'<div style="font-size:.85rem;color:#cbd5e1;margin-top:.35rem">{crit}</div>'
-               if crit else '')
+        # ETAPA 2 (D16, v1.2 §0): el titulo es el nombre de la transaccion y nada
+        # mas. Antes llevaba encima el rotulo "Mini-informe por transaccion" y
+        # debajo la criticidad; los dos se retiran.
         cuerpo.append(
             '<div style="background:#0a1628;color:white;padding:1.1rem 1.4rem;'
             'border-radius:10px;margin:2rem 0 1rem 0">'
-            '<div style="font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;'
-            'color:#f5a623;font-weight:700">Mini-informe por transaccion</div>'
-            f'<div style="font-size:1.5rem;font-weight:700;margin-top:.3rem">{etiqueta}</div>'
-            f'{sub}</div>'
+            f'<div style="font-size:1.5rem;font-weight:700">{etiqueta}</div></div>'
         )
 
         if m:
@@ -326,29 +355,31 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
 
         cuerpo.append(caja('Analisis de la Transaccion', sec.get('summary')))
 
-        for clave, titulo, color in TRANSACTION_CHARTS:
+        # ETAPA 2 (D21): las graficas se piden a HTML_BODY_CHARTS y se pintan con
+        # _bloque_grafica_html, la MISMA pieza del informe general. De ahi vienen
+        # ahora el titulo, el color y los controles: antes este bloque tenia
+        # titulos propios ("Tiempos de Respuesta"), colores propios y ningun
+        # control, y por eso no se parecia al general.
+        for clave, titulo, color, seccion in _TX_GRAFICAS:
             traces = tr.get(clave)
             if not traces:
                 # Sin serie no hay grafica, pero el texto de esa seccion no se
                 # pierde: se pinta igual con su caja (criterio de N3.5).
-                if sec.get('chart_' + clave):
-                    cuerpo.append(caja(f'Analisis - {titulo}', sec.get('chart_' + clave)))
+                if sec.get(seccion):
+                    cuerpo.append(caja(f'Analisis - {titulo}', sec.get(seccion)))
                 continue
             cid = f'{prefix}chart-tx{i}-{clave.replace("_", "-")}'
-            cuerpo.append(
-                f'<div class="{c["chart_section"]}">'
-                f'<div class="{c["chart_title"]}" style="border-left-color:{color}">{titulo}</div>'
-                f'<div id="{cid}" class="{c["chart_div"]}"></div></div>'
-            )
-            cuerpo.append(caja(f'Analisis - {titulo}', sec.get('chart_' + clave)))
+            cuerpo.append(_bloque_grafica_html(
+                cid, titulo, color, _ctrl_basic(cid),
+                caja(f'Analisis - {titulo}', sec.get(seccion)), c))
             js.append(
                 "Plotly.newPlot('%s', %s, window.n49Layout('%s'), "
                 "(typeof plotlyConfig !== 'undefined' ? plotlyConfig : {responsive:true}));"
                 % (cid, json.dumps(traces), _TX_UNIDAD[clave])
             )
 
-        cuerpo.append(caja('Conclusiones de la Transaccion', sec.get('conclusions')))
-        cuerpo.append(caja('Recomendaciones de la Transaccion', sec.get('recommendations')))
+        # ETAPA 2 (D20): sin conclusiones ni recomendaciones por transaccion.
+        # Van una sola vez, al final del documento y sobre toda la prueba.
 
     # Layout comun de las graficas del bloque, definido una sola vez aunque el
     # informe integrado concatene varias ejecuciones.
@@ -367,8 +398,10 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
 """
     # Los comentarios van DENTRO de lo que se devuelve, no en la plantilla: asi
     # un documento sin mini-informes no cambia ni un byte respecto al de hoy.
-    return ('<!-- ===== N4.9: MINI-INFORME POR TRANSACCION ===== -->\n' + ''.join(cuerpo),
-            '// N4.9: graficas del mini-informe por transaccion\n' + layout + '\n'.join(js))
+    # Estos dos van DENTRO del documento que se entrega, asi que tambien se
+    # limpian (D22): quien abra el HTML y mire el fuente no debe leer la palabra.
+    return ('<!-- ===== INFORME DE CADA TRANSACCION ===== -->\n' + ''.join(cuerpo),
+            '// graficas del informe por transaccion\n' + layout + '\n'.join(js))
 
 
 
@@ -530,7 +563,8 @@ async def export_html(
             'errors': execution.ai_analysis_errors or '',
             'responseTimes': execution.ai_analysis_response_times or '',
             'responseTimeOverTime': execution.ai_analysis_response_time_over_time or '',
-            'throughput': execution.ai_analysis_throughput or '',
+            # ETAPA 2 (D19): ai_analysis_throughput ya no viaja al HTML. La columna
+            # se conserva en la base con sus datos historicos (ocultar, no borrar).
             'latency': execution.ai_analysis_latency or '',
             'errorRate': execution.ai_analysis_error_rate or '',
             'codesPerSecond': execution.ai_analysis_codes_per_second or '',
@@ -613,18 +647,10 @@ async def export_html(
 
         # UI-2: Chart 2 "Response Time Over Time" retirada del export.
 
-        # Chart 3: Throughput Over Time
-        throughput_traces = [{
-            'x': tl_timestamps,
-            'y': _float_list(tl, 'throughput'),
-            'name': 'Throughput',
-            'type': 'scatter',
-            'mode': 'lines',
-            'fill': 'tozeroy',
-            'line': {'color': '#10b981', 'width': 2},
-            'fillcolor': 'rgba(16,185,129,0.15)',
-            'hovertemplate': '%{y:,.2f} req/s<extra>%{fullData.name}</extra>',
-        }]
+        # ETAPA 2 (D19): Chart 3 "Throughput Over Time" retirada del producto
+        # entero. Ya no se calculan ni sus traces: eran datos que nadie pinta y
+        # que viajaban en el HTML descargado. El escalar throughput (req/s) del
+        # KPI y de la tabla resumen NO se toca.
 
         # Chart 4: Latency Over Time
         latency_values = [float(row.get('avg_latency', 0)) for _, row in tl.iterrows()] if len(tl) > 0 else []
@@ -731,7 +757,6 @@ async def export_html(
             redirect_stats=redirect_stats,
             ia=ia,
             rt_by_label_traces=rt_by_label_traces,
-            throughput_traces=throughput_traces,
             latency_traces=latency_traces,
             error_rate_traces=error_rate_traces,
             codes_traces=codes_traces,
@@ -823,7 +848,6 @@ def _build_plotly_html(
     redirect_stats: List[Dict[str, Any]],
     ia: Dict[str, str],
     rt_by_label_traces: list,
-    throughput_traces: list,
     latency_traces: list,
     error_rate_traces: list,
     codes_traces: list,
@@ -1037,14 +1061,6 @@ def _build_plotly_html(
     latency_max, latency_p99 = _compute_trace_stats(latency_traces)
 
     # Helper: render chart controls (show/hide all + optional Y-axis controls)
-    def _ctrl_basic(chart_id):
-        return (
-            f'<div class="chart-controls">'
-            f'<button class="ctrl-btn" onclick="hf10hShowAll(\'{chart_id}\')">Mostrar todas</button>'
-            f'<button class="ctrl-btn" onclick="hf10hHideAll(\'{chart_id}\')">Ocultar todas</button>'
-            f'</div>'
-        )
-
     def _ctrl_y_axis(chart_id, p99_value, max_value):
         slider_id = f"{chart_id}-slider"
         valdisp_id = f"{chart_id}-val"
@@ -1253,9 +1269,10 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 {transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=False)}
 
+{tx_body}
+
 {ai_box('conclusions', 'Conclusiones', '#6366f1')}
 {ai_box('recommendations', 'Recomendaciones', '#10b981')}
-{tx_body}
 <div class="footer">
 <strong>sqa &mdash; Software Quality Assurance</strong><br>
 sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente construimos, Para el futuro nos preparamos
@@ -1309,9 +1326,6 @@ var plotlyConfig = {jd(plotly_config)};
 
 // 1. Response Times por Transaccion (multi-series, toggle ON/OFF)
 Plotly.newPlot('chart-rt-label', {jd(rt_by_label_traces)}, {jd(make_layout('Response Time (ms)', 420, ',.0f'))}, plotlyConfig);
-
-// 3. Throughput Over Time
-Plotly.newPlot('chart-throughput', {jd(throughput_traces)}, {jd(make_layout('Requests/s', 420, ',.2f'))}, plotlyConfig);
 
 // 4. Latency Over Time
 Plotly.newPlot('chart-latency', {jd(latency_traces)}, {jd(make_layout('Latencia (ms)', 420, ',.0f'))}, plotlyConfig);
