@@ -2,6 +2,7 @@
 AI analysis endpoints for monitoring metrics and evidence findings.
 R3-A: Standalone pages call these to generate/retrieve AI analysis.
 """
+import asyncio            # ETAPA 1.4 (H4): la IA es sincrona, va a un hilo
 import uuid
 import json
 import logging
@@ -104,7 +105,7 @@ async def generate_monitoring_analysis(
             api_key=ai_conf.get("api_key", ""),
         )
         full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-        analysis = gemini._generate(full_prompt, section_name="monitoring_analysis") or ""
+        analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="monitoring_analysis") or ""
     except Exception as e:
         logger.error(f"Monitoring AI analysis failed: {e}")
         analysis = (
@@ -208,7 +209,7 @@ async def generate_evidence_analysis(
             api_key=ai_conf.get("api_key", ""),
         )
         full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-        analysis = gemini._generate(full_prompt, section_name="evidence_analysis") or ""
+        analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="evidence_analysis") or ""
     except Exception as e:
         logger.error(f"Evidence AI analysis failed: {e}")
         analysis = (

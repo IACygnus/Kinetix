@@ -2,6 +2,7 @@
 Integrated Report — combines multiple executions, monitoring, and evidence into one report.
 R3-B: Drag-and-drop ordering from frontend, unified AI conclusions.
 """
+import asyncio            # ETAPA 1.4 (H4): la IA es sincrona, va a un hilo
 import uuid
 import json
 import os
@@ -1586,7 +1587,7 @@ Instrucciones:
 - Correlaciona las metricas de infraestructura (CPU, memoria, threads) con el rendimiento observado.
 - Elimina duplicados. Prioriza por impacto. No repitas lo de las secciones individuales.
 """
-            unified = gemini._generate(prompt, section_name="unified_conclusions") or ""
+            unified = await asyncio.to_thread(gemini._generate, prompt, section_name="unified_conclusions") or ""
         except Exception as e:
             logger.error(f"Unified conclusions AI failed: {e}")
             unified = "Conclusiones unificadas no disponibles."
@@ -2038,7 +2039,7 @@ INSTRUCCIONES:
 """
 
         try:
-            raw = gemini._generate(prompt, section_name=f"consolidated_{test_type}") or ""
+            raw = await asyncio.to_thread(gemini._generate, prompt, section_name=f"consolidated_{test_type}") or ""
             raw = sanitize_ai_text(raw)
 
             # Parse conclusions and recommendations

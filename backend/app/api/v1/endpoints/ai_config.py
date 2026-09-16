@@ -6,6 +6,7 @@ POST /ai-config/test      - probar conexion con el proveedor
 GET  /ai-config/models    - listar modelos por provider
 POST /ai-config/reset-usage - resetear contadores (solo admin)
 """
+import asyncio            # ETAPA 1.4 (H4): la IA es sincrona, va a un hilo
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -396,7 +397,7 @@ async def test_ai_connection(
             import google.generativeai as genai
             genai.configure(api_key=api_key, transport="rest")
             m = genai.GenerativeModel(model)
-            response = m.generate_content("Responde solo: OK")
+            response = await asyncio.to_thread(m.generate_content, "Responde solo: OK")
             if response and response.text:
                 return AITestResult(
                     status="ok",
@@ -430,7 +431,8 @@ async def test_ai_connection(
             # vacio, asi que se les da 256 (coste igualmente despreciable en un test).
             from app.services.ai.gemini import openai_chat_completion, _openai_token_param
             _limit = 256 if "max_completion_tokens" in _openai_token_param(model, 1) else 10
-            response = openai_chat_completion(
+            response = await asyncio.to_thread(
+                openai_chat_completion,
                 client, model, [{"role": "user", "content": "Responde solo: OK"}], _limit,
             )
             text = response.choices[0].message.content if response.choices else ""

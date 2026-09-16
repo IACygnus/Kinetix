@@ -114,7 +114,7 @@ async def test_gemini():
         model = genai.GenerativeModel(test_model_name)
         result["model_actual"] = test_model_name
 
-        response = model.generate_content("Responde solo: OK FUNCIONANDO")
+        response = await asyncio.to_thread(model.generate_content, "Responde solo: OK FUNCIONANDO")
         result["test_result"] = response.text[:100]
         result["status"] = "SUCCESS"
 

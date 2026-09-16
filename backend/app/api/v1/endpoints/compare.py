@@ -1,6 +1,7 @@
 """
 KNX-12: Endpoint for generating comparison reports (Load vs Stress).
 """
+import asyncio            # ETAPA 1.4 (H4): la IA es sincrona, va a un hilo
 import uuid
 import logging
 from typing import Optional
@@ -129,7 +130,7 @@ Proporciona en espanol profesional (maximo 500 palabras):
 3. Evaluacion de resiliencia del sistema
 4. Recomendaciones de capacidad y escalabilidad
 """
-        ai_analysis = gemini._generate(prompt, section_name="comparison_analysis") or ""
+        ai_analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="comparison_analysis") or ""
         if not ai_analysis:
             ai_analysis = (
                 f"Comparativa: El sistema muestra un incremento del "

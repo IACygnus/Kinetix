@@ -1882,7 +1882,7 @@ async def generate_jmx(
     )
 
     try:
-        raw_text, finish_reason = _call_ai(messages, ai_conf)
+        raw_text, finish_reason = await asyncio.to_thread(_call_ai, messages, ai_conf)
     except HTTPException:
         raise
     except Exception as e:
@@ -2199,7 +2199,7 @@ async def generate_jmx_from_file(
     )
 
     try:
-        raw_response, finish_reason = _call_ai(messages, ai_conf)
+        raw_response, finish_reason = await asyncio.to_thread(_call_ai, messages, ai_conf)
     except HTTPException:
         raise
     except Exception as e:
@@ -2346,7 +2346,7 @@ async def refine_jmx(
     )
 
     try:
-        raw_text, _ = _call_ai(messages, ai_conf, max_tokens_override=max_tokens_refine)
+        raw_text, _ = await asyncio.to_thread(_call_ai, messages, ai_conf, max_tokens_override=max_tokens_refine)
     except HTTPException:
         raise
     except Exception as e:
@@ -2596,7 +2596,7 @@ async def refine_jmx_surgical(
 
     # 5. Call the AI. The operations JSON is small, 4096 is plenty.
     try:
-        raw_response, _ = _call_ai(messages, ai_conf, max_tokens_override=4096)
+        raw_response, _ = await asyncio.to_thread(_call_ai, messages, ai_conf, max_tokens_override=4096)
     except HTTPException:
         raise
     except Exception as e:

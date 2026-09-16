@@ -16,6 +16,7 @@ Este modulo NO modifica gemini.py: solo importa y llama sus funciones.
 """
 from __future__ import annotations
 
+import asyncio            # ETAPA 1.4 (H4): las llamadas de IA son sincronas
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -144,7 +145,8 @@ async def run_ai_and_verdict(
 
         # 1. Tabla resumen
         logger.info("[1/12] Analizando tabla resumen...")
-        ai_analysis_summary = gemini.analyze_summary_table(
+        ai_analysis_summary = await asyncio.to_thread(
+            gemini.analyze_summary_table,
             summary_df, metrics, test_type=test_type,
             acceptance_criteria=acceptance_criteria_dict, insights=insights,
             test_date=test_date, metric_unit=metric_unit,
@@ -169,7 +171,8 @@ async def run_ai_and_verdict(
                     'message': '',
                 })
 
-        ai_analysis_errors = gemini.analyze_errors(
+        ai_analysis_errors = await asyncio.to_thread(
+            gemini.analyze_errors,
             errors_for_analysis, metrics['total_requests'], test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -192,7 +195,8 @@ async def run_ai_and_verdict(
                 f"P99 {row['p99']:.0f}ms, min {row['min']:.0f}ms, max {row['max']:.0f}ms{pico}"
             )
         logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
-        ai_analysis_response_times = gemini.analyze_chart(
+        ai_analysis_response_times = await asyncio.to_thread(
+            gemini.analyze_chart,
             'response_times', "\n".join(rt_lines), test_type=test_type, insights=insights,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -207,7 +211,8 @@ async def run_ai_and_verdict(
         # para contar los puntos de esa serie.
 
         # Throughput
-        ai_analysis_throughput = gemini.analyze_chart(
+        ai_analysis_throughput = await asyncio.to_thread(
+            gemini.analyze_chart,
             'throughput',
             f"Throughput promedio: {metrics['throughput']:.2f} req/s, "
             f"Duracion: {metrics['duration_seconds']:.0f}s, "
@@ -220,7 +225,8 @@ async def run_ai_and_verdict(
             ai_analysis_throughput = fallback.analyze_chart("throughput", stats_summary)
 
         # Latency
-        ai_analysis_latency = gemini.analyze_chart(
+        ai_analysis_latency = await asyncio.to_thread(
+            gemini.analyze_chart,
             'latency',
             f"Latencia promedio: {metrics.get('avg_latency', 0):.2f}ms, "
             f"KB/s recibidos: {metrics.get('kb_per_sec_received', 0):.2f}, "
@@ -233,7 +239,8 @@ async def run_ai_and_verdict(
             ai_analysis_latency = fallback.analyze_chart("latency", stats_summary)
 
         # Error Rate
-        ai_analysis_error_rate = gemini.analyze_chart(
+        ai_analysis_error_rate = await asyncio.to_thread(
+            gemini.analyze_chart,
             'error_rate',
             f"Tasa de error: {metrics['error_rate']:.2f}% "
             f"({metrics['total_errors']:,} de {metrics['total_requests']:,} requests)",
@@ -250,7 +257,8 @@ async def run_ai_and_verdict(
             f"HTTP {row['responseCode']}: {int(row['count']):,}"
             for _, row in code_dist.iterrows()
         )
-        ai_analysis_codes_per_second = gemini.analyze_chart(
+        ai_analysis_codes_per_second = await asyncio.to_thread(
+            gemini.analyze_chart,
             'codes_per_second',
             f"Codigos HTTP: {codes_summary}",
             test_type=test_type,
@@ -265,7 +273,8 @@ async def run_ai_and_verdict(
         for _, row in summary_df.iterrows():
             tps_lines.append(f"- {row['label']}: {row['rendimiento']:.2f} req/s")
         logger.info(f"TPS: enviando {len(tps_lines)} transacciones a Gemini")
-        ai_analysis_transactions_per_second = gemini.analyze_chart(
+        ai_analysis_transactions_per_second = await asyncio.to_thread(
+            gemini.analyze_chart,
             'transactions_per_second',
             f"TPS total: {metrics['throughput']:.2f} req/s en {len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
             test_type=test_type,
@@ -276,7 +285,8 @@ async def run_ai_and_verdict(
             ai_analysis_transactions_per_second = fallback.analyze_chart("transactions_per_second", stats_summary)
 
         # Active Threads
-        ai_analysis_active_threads = gemini.analyze_chart(
+        ai_analysis_active_threads = await asyncio.to_thread(
+            gemini.analyze_chart,
             'active_threads',
             f"Concurrencia durante {metrics['duration_seconds']:.0f}s de prueba",
             test_type=test_type,
@@ -292,7 +302,8 @@ async def run_ai_and_verdict(
         redirect_summary = parser.get_redirect_summary_data()
         if redirect_summary is not None and len(redirect_summary) > 0:
             logger.info("[11/12] Analizando redirecciones...")
-            ai_analysis_redirects = gemini.analyze_redirects(
+            ai_analysis_redirects = await asyncio.to_thread(
+                gemini.analyze_redirects,
                 redirect_summary, metrics, test_type=test_type,
                 test_date=test_date, metric_unit=metric_unit,
             )
@@ -306,7 +317,8 @@ async def run_ai_and_verdict(
         # 12. Sintesis: Conclusiones + Recomendaciones
         logger.info("[11-12/12] Sintetizando conclusiones y recomendaciones...")
 
-        ai_conclusions = gemini.generate_conclusions(
+        ai_conclusions = await asyncio.to_thread(
+            gemini.generate_conclusions,
             metrics=metrics,
             ai_analysis_summary=ai_analysis_summary,
             ai_analysis_errors=ai_analysis_errors,
@@ -329,7 +341,8 @@ async def run_ai_and_verdict(
             logger.info("Using FALLBACK for conclusions")
             ai_conclusions = fallback.generate_conclusions(stats_summary, acceptance_criteria=acceptance_criteria_dict)
 
-        ai_recommendations = gemini.generate_recommendations(
+        ai_recommendations = await asyncio.to_thread(
+            gemini.generate_recommendations,
             metrics=metrics,
             ai_analysis_summary=ai_analysis_summary,
             ai_analysis_errors=ai_analysis_errors,
