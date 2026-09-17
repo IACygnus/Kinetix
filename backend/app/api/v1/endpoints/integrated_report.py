@@ -29,6 +29,9 @@ from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
     cover_meta_parts,   # N2.3
 )
+# ETAPA 6 (D49): el estilo y el JS del selector de capas se definen UNA vez y los
+# dos documentos los reusan (v1.2 §7).
+from app.services.export.capas_html import CSS_CAPAS, JS_CAPAS
 
 # HF-4 (D38): aqui vivia `_load_transaction_analyses`, que alimentaba el bloque
 # "Analisis por Transaccion Critica" (N3.5). El bloque salio del producto en las
@@ -324,6 +327,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-chart-controls .ctrl-label{color:#64748b;font-weight:600}
 .plotly-chart-controls input[type=range]{accent-color:#f5a623;width:140px}
 .plotly-chart-controls .ctrl-value{color:#0a1628;font-weight:700;min-width:50px;text-align:right}
+/* ETAPA 6 (D49): el selector de capas que traen los bloques por transaccion.
+   El estilo se importa de export_html para que los dos documentos lo pinten
+   igual; el sustituto se aplica al cerrar la cadena de formato, mas abajo. */
+__CSS_CAPAS__
 .plotly-ai-box{background:#ffffff;border:2px solid #4f46e5;border-left:6px solid #4f46e5;border-radius:8px;padding:1.2rem;margin:1rem 0}
 .plotly-ai-title{font-size:1rem;font-weight:700;color:var(--navy);margin-bottom:.5rem}
 .plotly-ai-text{font-size:.9rem;line-height:1.8;color:#334155}
@@ -335,6 +342,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .plotly-meta-der{border-left:none;border-top:1px solid rgba(255,255,255,.13);padding-left:0;padding-top:1rem}}
 </style>
 """
+
+# ETAPA 6 (D49): una sola definicion del estilo de los botones de capa, traida de
+# export_html, para que el integrado y el individual no puedan pintarlos distinto.
+PLOTLY_INTEGRATED_CSS = PLOTLY_INTEGRATED_CSS.replace('__CSS_CAPAS__', CSS_CAPAS)
 
 
 def _fmt_short(value):
@@ -736,6 +747,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 </div>
 
 <script>
+{JS_CAPAS}
 // HF10h BLOQUE A: chart control helpers (idempotent, safe to define multiple times)
 if (typeof window.hf10hShowAll !== 'function') {{
   window.hf10hShowAll = function(id) {{

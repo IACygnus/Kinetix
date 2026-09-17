@@ -36,7 +36,10 @@ def seleccion_de_query(tx: Optional[List[str]]) -> Optional[List[str]]:
     Un `?tx=` vacio es la forma de pedir "solo el general" sin inventar un
     segundo parametro booleano que pudiera contradecir a la lista.
     """
-    if tx is None:
+    if not isinstance(tx, (list, tuple)):
+        # `None`, y tambien el objeto `Query(None)` que llega cuando alguien
+        # invoca el endpoint en proceso (las pruebas lo hacen) sin pasar el
+        # parametro: FastAPI solo lo resuelve cuando la llamada viene por HTTP.
         return None
     return [t for t in tx if t and t.strip()]
 
@@ -75,7 +78,9 @@ def capas_de_query(capa: Optional[List[str]]) -> Dict[str, str]:
     el mismo caso.
     """
     mapa: Dict[str, str] = {}
-    for item in capa or []:
+    if not isinstance(capa, (list, tuple)):
+        return mapa          # mismo motivo que en `seleccion_de_query`
+    for item in capa:
         if not item or ':' not in item:
             continue
         ident, _, valor = item.rpartition(':')

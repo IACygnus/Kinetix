@@ -31,7 +31,9 @@ from app.services.export.report_generator import (
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 # ETAPA 6 (D50/D51): que transacciones entran en el documento. Vive aparte para
 # que las dos salidas individuales lean el parametro con el mismo codigo.
-from app.services.export.seleccion import filtrar_transacciones, seleccion_de_query
+from app.services.export.seleccion import (
+    filtrar_transacciones, seleccion_de_query, capas_de_query, capa_de,
+)
 
 try:
     from weasyprint import HTML
@@ -107,7 +109,7 @@ def _tx_points(points, value_key='value'):
     return ts, vs
 
 
-def _tx_charts(series):
+def _tx_charts(series, capa='ambas'):
     """N4.8: las 5 graficas de UNA transaccion, con las mismas funciones que el
     resto del PDF. Devuelve {clave_de_TRANSACTION_CHARTS: base64}.
 
@@ -125,6 +127,7 @@ def _tx_charts(series):
         charts['response_times'] = chart_multiline(
             [('Promedio', ts, avg), (f'Promedio{MAX_SERIES_SUFFIX}', ts, mx)],
             'Response Time (ms)', dual_max=True,
+            capa=capa,              # ETAPA 6 (D49): lo elegido en la pantalla
         )
 
     lat = series.get('latency') or []
@@ -179,7 +182,7 @@ def _criticidad(metrics, marcada):
     return ' &middot; '.join(partes)
 
 
-async def _build_transaction_reports(db, execution, df, statistics, seleccion=None):
+async def _build_transaction_reports(db, execution, df, statistics, seleccion=None, capas=None):
     """N4.8: los bloques de mini-informe que van al PDF, uno por transaccion.
 
     Fuente de las transacciones: las que TIENEN texto en
@@ -254,7 +257,9 @@ async def _build_transaction_reports(db, execution, df, statistics, seleccion=No
     for etiqueta in etiquetas:
         try:
             series = build_transaction_series(df, etiqueta)
-            charts = _tx_charts(series)
+            # ETAPA 6 (D49): cada bloque se dibuja con la capa que tenia SU
+            # grafica en la pantalla; sin seleccion, 'ambas' — el PDF de siempre.
+            charts = _tx_charts(series, capa_de(capas or {}, f'tx:{etiqueta}'))
         except Exception as e:
             logger.warning(f"N4.8: sin graficas para '{etiqueta}' en {execution.id}: {e}")
             charts = {}
@@ -294,6 +299,7 @@ async def _check_execution_access(db: AsyncSession, user: User, execution) -> No
 async def export_pdf(
     execution_id: str,
     tx: Optional[List[str]] = Query(None),
+    capa: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -302,6 +308,9 @@ async def export_pdf(
     ETAPA 6 (D50/D51): `?tx=<label>` repetido elige que informes por transaccion
     entran. Sin el parametro entran todas —el PDF de siempre—; con `?tx=` vacio,
     solo el informe general.
+
+    ETAPA 6 (D49): `?capa=<idGrafica>:<promedio|maximo>` imprime esa grafica con
+    la capa que estuviera elegida en la pantalla. Lo que no venga, 'ambas'.
     """
 
     if not WEASYPRINT_AVAILABLE:
@@ -338,6 +347,9 @@ async def export_pdf(
 
         logger.info(f"PDF: parsed {len(df)} rows, generating charts...")
 
+        # ETAPA 6 (D49): las capas pedidas, una sola lectura para todo el PDF.
+        _capas = capas_de_query(capa)
+
         # ---- Generate matplotlib charts ----
         tl = charts_data['timeline']
         tl_timestamps = _ts_list(tl)
@@ -354,6 +366,7 @@ async def export_pdf(
                 ),
                 'Response Time (ms)',
                 dual_max=True,              # GRAF1-C
+                capa=capa_de(_capas, 'general'),   # ETAPA 6 (D49)
             ),
             # UI-2: 'rt_time' (Response Time Over Time) retirada del PDF — ya no se renderiza.
             # ETAPA 2 (D19): 'throughput' (Throughput Over Time) sale del producto
@@ -482,7 +495,7 @@ async def export_pdf(
         # sale identico al de siempre (mismo criterio que N1.6 y N3.5).
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
         meta['transaction_reports'] = await _build_transaction_reports(
-            db, execution, _df_tx, statistics, seleccion_de_query(tx))
+            db, execution, _df_tx, statistics, seleccion_de_query(tx), _capas)
 
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 

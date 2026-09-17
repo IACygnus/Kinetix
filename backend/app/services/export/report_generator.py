@@ -96,13 +96,21 @@ def chart_area(timestamps, values, color, ylabel, fill=True):
     return fig_to_base64(fig)
 
 
-def chart_multiline(series_list, ylabel, use_code_colors=False, dual_max=False):
+def chart_multiline(series_list, ylabel, use_code_colors=False, dual_max=False,
+                    capa='ambas'):
     """Multi-series line chart → base64 PNG.
 
     series_list: list of (label, timestamps, values)
     dual_max: GRAF1-C — las series cuyo nombre termina en MAX_SERIES_SUFFIX se
         dibujan finas y punteadas, con el color de su serie base y sin entrada
         en la leyenda. Con dual_max=False el resultado es identico al de siempre.
+    capa: ETAPA 6 (D49) — que capas se imprimen, con lo que estuviera elegido en
+        la pantalla: 'ambas' (por defecto, el grafico de siempre), 'promedio'
+        (sin las punteadas) o 'maximo' (solo las punteadas).
+
+        Con 'maximo' la serie de maximos toma el NOMBRE de su promedio en la
+        leyenda: si no, el grafico saldria sin leyenda ninguna y no habria forma
+        de saber que transaccion es cada linea.
     """
     fig, ax = plt.subplots(figsize=(10, 4))
     if not series_list:
@@ -118,15 +126,20 @@ def chart_multiline(series_list, ylabel, use_code_colors=False, dual_max=False):
         if not x_secs:
             continue
         is_max = dual_max and label.endswith(MAX_SERIES_SUFFIX)
+        base = label[:-len(MAX_SERIES_SUFFIX)] if is_max else label
         if is_max:
-            color = base_colors.get(label[:-len(MAX_SERIES_SUFFIX)], '#94a3b8')
+            color = base_colors.get(base, '#94a3b8')
         elif use_code_colors:
             color = base_colors[label] = get_code_color(label.replace('HTTP ', ''))
         else:
             color = base_colors[label] = get_color_for_index(len(base_colors))
+        # ETAPA 6 (D49): el color se asigna SIEMPRE, aunque la serie no se dibuje,
+        # para que apagar los promedios no cambie el color de los maximos.
+        if (capa == 'promedio' and is_max) or (capa == 'maximo' and not is_max):
+            continue
         if is_max:
             ax.plot(x_secs, values, color=color, linewidth=0.8, linestyle='--',
-                    alpha=0.85, label='_nolegend_')
+                    alpha=0.85, label=(base if capa == 'maximo' else '_nolegend_'))
         else:
             ax.plot(x_secs, values, color=color, linewidth=1.5, label=label)
         if len(x_secs) > len(all_x):

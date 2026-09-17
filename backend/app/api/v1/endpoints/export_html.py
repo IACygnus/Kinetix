@@ -29,7 +29,15 @@ from app.services.export.report_generator import TRANSACTION_CHARTS   # N4.8/N4.
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ETAPA 6 (D50/D51): mismo lector de parametros que el PDF — una sola definicion
 # de que significa `?tx=` para las dos salidas individuales.
-from app.services.export.seleccion import filtrar_transacciones, seleccion_de_query
+from app.services.export.seleccion import (
+    filtrar_transacciones, seleccion_de_query, capas_de_query, capa_de,
+)
+# ETAPA 6 (D49): el control de capas del documento —estilo, JS, selector y
+# visibilidad inicial— vive fuera para que el individual y el integrado usen
+# exactamente el mismo.
+from app.services.export.capas_html import (
+    CSS_CAPAS, JS_CAPAS, aplicar_capa, ctrl_capas,
+)
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
 router = APIRouter()
@@ -53,7 +61,8 @@ _TX_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del informe
                  'transaccion pero su texto no se genero (fallo o quedo pendiente).</em>')
 
 
-async def build_transaction_reports_plotly(db, execution, df, statistics, seleccion=None):
+async def build_transaction_reports_plotly(db, execution, df, statistics,
+                                           seleccion=None, capas=None):
     """N4.9: los mini-informes de una ejecucion, con traces de Plotly.
 
     Gemela de `_build_transaction_reports` (N4.8, export_pdf.py) y con el MISMO
@@ -120,14 +129,18 @@ async def build_transaction_reports_plotly(db, execution, df, statistics, selecc
 
     reports = []
     for etiqueta in etiquetas:
+        # ETAPA 6 (D49): cada bloque abre con la capa que tenia SU grafica en la
+        # pantalla, y su selector viene marcado en esa capa.
+        capa_tx = capa_de(capas or {}, f'tx:{etiqueta}')
         try:
-            traces = _tx_traces(build_transaction_series(df, etiqueta))
+            traces = _tx_traces(build_transaction_series(df, etiqueta), capa_tx)
         except Exception as e:
             logger.warning(f"N4.9: sin graficas para '{etiqueta}' en {execution.id}: {e}")
             traces = {}
         metrics = por_label.get(etiqueta)
         reports.append({
             'label': etiqueta,
+            'capa': capa_tx,
             'criticality': _criticidad(metrics, marcadas.get(etiqueta)),
             'metrics': metrics,
             'sections': textos[etiqueta],
@@ -138,7 +151,7 @@ async def build_transaction_reports_plotly(db, execution, df, statistics, selecc
     return reports
 
 
-def _tx_traces(series):
+def _tx_traces(series, capa='ambas'):
     """Las 5 series de UNA transaccion como traces de Plotly.
 
     Los timestamps ya vienen en ISO desde N4.3, que es justo lo que Plotly
@@ -158,7 +171,7 @@ def _tx_traces(series):
         # GRAF1 + reporte 044: el maximo va como serie propia para que el pico no
         # se promedie, pero con showlegend=False — es la misma transaccion, no
         # otra, y no debe aportar una segunda entrada de leyenda.
-        traces['response_times'] = [
+        traces['response_times'] = aplicar_capa([
             {'x': xs(rt), 'y': ys(rt), 'name': 'Promedio', 'type': 'scatter', 'mode': 'lines',
              'line': {'color': '#4f46e5', 'width': 2},
              'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>'},
@@ -166,7 +179,7 @@ def _tx_traces(series):
              'type': 'scatter', 'mode': 'lines', 'showlegend': False, 'opacity': 0.85,
              'line': {'color': '#4f46e5', 'width': 1, 'dash': 'dot'},
              'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>'},
-        ]
+        ], capa)
 
     lat = series.get('latency') or []
     if lat:
@@ -264,15 +277,19 @@ _TX_GRAFICAS = tuple(
 )
 
 
-def _ctrl_basic(chart_id):
+def _ctrl_basic(chart_id, capa=None):
     """Botones de mostrar/ocultar series. Sube a nivel de modulo en la ETAPA 2
     porque ahora tambien los lleva cada grafica del bloque por transaccion: los
-    dos alcances tienen los mismos controles (D21)."""
+    dos alcances tienen los mismos controles (D21).
+
+    ETAPA 6 (D49): `capa` no None anade el selector de capas. Solo lo recibe la
+    grafica con serie dual; las demas salen exactamente como hasta ahora."""
     return (
         f'<div class="chart-controls">'
         f'<button class="ctrl-btn" onclick="hf10hShowAll(\'{chart_id}\')">Mostrar todas</button>'
         f'<button class="ctrl-btn" onclick="hf10hHideAll(\'{chart_id}\')">Ocultar todas</button>'
-        f'</div>'
+        + (ctrl_capas(chart_id, capa) if capa else '')
+        + f'</div>'
     )
 
 
@@ -380,8 +397,11 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
                     cuerpo.append(caja(f'Analisis - {titulo}', sec.get(seccion)))
                 continue
             cid = f'{prefix}chart-tx{i}-{clave.replace("_", "-")}'
+            # ETAPA 6 (D49): solo Response Times tiene serie dual; las demas no
+            # llevan selector porque no tendrian que alternar.
+            _capa = r.get('capa', 'ambas') if clave == 'response_times' else None
             cuerpo.append(_bloque_grafica_html(
-                cid, titulo, color, _ctrl_basic(cid),
+                cid, titulo, color, _ctrl_basic(cid, _capa),
                 caja(f'Analisis - {titulo}', sec.get(seccion)), c))
             js.append(
                 "Plotly.newPlot('%s', %s, window.n49Layout('%s'), "
@@ -496,6 +516,7 @@ def _compute_redirect_totals(redirect_stats: List[Dict[str, Any]]) -> Dict[str, 
 async def export_html(
     execution_id: str,
     tx: Optional[List[str]] = Query(None),
+    capa: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -504,6 +525,10 @@ async def export_html(
     ETAPA 6 (D50/D51): `?tx=<label>` repetido elige que informes por transaccion
     entran. Sin el parametro entran todas —el HTML de siempre—; con `?tx=` vacio,
     solo el informe general.
+
+    ETAPA 6 (D49): `?capa=<idGrafica>:<promedio|maximo>` abre esa grafica con la
+    capa elegida en la pantalla. El documento ofrece igual los tres botones, asi
+    que quien lo reciba puede cambiarlas sin volver a exportar.
     """
 
     try:
@@ -661,6 +686,9 @@ async def export_html(
                     'showlegend': False,
                     'hovertemplate': '%{y:,.0f} ms<extra>%{fullData.name}</extra>',
                 })
+        # ETAPA 6 (D49): el informe general abre con la capa elegida en pantalla.
+        _capa_general = capa_de(capas_de_query(capa), 'general')
+        aplicar_capa(rt_by_label_traces, _capa_general)
 
         # UI-2: Chart 2 "Response Time Over Time" retirada del export.
 
@@ -756,8 +784,9 @@ async def export_html(
         # N4.9: mini-informes de ESTA ejecucion. Sin ninguno, las dos piezas salen
         # vacias, el bloque no se pinta y el HTML queda exactamente como hoy.
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
+        _capas = capas_de_query(capa)
         _tx_reports = await build_transaction_reports_plotly(
-            db, execution, _df_tx, statistics, seleccion_de_query(tx))
+            db, execution, _df_tx, statistics, seleccion_de_query(tx), _capas)
         _tx_body, _tx_js = transaction_reports_plotly_html(_tx_reports)
 
         # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
@@ -777,6 +806,7 @@ async def export_html(
             pie_colors=pie_colors,
             tx_body=_tx_body,
             tx_js=_tx_js,
+            capa_general=_capa_general,   # ETAPA 6 (D49)
         )
 
         # KNX-17: Capacity analysis section
@@ -868,12 +898,16 @@ def _build_plotly_html(
     pie_colors: list,
     tx_body: str = '',
     tx_js: str = '',
+    capa_general: str = 'ambas',
 ) -> str:
     """Build complete standalone HTML with Plotly.js interactive charts.
 
     N4.9: `tx_body` / `tx_js` traen el bloque de mini-informes por transaccion.
     Por defecto vienen vacios, asi que cualquier llamada que no los pase produce
     exactamente el mismo documento que antes.
+
+    ETAPA 6 (D49): `capa_general` es la capa con la que abre la grafica de
+    Response Times del informe general y la que aparece marcada en su selector.
     """
 
     duration_min = int(meta['duration'] // 60)
@@ -1071,7 +1105,7 @@ def _build_plotly_html(
     latency_max, latency_p99 = _compute_trace_stats(latency_traces)
 
     # Helper: render chart controls (show/hide all + optional Y-axis controls)
-    def _ctrl_y_axis(chart_id, p99_value, max_value):
+    def _ctrl_y_axis(chart_id, p99_value, max_value, capa=None):
         slider_id = f"{chart_id}-slider"
         valdisp_id = f"{chart_id}-val"
         return (
@@ -1087,7 +1121,9 @@ def _build_plotly_html(
             f'<input type="range" id="{slider_id}" min="1" max="{max_value:.0f}" value="{max_value:.0f}" '
             f'oninput="hf10hSlider(\'{chart_id}\',this.value,\'{valdisp_id}\')">'
             f'<span class="ctrl-value" id="{valdisp_id}">{_fmt_short_local(max_value)}</span>'
-            f'</div>'
+            # ETAPA 6 (D49): el selector de capas, solo donde hay serie dual.
+            + (ctrl_capas(chart_id, capa) if capa else '')
+            + f'</div>'
         )
 
     # N1.7: logo del cliente en la cabecera. Sin logo -> cadena vacia y la
@@ -1112,7 +1148,8 @@ def _build_plotly_html(
     # bloque por transaccion, en vez de repetir siete veces el mismo HTML dentro
     # de la plantilla. Los dos alcances ya no pueden divergir por descuido.
     _zoom = {
-        'chart-rt-label': lambda: _ctrl_y_axis('chart-rt-label', rt_label_p99, rt_label_max),
+        'chart-rt-label': lambda: _ctrl_y_axis('chart-rt-label', rt_label_p99, rt_label_max,
+                                               capa_general),
         'chart-latency': lambda: _ctrl_y_axis('chart-latency', latency_p99, latency_max),
     }
     _bloques = []
@@ -1181,6 +1218,7 @@ tr:hover{{background:#f8fafc}}
 .chart-controls .ctrl-label{{color:#64748b;font-weight:600}}
 .chart-controls input[type=range]{{accent-color:#f5a623;width:140px}}
 .chart-controls .ctrl-value{{color:#0a1628;font-weight:700;min-width:50px;text-align:right}}
+{CSS_CAPAS}
 .ai-box{{background:#ffffff;border:2px solid #4f46e5;border-left:6px solid #4f46e5;border-radius:8px;padding:1.2rem;margin:1rem 0}}
 .ai-title{{font-size:1rem;font-weight:700;color:var(--navy);margin-bottom:.5rem}}
 .ai-text{{font-size:.9rem;line-height:1.8;color:#334155}}
@@ -1289,6 +1327,7 @@ sqa &mdash; Software Quality Assurance | Del pasado aprendimos, En el presente c
 </div>
 
 <script>
+{JS_CAPAS}
 // HF10h BLOQUE A: chart control helpers (idempotent, safe to define multiple times)
 if (typeof window.hf10hShowAll !== 'function') {{
   window.hf10hShowAll = function(id) {{
