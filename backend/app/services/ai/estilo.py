@@ -95,16 +95,20 @@ _PERSONAS = {50: None, 90: 10, 95: 20, 99: 100}
 def percentil_frase(p: int, valor_ms: Any) -> str:
     """El percentil ya traducido, listo para que el modelo lo copie.
 
+    La tilde de "más" va a proposito, aunque el resto de los prompts del
+    proyecto sea ASCII: el modelo copia esta frase LITERALMENTE al informe
+    (asi se le pide), asi que lo que se escriba aqui es lo que lee el cliente.
+
     >>> percentil_frase(90, 3515)
-    '1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)'
+    '1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)'
     """
     cifra = f"(P{p}: {ms(valor_ms)})"
     if p == 50:
-        return f"la mitad de los usuarios espera mas de {tiempo(valor_ms)} {cifra}"
+        return f"la mitad de los usuarios espera más de {tiempo(valor_ms)} {cifra}"
     cada = _PERSONAS.get(p)
     if cada is None:
         return f"{tiempo(valor_ms)} {cifra}"
-    return f"1 de cada {cada} usuarios espera mas de {tiempo(valor_ms)} {cifra}"
+    return f"1 de cada {cada} usuarios espera más de {tiempo(valor_ms)} {cifra}"
 
 
 def mediana_frase(valor_ms: Any) -> str:
@@ -146,7 +150,7 @@ una persona usando la aplicacion.
 2. PERCENTILES EN PERSONAS. Un percentil suelto no dice nada a quien te lee.
    P50 es la mitad de los usuarios, P90 es 1 de cada 10, P95 es 1 de cada 20 y
    P99 es 1 de cada 100. Esta es la forma exacta, copiala:
-   "1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)"
+   "1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)"
    Primero las personas y el tiempo, la cifra tecnica despues entre parentesis.
    Los datos que recibes ya traen esa frase escrita: reutilizala tal cual.
    PROHIBIDO escribir "P90 de 3.515 ms" a secas.

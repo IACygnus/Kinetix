@@ -79,7 +79,7 @@ def test_num_tolera_basura():
 
 def test_frase_p90():
     assert percentil_frase(90, 3515) == (
-        "1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)")
+        "1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)")
 
 
 def test_frase_p95():
@@ -133,7 +133,7 @@ def test_texto_limpio_no_deja_avisos():
 # ==================== DETECTOR: PERCENTILES (D29) ====================
 
 def test_percentil_dentro_de_la_frase_de_usuario_no_se_marca():
-    txt = "1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)."
+    txt = "1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)."
     assert "percentil_sin_traducir" not in _tipos(detectar_estilo(txt, "x"))
 
 
@@ -143,7 +143,7 @@ def test_percentil_suelto_se_marca():
 
 
 def test_mediana_traducida_cubre_su_frase():
-    txt = "La mitad de los usuarios espera mas de 103 ms (P50: 103 ms)."
+    txt = "La mitad de los usuarios espera más de 103 ms (P50: 103 ms)."
     assert "percentil_sin_traducir" not in _tipos(detectar_estilo(txt, "x"))
 
 
@@ -153,7 +153,7 @@ def test_percentil_escrito_con_palabra_tambien_se_marca():
 
 
 def test_la_traduccion_solo_cubre_su_propia_frase():
-    txt = ("1 de cada 10 usuarios espera mas de 123 ms (P90: 123 ms). "
+    txt = ("1 de cada 10 usuarios espera más de 123 ms (P90: 123 ms). "
            "El P99 llego a 206 ms.")
     av = [a for a in detectar_estilo(txt, "x") if a["tipo"] == "percentil_sin_traducir"]
     assert len(av) == 1 and av[0]["termino"] == "P99"
@@ -202,7 +202,7 @@ def test_miles_con_coma_se_marca():
 
 def test_miles_a_la_espanola_no_se_marca():
     """T2: '3.515' son tres digitos -> separador de miles, no decimal ingles."""
-    av = detectar_estilo("1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)", "x")
+    av = detectar_estilo("1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)", "x")
     assert not any(a["tipo"] == "formato_ingles" for a in av)
 
 
@@ -321,7 +321,7 @@ def test_el_bloque_ensena_las_formas_correctas():
     ejemplo bueno de cada regla.
     """
     for correcta in ("8.600 muestras", "0,27%", "125 ms", "3,9 veces",
-                     "1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)",
+                     "1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)",
                      "1,1 segundos"):
         assert correcta in BLOQUE_ESTILO, correcta
 
