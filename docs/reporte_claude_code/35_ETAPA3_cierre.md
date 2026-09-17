@@ -122,7 +122,7 @@ El **7,8 % de caché que el reporte 25 §5 dejaba para la Etapa 4 subió solo al
 | Prueba | Resultado |
 |---|---|
 | `pytest tests/test_estilo.py` | **57 / 57** |
-| `pytest tests/` (completo) | 467 pasan, 1 falla **anterior a esta etapa** (`HF-3_deuda.md` §6) |
+| `pytest tests/` (completo) | 467 pasan, 1 falla **anterior a esta etapa** (`37_HF-3_deuda.md` §6) |
 | Prompts con stubs sobre `ff186cc7` | **32 construidos, 0 llamadas reales, 6 comprobaciones en verde** |
 | `tsc --noEmit` del frontend | **0 errores** |
 | Playwright `avisos_estilo.py` | **9 / 9** — el aviso aparece, se corrige, se guarda, se recarga y ya no está |

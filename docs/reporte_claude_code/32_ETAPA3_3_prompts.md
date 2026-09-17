@@ -206,7 +206,7 @@ El único fallo es
 `test_analysis_pipeline.py::test_pipeline_parsea_jtl_y_popula_metricas_basicas`,
 y **es anterior a la Etapa 3**: parchea `app.services.ai.analysis_pipeline.time`
 y ese módulo ya no importa `time`. Comprobado con el árbol limpio en `533bade`:
-falla exactamente igual. Queda anotado en `HF-3_deuda.md` §6.
+falla exactamente igual. Queda anotado en `37_HF-3_deuda.md` §6.
 
 Las 57 pruebas de `test_estilo.py` siguen en verde.
 

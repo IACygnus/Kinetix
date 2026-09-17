@@ -163,7 +163,7 @@ repo solo van reportes).
 | Qué | Dónde | Nota |
 |---|---|---|
 | **`ALTER TABLE` de `reasoning_effort`** | `docs/sql/etapa2_reasoning_effort.sql` | Idempotente. **Hay que ejecutarlo al desplegar**: `create_all` no altera tablas existentes y sin la columna todos los informes salen con texto de `FallbackAnalyzer` **sin aviso** (reporte 14, corrección `b7930d3`). Verificación posterior: `GET /ai-config` 200 con `reasoning_effort` |
-| **HF-3 (rate limit)** | `docs/reporte_claude_code/HF-3_deuda.md` | Deuda registrada, fuera del alcance de la Etapa 2 |
+| **HF-3 (rate limit)** | `docs/reporte_claude_code/37_HF-3_deuda.md` | Deuda registrada, fuera del alcance de la Etapa 2 |
 | `throughputData` y `analysisThroughput` siguen viajando en el `ctx` | `Dashboard.tsx` 🔒 → `ReportBody.tsx` | Deliberado: quitarlos es diff en protegido y se hará en el paso que ya toque `Dashboard.tsx` |
 | `ai_analysis_response_time_over_time` | `analysis_pipeline.py:46` | Campo legado que ya no se genera pero **existe como override** en base. No es de esta etapa; se anota para no confundirlo con Throughput |
 | `SECTIONS` (8) se conserva junto a `SECTIONS_GENERADAS` (6) | `transaction_chart_analysis.py` | A propósito: gobierna validación, edición y `sort_order` de las filas ya guardadas |
