@@ -1,17 +1,17 @@
-21197e0 · 2026-09-16
-
-> **SUPERADO por el reporte 40.** Este quedó escrito antes de que Fredy
-> autorizara `Dashboard.tsx` y antes del reporte 38. Se conserva como estaba;
-> el guion bueno es el del **40**.
+9404b07 · 2026-09-16
 
 # ETAPA 3 — para Fredy
+
+> Sustituye al reporte 36. Cambia tres cosas: no hace falta rebuild, el aviso
+> ámbar ya aparece también en el informe general, y se añade lo que pasó con
+> «prueba final 2».
 
 ---
 
 ## 1. Qué se hizo
 
 Los textos que escribe la IA dejaron de sonar a herramienta y pasaron a sonar a
-informe. Concretamente, lo que pedía el §4 de la especificación:
+informe. Lo que pedía el §4 de la especificación:
 
 - **Fuera la jerga.** Ni «tier excelente», ni «alta variabilidad», ni
   «dispersión», ni «latencia crítica». Y no solo se le prohibió al modelo: se
@@ -26,10 +26,12 @@ informe. Concretamente, lo que pedía el §4 de la especificación:
 - **Los análisis narran el flujo de negocio** y agrupan lo que se comporta
   igual, en la línea de la referencia aprobada.
 
-Y, para que no haga falta confiar en que salió bien: un **aviso ámbar** encima de
-la caja de análisis cuando un texto todavía trae jerga, percentiles sueltos o
+Y, para no tener que confiar en que salió bien: un **aviso ámbar** encima de la
+caja de análisis cuando un texto todavía trae jerga, percentiles sueltos o
 cifras a la inglesa. Se calcula al leer, no se guarda, y desaparece solo cuando
-el texto se corrige. **No sale en el PDF ni en el HTML.**
+el texto se corrige. **Ya aparece en las cuatro vistas** —informe general,
+bloques por transacción, integrado, y monitoreo y evidencias— y **no sale en el
+PDF ni en el HTML**.
 
 ---
 
@@ -50,7 +52,7 @@ el texto se corrige. **No sale en el PDF ni en el HTML.**
 
 Otras tres cosas medidas:
 
-- **Las cifras salen de los datos de la prueba.** Se comprobó número a número:
+- **Las cifras salen de los datos de la prueba.** Comprobado número a número:
   **98,6 %** trazables en una corrida y **97,8 %** en la otra. Las diez
   restantes están explicadas una a una y **ninguna es inventada**: son cuentas
   que el modelo hizo con lo que tenía (por ejemplo, 100 − 28,20 = 71,80 % de
@@ -67,12 +69,39 @@ Otras tres cosas medidas:
 visible y tarda más en escribirlo. Sigue muy por debajo de los 354 s de la línea
 base de la Etapa 1.
 
+### 2.1 Datos que borré, y no pude recuperar
+
+En una prueba de la etapa llamé a un endpoint que guarda, y **sobrescribí los
+dos análisis globales —monitoreo y evidencias— de la ejecución «prueba final 2»
+(cliente popular, prueba de estrés de 2021, cargada el 1 de abril)**.
+
+- **Lo que se perdió:** solo esos dos textos globales.
+- **Lo que está intacto y verificado:** sus **7 análisis por imagen** (5 de
+  monitoreo, 2 de evidencias), las imágenes, todos los análisis del informe y
+  los dos informes integrados que usan esa ejecución.
+- **Recuperación:** se buscó en los informes integrados, en los exportados del
+  disco, en el resto de la base y hasta en las páginas internas de PostgreSQL
+  (que no ha pasado nunca por `VACUUM`). **No se pudo recuperar** y la evidencia
+  no permite afirmar ni negar que esos dos textos llegaran a generarse alguna
+  vez.
+- **Cómo queda:** la ejecución está **exactamente como si nunca se hubiera
+  generado el análisis global** — sin caja, con su botón «Generar Analisis
+  Global» y con sus siete análisis por imagen a la vista. No hay ni un resto del
+  texto falso.
+- **Para regenerarlos**, si los quieres: Performance → Monitoreo → seleccionar
+  «prueba final 2 — popular» → **Generar Analisis Global**; y lo mismo en
+  Performance → Evidencias. **Dos llamadas.** Saldrán con el estilo nuevo.
+
+El detalle completo está en el reporte 38. La prueba que causó el borrado ya
+está corregida: ahora desactiva el guardado y deshace lo que toca.
+
 ---
 
 ## 3. El guion de prueba
 
-**Siete pasos.** Requiere rebuild de los contenedores antes de empezar (cambian
-backend y frontend).
+**Siete pasos.** **No hace falta rebuild**: en local el backend recarga solo
+(`--reload`) y el frontend corre en modo desarrollo. Basta **Ctrl + Shift + R**
+en el navegador.
 
 **1. El antes y el después, lado a lado.**
 Historial → abre **`E3-estilo-pruebakinetix`** y, en otra pestaña,
@@ -84,8 +113,9 @@ Historial → abre **`E3-estilo-pruebakinetix`** y, en otra pestaña,
 - Las cifras van en español: `8.600` · `0,27%` · `1,1 segundos` · `125 ms`.
 
 *Detalle conocido:* los textos de esta corrida dicen «espera **mas** de», sin
-tilde. Es un fallo de una letra en el helper, ya corregido; la próxima
-generación la lleva. No se regeneró por no gastar 40 llamadas en una tilde.
+tilde. Es un fallo de una letra en el código que arma la frase, **ya
+corregido**; la próxima generación la lleva. No se regeneró por no gastar 40
+llamadas en una tilde.
 
 **2. Ninguna sección dictamina.**
 Recorre el resumen y las seis gráficas del informe nuevo. **Ninguna** dice si el
@@ -102,17 +132,17 @@ Abre **`E3-estilo-avianca`**. Sus textos hablan de `auth`, `crear`, `Paso 2` y
 `Paso 4`, de sus 81.714 peticiones y su 0,06 % de error. **Nada del ejemplo de
 reservas.**
 
-**5. El aviso ámbar.**
-Vuelve a **`E2-validacion`** (textos antiguos). Abre los bloques por
-transacción: verás franjas ámbar **«Revisar estilo: …»** en las secciones con
-jerga. Edita una, quita la palabra, espera a que diga «Guardado», recarga: **el
-aviso desapareció**.
+**5. El aviso ámbar, en todo el informe.**
+Vuelve a **`E2-validacion`** (textos antiguos). Verás **13 franjas ámbar
+«Revisar estilo: …»**:
 
-> El aviso **todavía no aparece en el informe general** (resumen, errores,
-> conclusiones, recomendaciones y las seis gráficas). Para pintarlo ahí hacen
-> falta ~17 líneas en `Dashboard.tsx`, que es archivo protegido: **esa es la
-> autorización que hace falta.** El dato ya viaja del backend; solo falta
-> pintarlo.
+- **10 en el informe general** — el resumen, los errores, las seis gráficas, las
+  conclusiones y las recomendaciones.
+- **3 en los bloques por transacción.**
+
+Edita una, quita la palabra que señala, espera a que diga «Guardado», recarga
+con **Ctrl + Shift + R**: **el aviso desapareció**. Vuelve a poner el texto como
+estaba y el aviso regresa.
 
 **6. Los exportados, limpios.**
 Genera **PDF** y **HTML** de `E3-estilo-pruebakinetix`, y el **integrado**
@@ -128,9 +158,12 @@ con nombre y apellido.
 
 ## 4. Lo que hace falta de ti
 
-1. **Rebuild** de backend y frontend (regla 7: lo controlas tú).
-2. **El guion de arriba.** Tu validación visual es el único criterio de éxito.
-3. **Una decisión**: autorizar (o no) las ~17 líneas en `Dashboard.tsx` para que
-   el aviso ámbar aparezca también en el informe general.
+1. **El guion de arriba.** Tu validación visual es el único criterio de éxito.
+2. **Decidir** si quieres que regenere los dos análisis globales de «prueba
+   final 2» (§2.1). Son dos llamadas y las puedes lanzar tú desde la pantalla.
+
+Antes de desplegar al servidor sigue pendiente lo de siempre (reporte 35 §7):
+ejecutar `docs/sql/etapa2_reasoning_effort.sql` en la base de producción, y allí
+**sí** hace falta rebuild.
 
 **Estado: Etapa 3 implementada, pendiente validación de Fredy.**

@@ -23,7 +23,11 @@ Este reporte sustituye al 25 como punto de entrada: para retomar basta este más
 | 3.3 Los diecinueve prompts | `9c2bacb` | 32 | 0 |
 | 3.4 El aviso de estilo en pantalla | `441575b` | 33 | 0 |
 | 3.5 Las corridas reales | `21197e0` | 34 | **40** |
-| 3.6 Cierre | este | 35, 36 | 0 |
+| 3.6 Cierre | `ce855fb` | 35, 36 | 0 |
+| *Ajustes posteriores* — numeración de archivos | `fba3e98` | — | 0 |
+| *Ajustes posteriores* — datos borrados en `919b350d` | `d174f55` | 38 | 0 |
+| *Ajustes posteriores* — D36 en el informe general | `9404b07` | 39 | 0 |
+| *Ajustes posteriores* — guion corregido | este | 40 | 0 |
 
 Punto de partida `6706591` (cierre de la Etapa 2) → punto de llegada `21197e0`.
 **24 archivos, +2.521 / −468 líneas**, de las que 811 son el módulo nuevo y sus
@@ -44,9 +48,12 @@ pruebas, y 1.034 los cinco reportes.
 | `frontend/src/components/dashboard/ReportBody.tsx` | 16 |
 | Los otros seis del frontend + `upload.py` + `schemas/test.py` | 61 |
 
-**Ningún archivo protegido tocado.** `Dashboard.tsx`, `ScriptDesigner.tsx`,
-`jtl_parser.py`, `virtual_user.py`, `report_generator.py`, `services/engine/`,
-`export_html.py` y `export_pdf.py` están exactamente igual que en `6706591`.
+**Ningún archivo protegido tocado hasta aquí.** Después de este cierre, Fredy
+autorizó **`Dashboard.tsx`** solo para el aviso de estilo del informe general:
+13 líneas añadidas y 1 modificada (commit `9404b07`, reporte 39). Los demás
+—`ScriptDesigner.tsx`, `jtl_parser.py`, `virtual_user.py`,
+`report_generator.py`, `services/engine/`, `export_html.py` y `export_pdf.py`—
+siguen exactamente igual que en `6706591`.
 
 ---
 
@@ -63,7 +70,7 @@ pruebas, y 1.034 los cinco reportes.
 | **D33** | Percentiles pre-traducidos en el bloque de datos | **Hecha** — `percentil_frase` en los 26 prompts que llevan percentiles | `estilo.py` §2 |
 | **D34** | `SYSTEM_PROMPT` una sola vez por llamada | **Hecha** — lo pone `_generate` para los dos proveedores. −35,2 % de caracteres enviados y la caché del 7,8 % al 36,9 % | `gemini.py:_generate` |
 | **D35** | `detectar_estilo` determinista tras sanitize, solo reporta | **Hecha** — 4 tipos, 6 endpoints de lectura, sin columna nueva en base | `estilo.py` §4 |
-| **D36** | Aviso ámbar en pantalla, no en los exportados | **Hecha en transacciones, integrado, monitoreo, evidencias e imágenes.** **PENDIENTE en el informe general**: exige `Dashboard.tsx` | reporte 30 §3, reporte 33 §2 |
+| **D36** | Aviso ámbar en pantalla, no en los exportados | **Hecha en las cuatro vistas.** Transacciones, integrado, monitoreo y evidencias en 3.4; el **informe general** después, con `Dashboard.tsx` autorizado por Fredy (13 líneas) | reportes 33 §2 y **39** |
 | **D37** | Trazabilidad de cifras y auditoría anti-texto-fijo, permanente | **Hecha** — 0 cifras de los informes escritas en código; 98,6 % y 97,8 % de cifras trazables, con las 10 restantes explicadas una a una | `estilo.py` §5, reportes 30 §4 y 34 §4 |
 
 ### Las cinco decisiones técnicas que tomé y declaro
@@ -133,19 +140,33 @@ El **7,8 % de caché que el reporte 25 §5 dejaba para la Etapa 4 subió solo al
 
 ## 6. Lo que queda abierto
 
-### 6.1 Parada para Fredy — el aviso en el informe general
+### 6.1 La parada de D36 — CERRADA
 
-`D36` en el informe general necesita **~17 líneas en `Dashboard.tsx`**
-(protegido). El diff está detallado en el reporte 30 §3 y **el endpoint ya
-devuelve los `style_warnings`**: solo falta quién los pinte. Tres puntos, ninguna
-gráfica, ningún cálculo, ningún guardado.
+Al cerrar este reporte, `D36` en el informe general quedaba pendiente de
+autorización para tocar `Dashboard.tsx`. **Fredy la autorizó y está hecha**:
+13 líneas añadidas y 1 modificada, con su prueba de Playwright (14 de 14) y la
+regresión completa en verde. **Reporte 39.**
+
+**No queda ninguna parada abierta en la Etapa 3.**
+
+### 6.1.b Añadido después de este cierre
+
+| Qué | Reporte |
+|---|---|
+| Numeración de todos los archivos de `docs/reporte_claude_code/` | commit `fba3e98` |
+| Qué se borró en `919b350d` y por qué no se recupera | **38** |
+| D36 en el informe general, con el diff completo | **39** |
+| El guion de Fredy corregido (sustituye al 36) | **40** |
 
 ### 6.2 Fuera de alcance, anotado
 
 - **Los títulos de gráfica de pantalla van sin tilde** («Response Times por
   Transaccion», «Codigos de Respuesta»). Se corrigen cuando se toquen esas
-  pantallas en las Etapas 5 o 6; hacerlo ahora obligaría a tocar `Dashboard.tsx`
-  por un motivo cosmético.
+  pantallas en las Etapas 5 o 6. La autorización de `Dashboard.tsx` fue **solo**
+  para el aviso de estilo, así que esto no entró.
+- **Los dos análisis globales de «prueba final 2» (`919b350d`) se perdieron** y
+  no se pudieron recuperar. Se regeneran con dos llamadas desde la pantalla.
+  Reporte **38**.
 - **Los textos de las dos corridas nuevas llevan «espera mas de» sin tilde.** El
   helper ya está corregido; la próxima generación la lleva. No se regeneró:
   habría costado 40 llamadas por una tilde.
@@ -169,8 +190,10 @@ Lo del reporte 25 §6 **sigue vigente y no está hecho**:
    Sin esa columna, la primera lectura de `ai_config` revienta, el error se
    degrada a *warning* y **todos los informes salen con texto de
    `FallbackAnalyzer` sin aviso ninguno**.
-2. Rebuild de los contenedores, que lo controla Fredy (regla 7). **La Etapa 3
-   cambia backend y frontend: sin rebuild no se ve nada de esto.**
+2. Rebuild de los contenedores **en el servidor**, que lo controla Fredy
+   (regla 7). **La Etapa 3 cambia backend y frontend: sin rebuild alli no se ve
+   nada de esto.** En local NO hace falta: el backend arranca con `--reload` y
+   el frontend en modo desarrollo, asi que basta Ctrl + Shift + R.
 3. `reasoning_effort` queda en **`low`**, que es con lo que se midió todo.
 
 La Etapa 3 **no añade ningún paso nuevo de despliegue**: no hay tablas ni
@@ -180,6 +203,7 @@ columnas nuevas.
 
 ## 8. Lo que falta de verdad
 
-**La validación visual de Fredy** (regla 9). El guion está en el reporte 36.
+**La validación visual de Fredy** (regla 9). El guion está en el reporte **40**
+(el 36 quedó superado).
 
 **Estado: Etapa 3 implementada, pendiente validación de Fredy.**
