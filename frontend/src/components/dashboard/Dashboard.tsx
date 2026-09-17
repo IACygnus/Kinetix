@@ -10,6 +10,7 @@ import { testAPI } from '../../services/api';
 import ReportBody from './ReportBody';   // ETAPA 2 (D21): el cuerpo del informe
 import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
+import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 import {
   CHART_LAYOUT,
   getCodeColor,
@@ -137,6 +138,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   const autoSaveMs = embedded ? undefined : AUTOSAVE_MS;
   const saveTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<Record<string, string>>({});
+  // ETAPA 3 (D36): avisos de estilo por columna, tal como llegan de /executions/{id}.
+  const avisosRef = useRef<Record<string, string[]>>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [savedAt, setSavedAt] = useState('');
 
@@ -197,6 +200,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
 
       setExecution(execData);
       setCharts(chartsData);
+      avisosRef.current = execData.style_warnings || {};   // ETAPA 3 (D36)
 
       setAnalysisSummary(execData.ai_analysis_summary || '');
       setAnalysisErrors(execData.ai_analysis_errors || '');
@@ -385,12 +389,15 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   }, []);
 
   // Helper for chart analysis sections — MUST be before early returns (Rules of Hooks)
-  const AnalysisBox = useCallback(({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+  // ETAPA 3 (D36): los avisos se leen por REF, no como dependencia: si AnalysisBox
+  // cambiara de identidad, React desmontaria el textarea y se perderia el foco.
+  const AnalysisBox = useCallback(({ value, onChange, campo }: { value: string; onChange: (v: string) => void; campo?: string }) => (
     <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
       <div className="flex items-center justify-between mb-2">
         <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
         <span className="text-xs text-gray-400 italic">Click para editar</span>
       </div>
+      <AvisoEstilo terminos={campo ? avisosRef.current[campo] : undefined} />
       <EditableTextArea initialValue={value} onSave={onChange} placeholder="Analisis..." debounceMs={autoSaveMs} />
     </div>
   ), []);
@@ -703,6 +710,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
             <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
             <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+            <AvisoEstilo terminos={avisosRef.current["ai_analysis_summary"]} />
             <EditableTextArea initialValue={analysisSummary} onSave={emitEdit('ai_analysis_summary', setAnalysisSummary)} placeholder="El analisis aparecera aqui..." debounceMs={autoSaveMs} />
           </div>
 
@@ -761,6 +769,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
                 <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Redirecciones</h3>
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <AvisoEstilo terminos={avisosRef.current["ai_analysis_redirects"]} />
                 <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Analisis de redirecciones..." debounceMs={autoSaveMs} />
               </div>
             </div>
@@ -859,6 +868,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
               <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Errores</h3>
               <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+              <AvisoEstilo terminos={avisosRef.current["ai_analysis_errors"]} />
               <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Analisis de errores..." debounceMs={autoSaveMs} />
             </div>
           </div>
@@ -924,6 +934,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
               <div className="p-6">
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <AvisoEstilo terminos={avisosRef.current["ai_conclusions"]} />
                 <EditableTextArea initialValue={conclusions} onSave={(v) => { setConclusions(v); queueSave('ai_conclusions', v); }} debounceMs={autoSaveMs} placeholder="Escribe las conclusiones generales de la prueba de performance..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold resize-y cursor-text hover:border-yellow-300 transition-colors" />
               </div>
             </div>
@@ -933,6 +944,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
               <div className="p-6">
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
+                <AvisoEstilo terminos={avisosRef.current["ai_recommendations"]} />
                 <EditableTextArea initialValue={recommendations} onSave={(v) => { setRecommendations(v); queueSave('ai_recommendations', v); }} debounceMs={autoSaveMs} placeholder="Escribe las recomendaciones para mejorar el performance del sistema..." minHeight="320px" className="w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-green-400/50 focus:border-green-400 resize-y cursor-text hover:border-green-300 transition-colors" />
               </div>
             </div>
