@@ -268,7 +268,38 @@ function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: 
   );
 }
 
-export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0, capas }: {
+/** ETAPA 7 (D58): la clave con la que un texto por transaccion viaja como
+ *  override del informe integrado. Estable y legible: no depende del orden de
+ *  las secciones ni de ningun id generado. La comparte el backend, que la
+ *  reconoce por el prefijo `tx|`. */
+export const claveOverrideTx = (label: string, section: string) => `tx|${label}|${section}`;
+
+/** ETAPA 7 (D58/D60): pisa los textos de una transaccion con los overrides del
+ *  informe integrado, si los hay. Sin overrides devuelve la MISMA lista, asi que
+ *  el informe individual no paga nada y un integrado antiguo se ve igual que
+ *  siempre. Una seccion que solo existe como override (se edito una que estaba
+ *  vacia) se añade, para que no se pierda lo escrito. */
+function aplicarOverrides(secciones: Seccion[], label: string,
+                          overrides?: Record<string, string>): Seccion[] {
+  if (!overrides) return secciones;
+  const propios = SECTIONS.filter((s) => overrides[claveOverrideTx(label, s)] !== undefined);
+  if (!propios.length) return secciones;
+  const salida = secciones.map((s) => {
+    const texto = overrides[claveOverrideTx(label, s.section)];
+    return texto === undefined ? s : { ...s, ai_analysis: texto, is_edited: true };
+  });
+  const presentes = new Set(salida.map((s) => s.section));
+  propios.forEach((s) => {
+    if (!presentes.has(s)) {
+      salida.push({ section: s, ai_analysis: overrides[claveOverrideTx(label, s)],
+                    is_edited: true, generated_at: null } as Seccion);
+    }
+  });
+  return salida;
+}
+
+export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0, capas,
+                                                   onAnalysisEdit, analysisOverrides }: {
   executionId: string;
   /** ETAPA 2 (D15): las filas de by_label que Dashboard ya pidio a /charts. Se pasan
    *  en vez de volver a pedir el endpoint entero (850 KB) solo para una fila. */
@@ -276,6 +307,13 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
   durationSeconds?: number;
   /** ETAPA 6 (D46-D48): se recibe de Dashboard y se reparte a cada bloque. */
   capas: ChartLayers;
+  /** ETAPA 7 (D58): canal del informe integrado. Con el, editar NO escribe en
+   *  `transaction_chart_analyses`: emite un override que el integrado guarda en
+   *  su propio registro (regla F4). Sin el —informe individual— el componente se
+   *  comporta exactamente como antes de esta etapa. */
+  onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
+  /** ETAPA 7 (D58): los overrides ya guardados, para hidratar los textos. */
+  analysisOverrides?: Record<string, string>;
 }) {
   const [labels, setLabels] = useState<string[]>([]);
   const [abierta, setAbierta] = useState<string | null>(null);
@@ -433,7 +471,14 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
   }, [cola, generar]);
 
   const guardarSeccion = useCallback(async (label: string, section: string, texto: string) => {
-    await api.put(`/executions/${executionId}/transaction-report/${section}?label=${encodeURIComponent(label)}`, { ai_analysis: texto });
+    // ETAPA 7 (D58): dentro del informe integrado la edicion NO toca la ejecucion
+    // original — va a los `overrides` de su seccion, igual que ya hacen las cajas
+    // del informe general (F4). Fuera del integrado, el PUT de siempre.
+    if (onAnalysisEdit) {
+      onAnalysisEdit(executionId, claveOverrideTx(label, section), texto);
+    } else {
+      await api.put(`/executions/${executionId}/transaction-report/${section}?label=${encodeURIComponent(label)}`, { ai_analysis: texto });
+    }
     setDatos((d) => {
       const est = d[label];
       if (!est) return d;
@@ -443,7 +488,7 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
         : [...est.secciones, { section, ai_analysis: texto, is_edited: true, generated_at: null }];
       return { ...d, [label]: { ...est, secciones } };
     });
-  }, [executionId]);
+  }, [executionId, onAnalysisEdit]);
 
   if (!labels.length) return null;   // regla 16: despues de TODOS los hooks
 
@@ -503,7 +548,10 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
 
           {labels.map((label) => {
             const est = datos[label];
-            const secciones = est?.secciones || [];
+            // ETAPA 7 (D58): dentro del integrado, el texto editado en ESE informe
+            // pisa al de la ejecucion. D60: un integrado sin overrides no tiene
+            // estas claves y se ve con los textos originales, sin migrar nada.
+            const secciones = aplicarOverrides(est?.secciones || [], label, analysisOverrides);
             // Solo las secciones que hoy se generan (D20). Sin este filtro, una
             // transaccion antigua con conclusiones y recomendaciones guardadas
             // mostraba "8 de 6 secciones".

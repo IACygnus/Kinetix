@@ -220,7 +220,9 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
         # esta funcion con SU ejecucion, asi que no se mezclan entre ellas.
         from app.api.v1.endpoints.export_pdf import _build_transaction_reports
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
-        meta['transaction_reports'] = await _build_transaction_reports(db, execution, _df_tx, statistics)
+        meta['transaction_reports'] = _aplicar_overrides_tx(
+            await _build_transaction_reports(db, execution, _df_tx, statistics),
+            overrides)   # ETAPA 7 (D59)
 
         # Generate the full PDF HTML using report_generator's build_pdf_html
         return build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
@@ -999,7 +1001,9 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
         # se pinta y la seccion sale como hoy.
         from app.api.v1.endpoints.export_html import build_transaction_reports_plotly
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
-        _tx_reports = await build_transaction_reports_plotly(db, execution, _df_tx, statistics)
+        _tx_reports = _aplicar_overrides_tx(
+            await build_transaction_reports_plotly(db, execution, _df_tx, statistics),
+            overrides)   # ETAPA 7 (D59)
 
         execution_data = {
             'meta': meta,
@@ -1113,6 +1117,59 @@ def _section_analyses_for_prompt(execution, overrides_analysis: dict) -> str:
                 texto = texto[:_SECCION_MAX_CHARS_SIN_EDITAR].rstrip() + "..."
             partes.append(f"[{etiqueta}]: {texto}")
     return "\n".join(partes)
+
+
+# ETAPA 7 (D58): prefijo de las claves de override por transaccion. La clave la
+# arma el frontend en `TransactionReportSection.claveOverrideTx`:
+#     tx|<label de la transaccion>|<seccion>
+# El label puede llevar espacios y puntos ("1. Auth"), pero nunca "|", que es lo
+# unico que hace falta para partir la clave por los extremos.
+_PREFIJO_TX = "tx|"
+
+
+def _overrides_por_transaccion(overrides) -> dict:
+    """{label: {section: texto}} a partir de los overrides de una seccion.
+
+    Las claves que no empiezan por `tx|` son columnas de la ejecucion y las
+    consume `_apply_ia_overrides`; las que si, son textos de un bloque por
+    transaccion. Sin ninguna devuelve {} y el export sale como antes (D60).
+    """
+    salida: dict = {}
+    for clave, texto in ((overrides or {}).get("analysis") or {}).items():
+        if not clave.startswith(_PREFIJO_TX) or texto is None:
+            continue
+        resto = clave[len(_PREFIJO_TX):]
+        label, sep, section = resto.rpartition("|")
+        if sep and label and section:
+            salida.setdefault(label, {})[section] = texto
+    return salida
+
+
+def _aplicar_overrides_tx(reports, overrides):
+    """ETAPA 7 (D59): pisa los textos de los bloques por transaccion con lo
+    editado en el informe integrado.
+
+    Se hace AQUI y no dentro de los constructores (`_build_transaction_reports` y
+    `build_transaction_reports_plotly`, que son del informe individual y estan
+    protegidos): ellos siguen devolviendo lo que hay en
+    `transaction_chart_analyses` y el integrado decide encima. La ejecucion
+    original nunca se toca (Opcion B / regla F4).
+    """
+    por_label = _overrides_por_transaccion(overrides)
+    if not por_label or not reports:
+        return reports
+    tocados = 0
+    for r in reports:
+        propios = por_label.get(r.get("label"))
+        if not propios:
+            continue
+        secciones = dict(r.get("sections") or {})
+        secciones.update(propios)
+        r["sections"] = secciones
+        tocados += len(propios)
+    if tocados:
+        logger.info(f"D59: {tocados} texto(s) por transaccion pisados por overrides del integrado")
+    return reports
 
 
 def _apply_ia_overrides(ia: dict, overrides) -> dict:

@@ -927,14 +927,22 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             entre el informe general y las conclusiones — v1.2 §1 pone las
             conclusiones una sola vez y al final, sobre toda la prueba. Antes se
             montaba despues de ellas. El componente decide si hay algo que mostrar. */}
-        {!embedded && (
-          <TransactionReportSection
-            executionId={executionId}
-            byLabel={charts.by_label || []}
-            durationSeconds={execution.duration_seconds}
-            capas={capas}
-          />
-        )}
+        {/* ETAPA 7 (D57): esta seccion YA NO se oculta al embeber. Era lo unico
+            que dejaba al informe integrado sin sus bloques por transaccion —
+            mientras sus PDF y HTML si los traian (reporte 57). Las otras guardas
+            `!embedded` de este archivo se quedan: las conclusiones por ejecucion
+            las consolida el integrado (v1.2 §0), y los botones de exportar y el
+            indicador de autoguardado son de la pantalla individual.
+            D58: embebido, la edicion va por `onAnalysisEdit` como override del
+            integrado; suelto, sigue escribiendo en transaction_chart_analyses. */}
+        <TransactionReportSection
+          executionId={executionId}
+          byLabel={charts.by_label || []}
+          durationSeconds={execution.duration_seconds}
+          capas={capas}
+          onAnalysisEdit={embedded ? onAnalysisEdit : undefined}
+          analysisOverrides={embedded ? analysisOverrides : undefined}
+        />
 
         {/* CONCLUSIONES Y RECOMENDACIONES — hidden when embedded in integrated report */}
         {!embedded && (
