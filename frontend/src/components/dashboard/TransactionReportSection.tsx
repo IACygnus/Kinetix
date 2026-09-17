@@ -17,6 +17,7 @@ import api from '../../services/api';
 import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
 import ReportBody, { ReportBodyCtx } from './ReportBody';
 import SummaryTable, { SummaryRow } from './SummaryTable';
+import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 
 // ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
 // transaccion se retiraron (v1.2 §1.1): van una sola vez al final del informe.
@@ -52,7 +53,9 @@ const AUTOSAVE_MS = 1800;   // mismo debounce que F3/R1/R2
 const POLL_MS = 4000;
 const MAX_FALLOS_SONDEO = 3;
 
-type Seccion = { section: string; ai_analysis: string | null; is_edited: boolean; generated_at: string | null };
+type Seccion = { section: string; ai_analysis: string | null; is_edited: boolean; generated_at: string | null;
+  /** ETAPA 3 (D36): terminos de estilo detectados al leer. Vacio = limpia. */
+  style_warnings?: string[] };
 type Progreso = { done: number; total: number; persisted: number; pending: string[] };
 type Estado = { series?: any; secciones: Seccion[]; progreso?: Progreso; error?: string };
 
@@ -154,15 +157,32 @@ function BloqueGraficasTx({ label, series, secciones, guardarSeccion }: {
 
   // Identidad estable (deps vacias): si cambiara en cada render, React
   // desmontaria el textarea y se perderia el foco al escribir.
-  const AnalysisBox = useCallback(({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
-      <div className="flex items-center justify-between mb-2">
-        <h4 className="font-bold text-orange-600 text-xl">Análisis</h4>
-        <span className="text-xs text-gray-400 italic">Click para editar</span>
+  // ETAPA 3 (D36): el aviso de estilo va encima de la caja. `campo` llega de
+  // ReportBody y se traduce a la seccion con el mismo mapa que usa el guardado.
+  // Las secciones se leen por REF y no por dependencia: si `AnalysisBox`
+  // cambiara de identidad al refrescarse los textos, React desmontaria el
+  // textarea y se perderia el foco (el motivo de las deps vacias de arriba).
+  // El aviso se actualiza igual, porque el componente se vuelve a pintar cuando
+  // ReportBody se pinta.
+  const seccionesRef = useRef(secciones);
+  seccionesRef.current = secciones;
+
+  const AnalysisBox = useCallback(({ value, onChange, campo }: { value: string; onChange: (v: string) => void; campo?: string }) => {
+    const sec = campo ? SECCION_DE_CAMPO[campo] : undefined;
+    const avisos = sec
+      ? seccionesRef.current.find((s) => s.section === sec)?.style_warnings
+      : undefined;
+    return (
+      <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-bold text-orange-600 text-xl">Análisis</h4>
+          <span className="text-xs text-gray-400 italic">Click para editar</span>
+        </div>
+        <AvisoEstilo terminos={avisos} />
+        <TextoEditable valor={value} editado={false} onGuardar={async (v) => onChange(v)} />
       </div>
-      <TextoEditable valor={value} editado={false} onGuardar={async (v) => onChange(v)} />
-    </div>
-  ), []);
+    );
+  }, []);
 
   // C2: la edicion y el autoguardado de este alcance van al canal de la
   // transaccion. El setter de ReportBody se respeta en la firma pero no guarda
@@ -563,6 +583,7 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
                               {TITULOS.summary}
                               {fila?.generated_at && !fila?.is_edited && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
                             </h4>
+                            <AvisoEstilo terminos={fila?.style_warnings} />
                             <TextoEditable
                               valor={fila?.ai_analysis || ''}
                               editado={!!fila?.is_edited}

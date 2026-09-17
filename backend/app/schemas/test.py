@@ -72,6 +72,12 @@ class TestExecutionResponse(TestExecutionBase):
     ai_recommendations: Optional[str] = None
     ai_conclusions: Optional[str] = None
 
+    # ETAPA 3 (D35): avisos de estilo por seccion, calculados AL LEER. No hay
+    # columna nueva en base: se recalculan en cada lectura y desaparecen solos
+    # cuando el texto se corrige. Clave = nombre de la columna ai_*; valor =
+    # los terminos detectados ("tier", "P99 sin traducir").
+    style_warnings: Optional[Dict[str, List[str]]] = None
+
     # Timestamps
     execution_date: Optional[datetime] = None
     created_at: datetime

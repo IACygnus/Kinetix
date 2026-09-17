@@ -17,7 +17,8 @@ from app.core.security import get_current_user
 from app.db.models.test import TestExecution
 from app.db.models.attachment import ExecutionAttachment
 # ETAPA 3 (D32/D33): formato espanol y percentiles traducidos en los prompts.
-from app.services.ai.estilo import ms, num, pct, percentiles_bloque
+from app.services.ai.estilo import (
+    detectar_estilo, ms, num, pct, percentiles_bloque, terminos_de)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -140,7 +141,10 @@ async def get_monitoring_analysis(
         raise HTTPException(404, "Ejecucion no encontrada")
 
     data = _get_capacity_data(execution)
-    return {"analysis": data.get('monitoring_ai_analysis', '')}
+    # ETAPA 3 (D35): el aviso de estilo se calcula al leer.
+    texto = data.get('monitoring_ai_analysis', '')
+    return {"analysis": texto,
+            "style_warnings": terminos_de(detectar_estilo(texto, 'monitoring_analysis'))}
 
 
 @router.post("/{execution_id}/evidence-analysis")
@@ -245,7 +249,10 @@ async def get_evidence_analysis(
         raise HTTPException(404, "Ejecucion no encontrada")
 
     data = _get_capacity_data(execution)
-    return {"analysis": data.get('evidence_ai_analysis', '')}
+    # ETAPA 3 (D35): el aviso de estilo se calcula al leer.
+    texto = data.get('evidence_ai_analysis', '')
+    return {"analysis": texto,
+            "style_warnings": terminos_de(detectar_estilo(texto, 'evidence_analysis'))}
 
 
 @router.get("/{execution_id}/attachment-counts")
@@ -465,6 +472,9 @@ async def get_all_image_analyses(
             "file_type": a.file_type,
             "ai_analysis": a.ai_analysis,
             "ai_analysis_updated_at": a.ai_analysis_updated_at.isoformat() if a.ai_analysis_updated_at else None,
+            # ETAPA 3 (D35): el analisis por imagen tambien sale en el informe.
+            "style_warnings": terminos_de(detectar_estilo(
+                a.ai_analysis, f"{attachment_type}_image")),
         }
         for a in attachments
     ]

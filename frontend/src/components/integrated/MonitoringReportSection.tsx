@@ -3,6 +3,7 @@
  * Reusable for both monitoring and evidence attachment types.
  */
 import { useState, useEffect } from 'react';
+import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 
 interface Attachment {
   id: string;
@@ -13,6 +14,8 @@ interface Attachment {
   file_type: string;
   ai_analysis: string | null;
   ai_analysis_updated_at: string | null;
+  /** ETAPA 3 (D36): terminos de estilo detectados al leer. */
+  style_warnings?: string[];
 }
 
 interface Props {
@@ -74,6 +77,11 @@ export default function MonitoringReportSection({ executionId, attachmentType, s
                   <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
                   <span className="text-xs text-gray-400 italic">Click para editar</span>
                 </div>
+                {/* ETAPA 3 (D36): si el texto ya se corrigio aqui, el aviso de la
+                    version original deja de aplicar. */}
+                {editedAnalyses[att.id] === undefined && (
+                  <AvisoEstilo terminos={att.style_warnings} />
+                )}
                 <textarea
                   value={editedAnalyses[att.id] ?? att.ai_analysis ?? ''}
                   onChange={(e) => handleEdit(att.id, e.target.value)}

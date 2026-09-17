@@ -2150,6 +2150,36 @@ async def get_integrated_report(
     report = await db.get(IntegratedReport, uuid.UUID(report_id))
     if not report:
         raise HTTPException(404, "Informe integrado no encontrado")
+
+    # ETAPA 3 (D35): avisos de estilo de los textos que vive el integrado — los
+    # que el usuario corrigio aqui (overrides) y el consolidado. Se calculan al
+    # leer; un informe limpio devuelve diccionarios vacios.
+    from app.services.ai.estilo import (
+        SECCIONES_DEL_INFORME, detectar_estilo, terminos_de)
+
+    avisos_secciones: dict = {}
+    for sec in (report.sections or []):
+        overrides = ((sec.get("overrides") or {}).get("analysis") or {}) \
+            if isinstance(sec, dict) else {}
+        por_columna = {}
+        for columna, texto in overrides.items():
+            terminos = terminos_de(detectar_estilo(
+                texto, SECCIONES_DEL_INFORME.get(columna, columna)))
+            if terminos:
+                por_columna[columna] = terminos
+        if por_columna:
+            avisos_secciones[str(sec.get("source_id"))] = por_columna
+
+    avisos_consolidado: dict = {}
+    for tipo, bloque in (report.consolidated_analysis or {}).items():
+        if not isinstance(bloque, dict):
+            continue
+        for clave, seccion in (("conclusions", "consolidated_conclusions"),
+                               ("recommendations", "consolidated_recommendations")):
+            terminos = terminos_de(detectar_estilo(bloque.get(clave), seccion))
+            if terminos:
+                avisos_consolidado.setdefault(tipo, {})[clave] = terminos
+
     return {
         "id": str(report.id),
         "name": report.name,
@@ -2157,6 +2187,8 @@ async def get_integrated_report(
         "consolidated_analysis": report.consolidated_analysis or {},
         "created_at": report.created_at.isoformat() if report.created_at else None,
         "updated_at": report.updated_at.isoformat() if report.updated_at else None,
+        "style_warnings": {"sections": avisos_secciones,
+                           "consolidated": avisos_consolidado},
     }
 
 

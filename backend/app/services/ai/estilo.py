@@ -360,6 +360,40 @@ def detectar_estilo(texto: Optional[str], seccion: str = "") -> List[Dict[str, s
         return []
 
 
+# Columna `ai_*` de `test_executions` -> nombre de seccion que espera el
+# detector. El nombre importa: decide si esa seccion puede dictaminar (D30).
+SECCIONES_DEL_INFORME = {
+    "ai_analysis_summary": "summary_table",
+    "ai_analysis_errors": "errors",
+    "ai_analysis_response_times": "chart_response_times",
+    "ai_analysis_response_time_over_time": "chart_response_time_over_time",
+    "ai_analysis_throughput": "chart_throughput",
+    "ai_analysis_latency": "chart_latency",
+    "ai_analysis_error_rate": "chart_error_rate",
+    "ai_analysis_codes_per_second": "chart_codes_per_second",
+    "ai_analysis_transactions_per_second": "chart_transactions_per_second",
+    "ai_analysis_active_threads": "chart_active_threads",
+    "ai_analysis_redirects": "redirects",
+    "ai_conclusions": "conclusions",
+    "ai_recommendations": "recommendations",
+}
+
+
+def avisos_de_ejecucion(execution) -> Dict[str, List[str]]:
+    """D35/D36: los avisos del informe general de UNA ejecucion, al leerla.
+
+    Devuelve {columna: [terminos]} y omite las secciones limpias, asi que un
+    informe sin problemas devuelve `{}`. Se calcula en cada lectura: no hay
+    columna nueva en base y el aviso desaparece solo al corregir el texto.
+    """
+    salida: Dict[str, List[str]] = {}
+    for columna, seccion in SECCIONES_DEL_INFORME.items():
+        terminos = terminos_de(detectar_estilo(getattr(execution, columna, None), seccion))
+        if terminos:
+            salida[columna] = terminos
+    return salida
+
+
 def terminos_de(avisos: List[Dict[str, str]]) -> List[str]:
     """Lista corta y sin repetir, para el aviso de pantalla (D36)."""
     vistos, salida = set(), []

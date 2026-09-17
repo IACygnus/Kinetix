@@ -36,6 +36,8 @@ from app.services.jtl.transaction_series import (                               
     DEFAULT_INTERVAL_SECONDS,
 )
 from app.services.ai.transaction_report import generate_transaction_report       # N4.6
+from app.services.ai.estilo import (                                             # ETAPA 3 (D35)
+    avisos_de_ejecucion, detectar_estilo, terminos_de)
 from app.db.models.transaction_chart_analysis import (                           # N4.6
     TransactionChartAnalysis,
     SECTIONS,
@@ -659,7 +661,11 @@ async def get_execution(
 
     await _check_execution_access(db, current_user, execution)
 
-    return execution
+    # ETAPA 3 (D35): los avisos de estilo se calculan AL LEER, sin columna nueva
+    # en base. Un informe limpio devuelve `{}` y la pantalla no pinta nada.
+    respuesta = TestExecutionResponse.model_validate(execution)
+    respuesta.style_warnings = avisos_de_ejecucion(execution)
+    return respuesta
 
 
 @router.get("/executions/{execution_id}/transaction-analyses")
@@ -989,6 +995,8 @@ async def get_transaction_report(
                 "section": r.section, "ai_analysis": r.ai_analysis, "is_edited": r.is_edited,
                 "generated_at": r.generated_at.isoformat() if r.generated_at else None,
                 "sort_order": r.sort_order,
+                # ETAPA 3 (D35): calculado al leer; lista vacia = seccion limpia.
+                "style_warnings": terminos_de(detectar_estilo(r.ai_analysis, r.section)),
             }
             for r in rows
         ],

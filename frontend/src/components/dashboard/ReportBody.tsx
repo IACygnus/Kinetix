@@ -207,7 +207,9 @@ export interface ReportBodyCtx {
   getYDomain: (key: string) => [number | string, number | string];
   extractY: (data: any[], keys: string[]) => number[];
   handleYRange: (key: string, mn: number | 'auto', mx: number | 'auto') => void;
-  AnalysisBox: React.ComponentType<{ value: string; onChange: (v: string) => void }>;
+  /** ETAPA 3 (D36): `campo` identifica la seccion, para que quien pinte la caja
+   *  pueda buscar sus avisos de estilo. Quien no los use, lo ignora. */
+  AnalysisBox: React.ComponentType<{ value: string; onChange: (v: string) => void; campo?: string }>;
   handleLegendClick: (
     dataKey: string,
     hiddenLines: Set<string>,
@@ -263,7 +265,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(responseTimesByLabel.data, [...responseTimesByLabel.labels, ...rtMaxKeys])} onRangeChange={(mn, mx) => handleYRange('rtByLabel', mn, mx)} />
-              <AnalysisBox value={analysisResponseTimes} onChange={emitEdit('ai_analysis_response_times', setAnalysisResponseTimes)} />
+              <AnalysisBox campo='ai_analysis_response_times' value={analysisResponseTimes} onChange={emitEdit('ai_analysis_response_times', setAnalysisResponseTimes)} />
             </div>
 
             {/* UI-2: grafica "Response Time Over Time" (promedio agregado) retirada.
@@ -290,7 +292,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(latencyData, ['value'])} onRangeChange={(mn, mx) => handleYRange('latency', mn, mx)} />
-              <AnalysisBox value={analysisLatency} onChange={emitEdit('ai_analysis_latency', setAnalysisLatency)} />
+              <AnalysisBox campo='ai_analysis_latency' value={analysisLatency} onChange={emitEdit('ai_analysis_latency', setAnalysisLatency)} />
             </div>
 
             {/* 5. Error Rate */}
@@ -307,7 +309,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(errorRateData, ['value'])} onRangeChange={(mn, mx) => handleYRange('errorRate', mn, mx)} />
-              <AnalysisBox value={analysisErrorRate} onChange={emitEdit('ai_analysis_error_rate', setAnalysisErrorRate)} />
+              <AnalysisBox campo='ai_analysis_error_rate' value={analysisErrorRate} onChange={emitEdit('ai_analysis_error_rate', setAnalysisErrorRate)} />
             </div>
 
             {/* 6. Response Codes per Second */}
@@ -327,7 +329,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(codesPerSecond.data, codesPerSecond.labels)} onRangeChange={(mn, mx) => handleYRange('codes', mn, mx)} />
-              <AnalysisBox value={analysisCodesPerSecond} onChange={emitEdit('ai_analysis_codes_per_second', setAnalysisCodesPerSecond)} />
+              <AnalysisBox campo='ai_analysis_codes_per_second' value={analysisCodesPerSecond} onChange={emitEdit('ai_analysis_codes_per_second', setAnalysisCodesPerSecond)} />
             </div>
 
             {/* 7. TPS */}
@@ -346,7 +348,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </LineChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(tpsByLabel.data, tpsByLabel.labels)} onRangeChange={(mn, mx) => handleYRange('tps', mn, mx)} />
-              <AnalysisBox value={analysisTransactionsPerSecond} onChange={emitEdit('ai_analysis_transactions_per_second', setAnalysisTransactionsPerSecond)} />
+              <AnalysisBox campo='ai_analysis_transactions_per_second' value={analysisTransactionsPerSecond} onChange={emitEdit('ai_analysis_transactions_per_second', setAnalysisTransactionsPerSecond)} />
             </div>
 
             {/* 8. Active Threads */}
@@ -366,7 +368,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                 </AreaChart>
               </ResponsiveContainer>
               <ChartYAxisZoom dataValues={extractY(activeThreadsData, ['value'])} onRangeChange={(mn, mx) => handleYRange('threads', mn, mx)} />
-              <AnalysisBox value={analysisActiveThreads} onChange={emitEdit('ai_analysis_active_threads', setAnalysisActiveThreads)} />
+              <AnalysisBox campo='ai_analysis_active_threads' value={analysisActiveThreads} onChange={emitEdit('ai_analysis_active_threads', setAnalysisActiveThreads)} />
             </div>
             )}
           </div>

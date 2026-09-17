@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, RefreshCw, Save, Sparkles } from 'lucide-react';
+import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 
 export type ImageSaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -20,6 +21,8 @@ interface Props {
   /** R2: la pagina pinta UN indicador para todas sus imagenes; la tarjeta le
    *  reporta su estado y le entrega como reintentar lo que quedo pendiente. */
   onSaveStateChange?: (state: ImageSaveState, savedAt: string, retry: () => void) => void;
+  /** ETAPA 3 (D36): terminos de estilo detectados al leer este analisis. */
+  styleWarnings?: string[];
 }
 
 export default function ImageAnalysisCard({
@@ -30,6 +33,7 @@ export default function ImageAnalysisCard({
   onAnalysisUpdated,
   autoSaveMs,
   onSaveStateChange,
+  styleWarnings,
 }: Props) {
   const [localAnalysis, setLocalAnalysis] = useState(aiAnalysis || '');
   const [isEdited, setIsEdited] = useState(false);
@@ -200,6 +204,8 @@ export default function ImageAnalysisCard({
         <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
         <span className="text-xs text-gray-400 italic">{aiAnalysisUpdatedAt ? formatDate(aiAnalysisUpdatedAt) : 'Click para editar'}</span>
       </div>
+        {/* ETAPA 3 (D36): el aviso desaparece en cuanto el usuario toca el texto. */}
+        {!isEdited && <AvisoEstilo terminos={styleWarnings} />}
         <textarea
           value={localAnalysis}
           onChange={(e) => { setLocalAnalysis(e.target.value); setIsEdited(true); scheduleSave(e.target.value); }}

@@ -8,6 +8,7 @@ import { testAPI } from '../services/api';
 import ImageAnalysisCard from '../components/analysis/ImageAnalysisCard';
 import type { ImageSaveState } from '../components/analysis/ImageAnalysisCard';   // R2
 import EditableAttachmentTitle from '../components/analysis/EditableAttachmentTitle';
+import AvisoEstilo from '../components/common/AvisoEstilo';   // ETAPA 3 (D36)
 import { useAuth } from '../context/AuthContext';
 
 interface Attachment {
@@ -20,6 +21,7 @@ interface Attachment {
   file_type: string;
   ai_analysis?: string | null;
   ai_analysis_updated_at?: string | null;
+  style_warnings?: string[];   // ETAPA 3 (D36)
 }
 
 const CATEGORIES = [
@@ -51,6 +53,7 @@ export default function EvidencePage() {
   const [uploading, setUploading] = useState(false);
   const [generatingAI, setGeneratingAI] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState('');
+  const [aiAvisos, setAiAvisos] = useState<string[]>([]);   // ETAPA 3 (D36)
   const [selectedCategory, setSelectedCategory] = useState('error_screenshot');
   const [title, setTitle] = useState('');
   const [listLoading, setListLoading] = useState(true);
@@ -83,10 +86,10 @@ export default function EvidencePage() {
   useEffect(() => { loadAttachments(); }, [loadAttachments]);
 
   useEffect(() => {
-    if (!selectedExecId) { setAiAnalysis(''); return; }
+    if (!selectedExecId) { setAiAnalysis(''); setAiAvisos([]); return; }
     fetch(`${apiBase}/executions/${selectedExecId}/evidence-analysis`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setAiAnalysis(d.analysis || ''); })
+      .then(d => { if (d) { setAiAnalysis(d.analysis || ''); setAiAvisos(d.style_warnings || []); } })
       .catch(() => {});
   }, [selectedExecId, apiBase]);
 
@@ -129,7 +132,7 @@ export default function EvidencePage() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({ attachments: attachments.map(a => ({ category: a.category, title: a.title, description: a.description, file_type: a.file_type })) }),
       });
-      if (res.ok) { const d = await res.json(); setAiAnalysis(d.analysis || ''); }
+      if (res.ok) { const d = await res.json(); setAiAnalysis(d.analysis || ''); setAiAvisos(d.style_warnings || []); }
     } catch (err) { console.error(err); }
     setGeneratingAI(false);
   };
@@ -247,6 +250,7 @@ export default function EvidencePage() {
                           }}
                           autoSaveMs={AUTOSAVE_MS}
                           onSaveStateChange={handleSaveState}
+                          styleWarnings={att.style_warnings}
                         />
                       </>
                     )}
@@ -275,6 +279,7 @@ export default function EvidencePage() {
           {aiAnalysis && (
             <div className="mt-6 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
               <h2 className="text-2xl font-bold text-orange-600 mb-3">Analisis Global de Evidencias</h2>
+              <AvisoEstilo terminos={aiAvisos} />
               <div className="text-xl text-gray-800 whitespace-pre-wrap leading-relaxed">{aiAnalysis}</div>
             </div>
           )}

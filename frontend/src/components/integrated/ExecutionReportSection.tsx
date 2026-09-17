@@ -8,6 +8,7 @@ import {
 } from 'recharts';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { testAPI } from '../../services/api';
+import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 
 interface Props {
   executionId: string;
@@ -171,6 +172,14 @@ export default function ExecutionReportSection({ executionId, onAnalysisEdit }: 
                 <div className="px-3 py-2 bg-orange-50 border-b border-orange-100">
                   <span className="text-sm font-semibold text-orange-700">{label}</span>
                 </div>
+                {/* ETAPA 3 (D36): el aviso sale de `style_warnings` de la ejecucion.
+                    Si el usuario ya corrigio el texto aqui (override), el aviso de
+                    la ejecucion original no aplica y no se pinta. */}
+                {editedFields[key] === undefined && (
+                  <div className="px-3 pt-2">
+                    <AvisoEstilo terminos={execution.style_warnings?.[key]} />
+                  </div>
+                )}
                 <textarea
                   value={val}
                   onChange={(e) => handleFieldEdit(key, e.target.value)}
