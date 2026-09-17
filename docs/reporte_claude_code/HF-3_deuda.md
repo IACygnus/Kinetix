@@ -131,3 +131,12 @@ los archivos. A decidir al implementar.
 - [ ] Corregir CLAUDE.md §2 y §14, que afirman una protección inexistente.
 - [ ] Verificar `X-Forwarded-For` en nginx y los flags de uvicorn en el servidor.
 - [ ] Decidir el texto del mensaje de bloqueo (§3.5).
+
+---
+
+## 6. Otras deudas detectadas de paso (no se implementan en la Etapa 3)
+
+- **`tests/test_analysis_pipeline.py::test_pipeline_parsea_jtl_y_popula_metricas_basicas` falla
+  desde antes de la Etapa 3.** Parchea `app.services.ai.analysis_pipeline.time`, y ese modulo ya
+  no importa `time`. Verificado: falla igual con el arbol limpio en `533bade`. Arreglo previsto:
+  quitar ese `patch` del test. Una linea, cuando se toque ese archivo.

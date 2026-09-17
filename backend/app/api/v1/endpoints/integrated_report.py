@@ -1558,7 +1558,7 @@ async def generate_integrated_report(
     unified = ""
     if all_conclusions:
         try:
-            from app.services.ai.gemini import get_gemini_analyzer, load_ai_config_from_db, SYSTEM_PROMPT
+            from app.services.ai.gemini import get_gemini_analyzer, load_ai_config_from_db
             ai_conf = await load_ai_config_from_db(db)
             gemini = get_gemini_analyzer(
                 provider=ai_conf.get("provider", ""),
@@ -1566,22 +1566,26 @@ async def generate_integrated_report(
                 api_key=ai_conf.get("api_key", ""),
                 reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
             )
-            prompt = f"""{SYSTEM_PROMPT}
-
-A partir de los siguientes analisis de diferentes pruebas de performance del mismo sistema,
-incluyendo datos de ejecucion, metricas de monitoreo de infraestructura y evidencias recopiladas,
-redacta conclusiones y recomendaciones UNIFICADAS que correlacionen TODOS los hallazgos.
+            # ETAPA 3 (D30/D34): esta SI es una de las partes que dictamina; el
+            # estilo lo pone `_generate`. Sin la palabra "hallazgo", que el
+            # propio bloque de estilo prohibe.
+            prompt = f"""A partir de los siguientes analisis de varias pruebas de performance del
+mismo sistema, incluyendo datos de ejecucion, metricas de monitoreo de
+infraestructura y evidencias recopiladas, redacta conclusiones y recomendaciones
+UNIFICADAS que correlacionen todo lo anterior.
 
 {chr(10).join(all_conclusions)}
 
 Instrucciones:
-- Resumen ejecutivo de 2-3 parrafos sintetizando TODAS las pruebas y correlacionando con el monitoreo.
-- Luego conclusiones consolidadas como puntos numerados (maximo 7).
-- Luego recomendaciones prioritarias como puntos numerados (maximo 7).
-- Correlaciona las metricas de infraestructura (CPU, memoria, threads) con el rendimiento observado.
-- Elimina duplicados. Prioriza por impacto. No repitas lo de las secciones individuales.
+- Empieza con 2 o 3 parrafos que sinteticen TODAS las pruebas y las crucen con el monitoreo.
+- Luego las conclusiones consolidadas como puntos numerados (maximo 7).
+- Luego las recomendaciones prioritarias como puntos numerados (maximo 7).
+- Cruza las metricas de infraestructura (CPU, memoria, hilos) con el rendimiento observado.
+- Quita lo repetido. Ordena por impacto. No copies lo que ya dicen las secciones individuales.
 """
-            unified = await asyncio.to_thread(gemini._generate, prompt, section_name="unified_conclusions") or ""
+            unified = await asyncio.to_thread(
+                gemini._generate, prompt, section_name="unified_conclusions",
+                permite_veredicto=True) or ""
         except Exception as e:
             logger.error(f"Unified conclusions AI failed: {e}")
             unified = "Conclusiones unificadas no disponibles."
@@ -1852,7 +1856,8 @@ async def generate_consolidated_analysis(
     current_user=Depends(get_current_user),
 ):
     """Generate consolidated analysis separated by test type (Load/Stress)."""
-    from app.services.ai.gemini import get_gemini_analyzer, load_ai_config_from_db, SYSTEM_PROMPT, sanitize_ai_text
+    from app.services.ai.gemini import get_gemini_analyzer, load_ai_config_from_db, sanitize_ai_text
+    from app.services.ai.estilo import ms, num, pct, percentiles_bloque
 
     BOGOTA_TZ = ZoneInfo("America/Bogota")
 
@@ -1890,16 +1895,17 @@ async def generate_consolidated_analysis(
                 executions_by_type[tt] = []
 
             # Collect KPIs + AI analyses
+            # ETAPA 3 (D32/D33): los KPIs salian crudos de la base ("Error Rate:
+            # 28.2%") y el modelo los copiaba con el punto decimal ingles.
             kpis = (
-                f"Total Requests: {execution.total_requests}, "
-                f"Error Rate: {execution.error_rate}%, "
-                f"Avg RT: {execution.avg_response_time}ms, "
-                f"P90: {execution.p90_response_time}ms, "
-                f"P95: {execution.p95_response_time}ms, "
-                f"P99: {execution.p99_response_time}ms, "
-                f"Throughput: {execution.throughput} req/s, "
-                f"Avg Latency: {execution.avg_latency or 0}ms, "
-                f"Duration: {execution.duration_seconds or 0}s"
+                f"Total de peticiones: {num(execution.total_requests)}, "
+                f"tasa de error: {pct(execution.error_rate)}, "
+                f"tiempo promedio de respuesta: {ms(execution.avg_response_time)}, "
+                f"caudal: {num(execution.throughput, 2)} por segundo, "
+                f"latencia promedio: {ms(execution.avg_latency or 0)}, "
+                f"duracion: {num(execution.duration_seconds or 0)} segundos.\n"
+                f"Lectura de sus percentiles (copia estas frases tal cual):\n"
+                f"{percentiles_bloque(p90=execution.p90_response_time, p95=execution.p95_response_time, p99=execution.p99_response_time)}"
             )
 
             # Get verdict
@@ -1990,17 +1996,17 @@ async def generate_consolidated_analysis(
         all_evidence = "\n".join(e.get("evidence_analysis", "") for e in entries if e.get("evidence_analysis"))
         all_sections = "\n".join(e.get("section_analyses", "") for e in entries if e.get("section_analyses"))   # F5.2
 
-        prompt = f"""{SYSTEM_PROMPT}
-
-Eres un ingeniero senior de performance testing en SQA Colombia. Genera un analisis consolidado
-de la prueba de tipo {type_label} correlacionando KPIs, conclusiones previas, monitoreo y evidencias.
+        # ETAPA 3 (D30/D34): el consolidado SI dictamina; el estilo lo pone
+        # `_generate` una sola vez.
+        prompt = f"""Genera el analisis consolidado de la prueba de tipo {type_label},
+correlacionando las cifras clave, las conclusiones previas, el monitoreo y las evidencias.
 
 DATOS DE LA PRUEBA ({type_label}):
 
-KPIs principales:
+CIFRAS PRINCIPALES:
 {all_kpis or 'No disponibles'}
 
-Veredictos: {all_verdicts or 'No determinados'}
+Resultado frente a los criterios de aceptacion: {all_verdicts or 'No determinado'}
 
 Conclusiones originales del reporte:
 {all_conclusions or 'Sin conclusiones previas.'}
@@ -2022,19 +2028,19 @@ Analisis de evidencias visuales:
 INSTRUCCIONES:
 1. Genera DOS bloques separados con estos encabezados EXACTOS:
    ===CONCLUSIONES_CONSOLIDADAS===
-   (conclusiones correlacionando KPIs con monitoreo y evidencias, maximo 400 palabras)
+   (conclusiones cruzando las cifras con el monitoreo y las evidencias, maximo 400 palabras)
    ===RECOMENDACIONES_CONSOLIDADAS===
-   (recomendaciones accionables priorizadas por impacto, maximo 400 palabras)
+   (recomendaciones accionables ordenadas por impacto, maximo 400 palabras)
 
-2. Correlaciona los KPIs con lo observado en monitoreo y evidencias.
-3. NO repitas literalmente las conclusiones originales, refinalas y enriquecelas.
-4. Las recomendaciones deben ser accionables y priorizadas (Critica, Alta, Media).
-5. Tono profesional tecnico en espanol de Colombia.
-6. Sin markdown, sin asteriscos, sin las palabras prohibidas.
+2. Cruza las cifras de la prueba con lo que muestran el monitoreo y las evidencias.
+3. NO repitas literalmente las conclusiones originales: refinalas y enriquecelas.
+4. Las recomendaciones van ordenadas por prioridad (Critica, Alta, Media).
 """
 
         try:
-            raw = await asyncio.to_thread(gemini._generate, prompt, section_name=f"consolidated_{test_type}") or ""
+            raw = await asyncio.to_thread(
+                gemini._generate, prompt, section_name=f"consolidated_{test_type}",
+                permite_veredicto=True) or ""
             raw = sanitize_ai_text(raw)
 
             # Parse conclusions and recommendations

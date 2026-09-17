@@ -54,6 +54,20 @@ try:
 except ImportError:
     _GoogleServiceUnavailable = _GoogleInternalServerError = _GoogleDeadlineExceeded = None
 
+from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
+    BLOQUE_ESTILO,
+    REFERENCIA_ESTILO,
+    bloque_estilo,
+    kbs,
+    ms,
+    num,
+    pct,
+    percentil_frase,
+    percentiles_bloque,
+    tiempo,
+    veces,
+)
+
 logger = logging.getLogger(__name__)
 
 # ==================== CONSTANTS ====================
@@ -324,59 +338,29 @@ TIER_EXCELLENT = 500
 TIER_ACCEPTABLE = 2000
 TIER_DEGRADED = 5000
 
-SYSTEM_PROMPT = """Eres un analista senior de performance con 15 anos de experiencia. Redactas informes tecnicos para gerentes de TI en espanol profesional colombiano.
+# ETAPA 3 (D28 + D34): el estilo vive en UN solo sitio (`estilo.py`) y viaja UNA
+# sola vez por llamada — lo inyecta `_generate`, no cada prompt. Antes habia
+# cuatro bloques (SYSTEM_PROMPT, STYLE_REMINDER, UX_RULE, FORMATO_NUMERICO) que
+# se solapaban, se contradecian entre si y no llegaban a los mismos prompts; y
+# el SYSTEM_PROMPT viajaba dos veces por llamada con OpenAI (reporte 30 §2).
+_PERSONA = (
+    "Eres un analista senior de performance con 15 anos de experiencia. "
+    "Redactas informes tecnicos para gerentes de TI en espanol profesional colombiano."
+)
 
-REGLAS DE ESTILO OBLIGATORIAS:
+SYSTEM_PROMPT = f"""{_PERSONA}
 
-1. PROHIBIDO usar markdown: nada de **, ##, *, -, ni vinetas con asteriscos o guiones.
-2. PROHIBIDO usar las palabras: "veredicto", "hallazgo", "se evidencia", "cabe destacar", "es importante mencionar", "en conclusion".
-3. PROHIBIDO encerrar palabras entre asteriscos o comillas para dar enfasis.
-4. PROHIBIDO numerar parrafos (1. 2. 3.) excepto en conclusiones y recomendaciones.
-5. Escribe en parrafos narrativos fluidos de 2-4 oraciones cada uno.
-6. Usa datos concretos (numeros, porcentajes, milisegundos) dentro de las frases, no como listas aparte.
-7. Cuando menciones transacciones, usa su nombre natural en el texto sin resaltarlo con formato especial.
-8. Maximo 120 palabras por analisis de grafica. Para conclusiones y recomendaciones maximo 350 palabras.
-9. Compara la transaccion mas rapida vs la mas lenta. Agrupa por comportamiento similar.
-10. Explica el impacto para el usuario final.
-11. El texto debe leerse como si un humano lo hubiera escrito, no generado por IA.
-12. APERTURA CON DATO. La primera frase debe contener una cifra concreta. PROHIBIDO abrir con "El grafico...", "El analisis muestra...", "Se observa...", "En el presente analisis...", "A continuacion se detalla...", "Como se puede apreciar...".
-13. CIFRAS EXACTAS. Usa los valores reales tal como se te entregan (139ms, 2941ms, 21060ms). PROHIBIDO escribir "cercano a", "aproximadamente", "alrededor de", "unos" o "valores estables en torno a" cuando el dato exacto esta en los datos entregados.
-14. RATIOS OBLIGATORIOS. Cada vez que compares transacciones o senales un pico, expresa la relacion numerica: "21 veces mas lenta", "47 veces sobre su promedio". Los ratios ya vienen calculados en los datos: usalos tal cual, no los estimes ni los omitas.
-15. RAZONAR, NO DESCRIBIR. Cada observacion relevante va acompanada de su lectura probable, marcada como hipotesis: "apunta a", "sugiere", "es coherente con". PROHIBIDO afirmar causas como hechos demostrados. PROHIBIDO convertir el analisis en lista de tareas ("se recomienda revisar...", "se sugiere optimizar...", "como oportunidad de mejora..."): eso pertenece a Recomendaciones, no al analisis (unica excepcion: las secciones que expresamente te pidan conclusiones, prioridades o recomendaciones).
-16. CIERRE CON IMPACTO. Termina SIEMPRE con UNA frase sobre lo que percibira el usuario final en produccion, en lenguaje de negocio y sin tecnicismos (nada de P99, throughput, pool de conexiones en esa frase).
-17. DENSIDAD. PROHIBIDAS las frases que no aportan dato, lectura o impacto: "En terminos generales...", "cabe destacar...", "es importante mencionar...", "en resumen...". Si una frase no dice nada nuevo, se borra. Fuera adverbios de adorno y frases que no cambian la decision de nadie.
-18. PROHIBIDO cerrar repitiendo lo ya dicho. Si no anade informacion nueva, no lo escribas.
-19. Cuando el maximo se dispare frente al promedio (10x o mas) o supere los 10 segundos, dilo con su cifra y su causa probable: esos picos no se omiten nunca, aunque el promedio se vea sano.
+{BLOQUE_ESTILO}
 
-Los cuatro ejemplos siguientes son de OTRAS pruebas y estan aqui solo por su forma de redactar: nunca copies sus cifras ni sus nombres de transaccion, usa los datos que se te entregan.
+{REFERENCIA_ESTILO}"""
 
-ASI SI (denso, ejecutivo: dato exacto, ratio, hipotesis, impacto de negocio):
-"Adapter SendCode fue la mas rapida con 139ms y tier excelente, mientras Adapter VerifMethod fue la mas lenta con 2941ms, 21,1 veces mayor. El maximo de 21060ms en token, 47,6 veces sobre su promedio, apunta a esperas o timeouts intermitentes. En produccion, el usuario percibira autenticaciones inconsistentes, codigos agiles y validaciones lentas con episodios de congelamiento."
+# El mismo bloque con el permiso de dictaminar (D30): solo lo reciben las
+# conclusiones, las recomendaciones y el consolidado del informe integrado.
+SYSTEM_PROMPT_VEREDICTO = f"""{_PERSONA}
 
-ASI NO (preambulo, cifras redondeadas, cierre generico y lista de tareas):
-"El grafico de Response Times por Transaccion muestra que Adapter SendCode mantuvo los mejores tiempos de respuesta, con valores estables cercanos a 150 ms. En terminos generales, la aplicacion mostro un comportamiento estable, identificandose como principal oportunidad de mejora la optimizacion de VerifiMethod."
+{bloque_estilo(permite_veredicto=True)}
 
-ASI SI (arranca por el dato, explica el pico y cierra en impacto):
-"Inicio de sesion promedio 245ms contra un umbral de 2000ms, pero con picos de 21060ms, 47 veces su promedio, concentrados desde el minuto 15. Ese salto apunta a timeouts por saturacion del pool de conexiones bajo concurrencia sostenida, y es lo que el usuario percibe como la aplicacion congelada."
-
-ASI NO (preambulo, relleno y cierre que repite):
-"En el presente analisis se procede a revisar el comportamiento de la grafica. Como se puede apreciar, la transaccion de inicio de sesion presenta un tiempo de respuesta promedio de 245ms. En conclusion, se puede afirmar que el comportamiento observado es el descrito anteriormente."
-"""
-
-
-# C2: recordatorio de estilo que se repite AL FINAL de los prompts de seccion.
-# El SYSTEM_PROMPT ya lleva las reglas completas, pero en prompts largos la ultima
-# instruccion pesa mas que la primera: esto es lo que evita que el modelo recaiga
-# en "El grafico muestra..." y en cifras redondeadas.
-STYLE_REMINDER = """
-RECORDATORIO DE ESTILO (obligatorio, se revisa antes de publicar):
-- Primera frase con una cifra concreta. PROHIBIDO abrir con "El grafico...", "El analisis muestra...", "Se observa...".
-- Cifras exactas tal como aparecen en los datos entregados. PROHIBIDO "cercano a", "aproximadamente", "alrededor de".
-- Toda comparacion entre transacciones y todo pico van con su ratio numerico ("21,1 veces mayor", "47,6 veces sobre su promedio"). Los ratios ya vienen calculados en los datos.
-- Cada dato relevante va con su lectura probable marcada como hipotesis ("apunta a", "sugiere", "es coherente con"). Nada de causas afirmadas como hechos, nada de lista de tareas.
-- Cierra con UNA sola frase sobre lo que percibira el usuario final en produccion, en lenguaje de negocio y sin tecnicismos.
-- Ninguna frase de relleno: si no aporta dato, lectura o impacto, se borra.
-"""
+{REFERENCIA_ESTILO}"""
 
 
 def sanitize_ai_text(text: str) -> str:
@@ -873,67 +857,67 @@ def prepare_insights_for_prompt(summary_df) -> Dict:
 
 
 def build_tier_summary(insights: Dict) -> str:
-    """Builds a formatted summary grouped by performance tiers."""
+    """ETAPA 3 (D29 + D32): el mismo bloque de datos, sin una palabra de jerga.
+
+    Antes escribia `=== TIER CRITICO ===`, `=== TIER EXCELENTE ===` y
+    `=== ALERTA: ALTA VARIABILIDAD ===`, y los modelos copiaban esas etiquetas
+    al informe (reporte 30 §2). Ahora los mismos grupos se nombran por lo que
+    significan, las cifras van en formato espanol y los percentiles llegan ya
+    traducidos a personas. La clasificacion interna (`insights['tiers']`) NO
+    cambia: solo cambia como se le cuenta al modelo.
+
+    El nombre de la funcion se conserva porque lo importan otros modulos; la
+    palabra "tier" no sale de aqui.
+    """
     tiers = insights['tiers']
     lines = []
 
     lines.append(f"TOTAL DE TRANSACCIONES ANALIZADAS: {insights['total_transactions']}")
     lines.append("")
 
-    if tiers['critical']:
-        lines.append(f"=== TIER CRITICO (>{TIER_DEGRADED}ms) - {len(tiers['critical'])} transacciones ===")
-        for tx in sorted(tiers['critical'], key=lambda x: -x['avg']):
+    grupos = (
+        ('critical', f"TIEMPOS MUY ALTOS (promedio por encima de {num(TIER_DEGRADED)} ms)"),
+        ('degraded', f"TIEMPOS ALTOS (promedio entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms)"),
+        ('acceptable', f"TIEMPOS MEDIOS (promedio entre {num(TIER_EXCELLENT)} y {num(TIER_ACCEPTABLE)} ms)"),
+        ('excellent', f"TIEMPOS BAJOS (promedio por debajo de {num(TIER_EXCELLENT)} ms)"),
+    )
+    for clave, titulo in grupos:
+        if not tiers[clave]:
+            continue
+        lines.append(f"=== {titulo} — {len(tiers[clave])} transacciones ===")
+        for tx in sorted(tiers[clave], key=lambda x: -x['avg']):
             lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
+                f"  {tx['name']}: promedio {ms(tx['avg'])}, maximo {ms(tx['max'])}, "
+                f"errores {num(tx['errors'])}, caudal {num(tx['tps'], 2)} por segundo"
             )
-        lines.append("")
-
-    if tiers['degraded']:
-        lines.append(f"=== TIER DEGRADADO ({TIER_ACCEPTABLE}-{TIER_DEGRADED}ms) - {len(tiers['degraded'])} transacciones ===")
-        for tx in sorted(tiers['degraded'], key=lambda x: -x['avg']):
-            lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
-            )
-        lines.append("")
-
-    if tiers['acceptable']:
-        lines.append(f"=== TIER ACEPTABLE ({TIER_EXCELLENT}-{TIER_ACCEPTABLE}ms) - {len(tiers['acceptable'])} transacciones ===")
-        for tx in sorted(tiers['acceptable'], key=lambda x: -x['avg']):
-            lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
-            )
-        lines.append("")
-
-    if tiers['excellent']:
-        lines.append(f"=== TIER EXCELENTE (<{TIER_EXCELLENT}ms) - {len(tiers['excellent'])} transacciones ===")
-        for tx in sorted(tiers['excellent'], key=lambda x: -x['avg']):
-            lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms, P95={tx['p95']:.0f}ms, "
-                f"P99={tx['p99']:.0f}ms, max={tx['max']:.0f}ms, errores={tx['errors']}, TPS={tx['tps']:.2f}"
-            )
+            lines.append(f"    {percentil_frase(90, tx['p90'])}")
+            lines.append(f"    {percentil_frase(95, tx['p95'])}")
+            lines.append(f"    {percentil_frase(99, tx['p99'])}")
         lines.append("")
 
     if insights['high_variability']:
-        lines.append(f"=== ALERTA: ALTA VARIABILIDAD (P99/avg > 3x, max/avg > 10x o max >= 10000ms) - {len(insights['high_variability'])} transacciones ===")
+        lines.append(
+            f"=== TRANSACCIONES DONDE UNOS USUARIOS ESPERAN MUCHO MAS QUE OTROS "
+            f"— {len(insights['high_variability'])} transacciones ===")
         for tx in insights['high_variability']:
             ratio = tx['p99'] / tx['avg'] if tx['avg'] > 0 else 0
             ratio_max = tx['max'] / tx['avg'] if tx['avg'] > 0 else 0
             lines.append(
-                f"  {tx['name']}: avg={tx['avg']:.0f}ms vs P99={tx['p99']:.0f}ms (ratio {ratio:.1f}x), "
-                f"max={tx['max']:.0f}ms (ratio {ratio_max:.1f}x sobre el promedio)"
+                f"  {tx['name']}: promedio {ms(tx['avg'])}, y 1 de cada 100 usuarios "
+                f"espera {veces(ratio)} eso. El maximo de {ms(tx['max'])} es "
+                f"{veces(ratio_max)} el promedio."
             )
         lines.append("")
 
     best = insights['best_transaction']
     worst = insights['worst_transaction']
     if best and worst:
-        lines.append(f"MEJOR TRANSACCION: {best['name']} (avg={best['avg']:.0f}ms)")
-        lines.append(f"PEOR TRANSACCION: {worst['name']} (avg={worst['avg']:.0f}ms)")
+        lines.append(f"TRANSACCION MAS RAPIDA: {best['name']} (promedio {ms(best['avg'])})")
+        lines.append(f"TRANSACCION MAS LENTA: {worst['name']} (promedio {ms(worst['avg'])})")
         if best['avg'] > 0:
-            lines.append(f"RATIO PEOR/MEJOR: {worst['avg']/best['avg']:.1f}x")
+            lines.append(
+                f"LA MAS LENTA ES {veces(worst['avg'] / best['avg'])} LA MAS RAPIDA "
+                f"(usa esta cifra tal cual, no la estimes)")
 
     return "\n".join(lines)
 
@@ -1048,9 +1032,19 @@ class GeminiAnalyzer:
         else:
             raise ValueError(f"Proveedor no soportado: {self.provider}")
 
-    def _generate(self, prompt: str, section_name: str = "unknown", max_retries: int = 3) -> Optional[str]:
+    def _generate(self, prompt: str, section_name: str = "unknown", max_retries: int = 3,
+                  permite_veredicto: bool = False) -> Optional[str]:
         """Call AI API with retry logic. Returns None on failure to trigger fallback.
-        Circuit breaker: if AI was rate-limited once, skip all subsequent calls immediately."""
+        Circuit breaker: if AI was rate-limited once, skip all subsequent calls immediately.
+
+        ETAPA 3 (D34): el bloque de estilo lo pone AQUI, una sola vez por llamada
+        y para los dos proveedores. Ningun prompt lo vuelve a incluir. Con Gemini
+        va delante del prompt (el modelo se crea sin `system_instruction`); con
+        OpenAI va como mensaje `system`. `permite_veredicto` elige la variante con
+        el permiso de dictaminar (D30): conclusiones, recomendaciones y el
+        consolidado del integrado. El resto de las secciones no dictaminan.
+        """
+        sistema = SYSTEM_PROMPT_VEREDICTO if permite_veredicto else SYSTEM_PROMPT
 
         # E1.2: `_t0` se reinicia en cada intento; `_tel` solo evita repetir 8 argumentos.
         _t0 = datetime.now(timezone.utc)
@@ -1063,7 +1057,9 @@ class GeminiAnalyzer:
             _emit_ai_telemetry(
                 section_name, self.provider, self.model_name, _t0, attempt,
                 _openai_max_tokens_for(self.model_name) if self.provider == "openai" else None,
-                len(prompt), outcome, response, finish_reason,
+                # ETAPA 3 (D34): lo que SE ENVIA de verdad — estilo + prompt. Antes
+                # el prompt ya traia el estilo dentro y `len(prompt)` bastaba.
+                len(sistema) + 2 + len(prompt), outcome, response, finish_reason,
                 # ETAPA 2 (D13e): el valor REALMENTE enviado, o null si no aplica.
                 _openai_reasoning_kwarg(
                     self.model_name, getattr(self, "reasoning_effort", None)
@@ -1088,14 +1084,14 @@ class GeminiAnalyzer:
                 response = None
                 try:
                     if self.provider == "gemini":
-                        response = self.model.generate_content(prompt)
+                        response = self.model.generate_content(f"{sistema}\n\n{prompt}")
                         result = response.text
                     elif self.provider == "openai":
                         response = openai_chat_completion(   # B6.2
                             self._openai_client,
                             self.model_name,
                             [
-                                {"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "system", "content": sistema},
                                 {"role": "user", "content": prompt},
                             ],
                             _openai_max_tokens_for(self.model_name),
@@ -1231,12 +1227,17 @@ class GeminiAnalyzer:
                 "Sugiere posible causa raiz basandote en lo visible."
             )
 
+        # ETAPA 3 (D27/D28): el analisis de imagen es uno de los textos que
+        # aparecen en el informe, asi que recibe el MISMO bloque de estilo que
+        # todos los demas. Antes no recibia ninguno: era la unica salida de IA
+        # del producto que escribia sin reglas.
         prompt = (
+            f"{BLOQUE_ESTILO}\n\n"
             f"Analiza esta imagen de {type_label}.\n{context}\n\n"
             f"INSTRUCCIONES:\n{instructions}\n"
-            f"Escribe en espanol profesional colombiano. "
-            f"Parrafos narrativos de 3-5 oraciones, sin markdown, sin bullets, sin asteriscos. "
-            f"Maximo 300 palabras. Se especifico con los datos que ves."
+            f"Parrafos narrativos de 3 a 5 oraciones. Maximo 300 palabras. "
+            f"Se especifico con los datos que ves y no inventes cifras que no "
+            f"aparezcan en la imagen."
         )
 
         # ---- Multimodal analysis by provider ----
@@ -1309,9 +1310,9 @@ class GeminiAnalyzer:
             f"{f'Titulo: {title}' if title else ''}\n"
             f"{f'Descripcion: {description}' if description else ''}\n\n"
             f"Texto extraido:\n---\n{extracted_text}\n---\n\n"
-            f"Genera un analisis tecnico basado en el texto extraido. "
-            f"Espanol profesional, parrafos narrativos, sin markdown. Maximo 200 palabras. "
-            f"Si el texto es pobre o vacio, indica que no fue posible analizar el contenido."
+            f"Genera el analisis a partir del texto extraido. Parrafos narrativos, "
+            f"maximo 200 palabras. Si el texto es pobre o esta vacio, di que no fue "
+            f"posible analizar el contenido."
         )
 
         result = self._generate(prompt, section_name=f"ocr_fallback_{category}")
@@ -1329,17 +1330,22 @@ class GeminiAnalyzer:
         return f"\nTIPO DE PRUEBA: {desc}\n"
 
     def _build_transactions_table(self, summary_df) -> str:
-        """Construye tabla formateada de TODAS las transacciones (sin limite)"""
+        """Tabla de TODAS las transacciones (sin limite), en formato espanol.
+
+        ETAPA 3 (D32): antes salia con `{:,}` y punto decimal, y el modelo copiaba
+        "10,075 muestras" y "28.20%" al informe. Ahora cada cifra pasa por los
+        helpers de `estilo.py`, asi que copiarla bien es lo mas facil.
+        """
         lines = []
-        lines.append("| Transaccion | Muestras | Errores | Error% | Promedio(ms) | P95(ms) | P99(ms) | Min(ms) | Max(ms) | TPS |")
+        lines.append("| Transaccion | Muestras | Errores | Error | Promedio | P95 | P99 | Minimo | Maximo | Caudal |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|")
         logger.info(f"Construyendo tabla con {len(summary_df)} transacciones")
         for _, row in summary_df.iterrows():
             lines.append(
-                f"| {row['label']} | {int(row['muestras']):,} | {int(row['errores'])} | "
-                f"{row['tasa_error']:.2f}% | {row['promedio']:.0f} | {row['p95']:.0f} | "
-                f"{row['p99']:.0f} | {row['min']:.0f} | {row['max']:.0f} | "
-                f"{row['rendimiento']:.2f} |"
+                f"| {row['label']} | {num(row['muestras'])} | {num(row['errores'])} | "
+                f"{pct(row['tasa_error'])} | {ms(row['promedio'])} | {ms(row['p95'])} | "
+                f"{ms(row['p99'])} | {ms(row['min'])} | {ms(row['max'])} | "
+                f"{num(row['rendimiento'], 2)} por segundo |"
             )
         return "\n".join(lines)
 
@@ -1367,46 +1373,50 @@ class GeminiAnalyzer:
             if acceptance_criteria:
                 criteria_text = "\n\nCRITERIOS DE ACEPTACION:\n"
                 if acceptance_criteria.get("concurrency"):
-                    criteria_text += f"- Concurrencia esperada: {acceptance_criteria['concurrency']} usuarios\n"
+                    criteria_text += f"- Concurrencia esperada: {num(acceptance_criteria['concurrency'])} usuarios\n"
                 if acceptance_criteria.get("response_time"):
-                    criteria_text += f"- Tiempo de respuesta maximo aceptable: {acceptance_criteria['response_time']}ms\n"
+                    criteria_text += f"- Tiempo de respuesta maximo aceptable: {ms(acceptance_criteria['response_time'])}\n"
                 if acceptance_criteria.get("availability"):
-                    criteria_text += f"- Disponibilidad minima: {acceptance_criteria['availability']}%\n"
+                    criteria_text += f"- Disponibilidad minima: {pct(acceptance_criteria['availability'], 1)}\n"
 
             logger.info(f"Enviando {len(summary_df)} transacciones a Gemini para analisis de tabla resumen")
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            # ETAPA 3 (D30): esta seccion NO dictamina — `permite_veredicto` se
+            # queda en False y la estructura ya no pide "Listo para produccion?".
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 TABLA DE RESULTADOS POR TRANSACCION:
 {table}
 
-CLASIFICACION POR TIERS DE PERFORMANCE:
+LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
 {tier_summary}
 
-RESUMEN GLOBAL:
-- Total de muestras: {metrics['total_requests']:,}
-- Tasa de error global: {metrics['error_rate']:.2f}%
-- Tiempo promedio global: {metrics['avg_response_time']:.2f}ms
-- Mediana: {metrics.get('median_response_time', 0):.2f}ms
-- P90: {metrics['p90_response_time']:.2f}ms
-- P95: {metrics['p95_response_time']:.2f}ms
-- P99: {metrics['p99_response_time']:.2f}ms
-- Throughput: {metrics['throughput']:.2f} req/s
-- Duracion: {metrics['duration_seconds']:.0f}s{criteria_text}
+RESUMEN GLOBAL DE LA PRUEBA:
+- Total de muestras: {num(metrics['total_requests'])}
+- Tasa de error global: {pct(metrics['error_rate'])}
+- Tiempo promedio global: {ms(metrics['avg_response_time'])}
+- Caudal global: {num(metrics['throughput'], 2)} por segundo
+- Duracion de la prueba: {num(metrics['duration_seconds'])} segundos
+LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
+{percentiles_bloque(metrics.get('median_response_time', 0), metrics['p90_response_time'], metrics['p95_response_time'], metrics['p99_response_time'])}{criteria_text}
 
-Analiza esta tabla de resultados. Escribe un analisis NARRATIVO y DIRECTO en espanol (maximo 150 palabras).
-NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
+Escribe el analisis del resumen de la prueba. Maximo 180 palabras.
+NO repitas la tabla: interpreta lo que dice.
 
-ESTRUCTURA (parrafos breves de 2-3 oraciones):
+Cuenta el recorrido del usuario en el orden en que ocurre, agrupando las
+transacciones que se comportan igual en vez de listarlas una a una:
 
-1. VISION GENERAL: {insights['total_transactions']} transacciones, distribucion por tiers, veredicto general.
+1. Cuantas transacciones se ejecutaron, cuanto tardaron en conjunto y que parte
+   del flujo funciono bien.
+2. Donde se rompe: nombra las transacciones con errores o con tiempos altos, con
+   sus cifras, y di que significa funcionalmente que fallen justo ahi.
+3. Si unos usuarios esperan mucho mas que otros, dilo con la frase de personas y
+   su cifra.
 
-2. PROBLEMAS: Transacciones criticas/degradadas por nombre con datos. Variabilidad alta ({len(insights['high_variability'])} transacciones). Errores ({len(insights['error_transactions'])} con errores).
-
-3. VEREDICTO: Listo para produccion? Prioridades de mejora.
-
-Menciona TODAS las {insights['total_transactions']} transacciones por nombre de forma compacta.
+Las {insights['total_transactions']} transacciones tienen que aparecer por su
+nombre, aunque sea agrupadas. No digas si el sistema esta listo para produccion:
+eso va en las conclusiones del informe.
 """
             return self._generate(prompt, section_name="summary_table")
 
@@ -1435,10 +1445,12 @@ Menciona TODAS las {insights['total_transactions']} transacciones por nombre de 
             lines.append("| Transaccion | Errores | Codigo HTTP | Mensaje | % del Total |")
             lines.append("|---|---|---|---|---|")
             for item in error_data:
-                pct = (item['count'] / total_requests * 100) if total_requests > 0 else 0
+                # ETAPA 3: la variable local se llamaba `pct` y tapaba al helper
+                # del mismo nombre importado de `estilo.py`.
+                porcentaje = (item['count'] / total_requests * 100) if total_requests > 0 else 0
                 lines.append(
-                    f"| {item['label']} | {item['count']:,} | {item.get('code', 'N/A')} | "
-                    f"{item.get('message', 'N/A')} | {pct:.2f}% |"
+                    f"| {item['label']} | {num(item['count'])} | {item.get('code', 'N/A')} | "
+                    f"{item.get('message', 'N/A')} | {pct(porcentaje)} |"
                 )
             logger.info(f"Enviando {len(error_data)} entradas de error a Gemini")
             errors_table = "\n".join(lines)
@@ -1451,19 +1463,19 @@ Menciona TODAS las {insights['total_transactions']} transacciones por nombre de 
                 error_by_code[code]['count'] += item['count']
                 error_by_code[code]['transactions'].append(item['label'])
 
-            error_classification = "\nCLASIFICACION DE ERRORES POR CODIGO:\n"
+            error_classification = "\nLOS ERRORES AGRUPADOS POR CODIGO DE RESPUESTA:\n"
             for code, info in sorted(error_by_code.items()):
                 code_str = str(code)
-                category = "Exito" if code_str.startswith('2') else \
-                           "Redireccion" if code_str.startswith('3') else \
-                           "Error Cliente" if code_str.startswith('4') else \
-                           "Error Servidor" if code_str.startswith('5') else "Otro"
+                category = "respuesta correcta" if code_str.startswith('2') else \
+                           "redireccion" if code_str.startswith('3') else \
+                           "la peticion fue rechazada" if code_str.startswith('4') else \
+                           "fallo del servidor" if code_str.startswith('5') else "otro"
                 error_classification += (
-                    f"  HTTP {code} ({category}): {info['count']:,} errores en "
+                    f"  HTTP {code} ({category}): {num(info['count'])} errores en "
                     f"{len(info['transactions'])} transacciones: {', '.join(info['transactions'])}\n"
                 )
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 ERRORES DETECTADOS:
@@ -1471,18 +1483,23 @@ ERRORES DETECTADOS:
 {error_classification}
 
 CONTEXTO:
-- Total de errores: {total_errors:,}
-- Tasa de error global: {error_rate:.2f}%
-- Total de requests: {total_requests:,}
+- Total de errores: {num(total_errors)}
+- Tasa de error global: {pct(error_rate)}
+- Total de peticiones: {num(total_requests)}
 - Transacciones con errores: {len(error_data)}
-- Codigos HTTP distintos: {len(error_by_code)}
+- Codigos de respuesta distintos: {len(error_by_code)}
 
-Escribe un analisis NARRATIVO y DIRECTO de los errores (maximo 120 palabras). Menciona CADA transaccion con error POR NOMBRE.
-NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
+Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
+con error. NO repitas la tabla: interpreta lo que dice.
 
-1. Panorama: total errores, porcentaje, codigos HTTP con sus transacciones.
-2. Causas probables e impacto en usuarios.
-3. Severidad (critico/alto/medio/bajo) y acciones inmediatas.
+1. Cuantos fallos hubo y en que punto del flujo de negocio aparecen. Agrupa las
+   transacciones que fallan por el mismo motivo.
+2. Que significa cada codigo en terminos de negocio y cual es su causa probable,
+   marcada como hipotesis.
+3. Que gravedad tiene para la operacion.
+
+No digas si el sistema esta listo para produccion ni propongas un plan de
+trabajo: eso va en las conclusiones y recomendaciones del informe.
 """
             return self._generate(prompt, section_name="errors")
 
@@ -1516,43 +1533,52 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
 
             tier_context = ""
             if chart_type == 'response_times' and insights:
-                tier_context = f"\n\nCLASIFICACION POR TIERS:\n{build_tier_summary(insights)}\n"
+                tier_context = (
+                    "\n\nLAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:\n"
+                    f"{build_tier_summary(insights)}\n")
 
+            # ETAPA 3 (D29): estas instrucciones pedian literalmente "distribucion
+            # por tiers" y "variabilidad P99/avg", y el modelo escribia esas dos
+            # palabras en el informe (reporte 30 §2). Ahora piden lo mismo dicho
+            # como lo tiene que leer un gerente.
             chart_specific_instructions = {
-                'response_times': f"""Los datos incluyen {insights['total_transactions'] if insights else 'todas las'} transacciones por tier.
-Menciona CADA transaccion por nombre. Cubre: distribucion por tiers, mas rapida vs mas lenta, variabilidad P99/avg, impacto en produccion.
-El tier se asigna por el promedio, pero debes considerar SIEMPRE avg Y max: si el max supera ampliamente al promedio (por ejemplo 10x o mas), senala esos picos y su probable causa (timeouts, esperas, contencion) aunque el tier por promedio sea bueno.
-Al contrastar la mas rapida con la mas lenta escribe el ratio exacto que ya viene calculado en RATIO PEOR/MEJOR, y para cada pico usa el ratio que llega marcado como [PICO: max Nx el promedio] o como ratio sobre el promedio. No estimes esos numeros: estan dados.""",
+                'response_times': f"""Los datos traen las {insights['total_transactions'] if insights else ''} transacciones agrupadas por su tiempo de respuesta.
+Nombra todas, aunque sea agrupando las que se comportan igual, y sigue el orden del flujo de negocio.
+Contrasta la mas rapida con la mas lenta usando la cifra de "LA MAS LENTA ES ... LA MAS RAPIDA" que ya viene calculada.
+El grupo se asigna por el promedio, pero mira SIEMPRE tambien el maximo: si el maximo supera de largo al promedio (diez veces o mas), senala ese pico con su cifra y su causa probable (esperas, tiempos agotados, contencion) aunque el promedio se vea sano. Los ratios llegan calculados como "[PICO: el maximo es N veces el promedio]": usalos tal cual.
+Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas que viene en los datos.""",
 
-                'response_time_over_time': """Cubre: estabilidad temporal (mejora/degrada), fases ramp-up/meseta/cool-down, picos de latencia y sus causas, tendencia general.""",
+                'response_time_over_time': """Cubre: si los tiempos se mantienen o empeoran segun avanza la prueba, en que momento cambian, y que picos aparecen y por que.""",
 
-                'throughput': """Cubre: capacidad maxima req/s, consistencia, periodos de caida, saturacion, headroom vs carga esperada.""",
+                'throughput': """Cubre: cuanto trafico aguanto el sistema, si lo sostuvo, cuando cayo y cuanto margen queda frente a la carga esperada.""",
 
-                'latency': """Cubre: latencia promedio y variacion, proporcion respecto al tiempo total, picos que indiquen problemas de red.""",
+                'latency': """Cubre: cuanto del tiempo total se va en la espera previa a la respuesta, que peso tiene sobre lo que espera el usuario, y que picos apuntan a problemas de red.""",
 
-                'error_rate': """Cubre: patron de errores (constantes/intermitentes/crecientes), correlacion con carga, recuperacion del sistema, disponibilidad efectiva.""",
+                'error_rate': """Cubre: si los fallos son constantes, intermitentes o van a mas, si crecen con la carga, si el sistema se recupera, y que disponibilidad real deja eso.""",
 
-                'codes_per_second': """Cubre: distribucion de codigos HTTP, patron temporal de errores, significado de cada codigo, redirecciones 3xx.""",
+                'codes_per_second': """Cubre: que responde el sistema y en que proporcion, que significa cada codigo en terminos de negocio, y si los fallos se concentran en algun tramo.""",
 
-                'transactions_per_second': """Cubre: distribucion de carga entre transacciones, estabilidad TPS, balance de carga, cuellos de botella.""",
+                'transactions_per_second': """Cubre: como se reparte el trabajo entre transacciones, si el caudal se sostiene, y si alguna operacion se queda atras.""",
 
-                'active_threads': """Cubre: patron de concurrencia (ramp-up/meseta/ramp-down), usuarios maximos, degradacion al escalar, correlacion con tiempos de respuesta.""",
+                'active_threads': """Cubre: como entraron los usuarios (subida, meseta, bajada), cuantos llegaron a la vez, y si los tiempos empeoraron al subir la concurrencia.""",
             }
 
             chart_name = chart_names.get(chart_type, chart_type)
             specific = chart_specific_instructions.get(chart_type, "Analiza los datos de esta grafica en detalle.")
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 DATOS DE LA GRAFICA "{chart_name}":
 {data_summary}
 {tier_context}
-Analiza esta grafica de {chart_name}. Escribe un analisis NARRATIVO y DIRECTO en espanol (maximo 120 palabras).
-NO repitas datos que ya estan en la grafica, enfocate en INTERPRETACION.
+Escribe el analisis de esta grafica. Maximo 130 palabras.
+NO repitas los datos: interpreta lo que muestran.
 
 {specific}
-{STYLE_REMINDER}"""
+
+No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
+las conclusiones y recomendaciones del informe."""
             return self._generate(prompt, section_name=f"chart_{chart_type}")
 
         except Exception as e:
@@ -1574,7 +1600,7 @@ NO repitas datos que ya estan en la grafica, enfocate en INTERPRETACION.
 
             logger.info(f"Enviando {len(redirect_summary_df)} redirecciones a Gemini")
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
 Se han detectado REDIRECCIONES HTTP separadas del trafico principal.
@@ -1583,16 +1609,22 @@ TABLA DE REDIRECCIONES:
 {table}
 
 CONTEXTO DEL TRAFICO PRINCIPAL:
-- Muestras principales: {main_metrics.get('total_main_samples', 0):,}
-- Muestras de redireccion: {main_metrics.get('total_redirects', 0):,}
-- Labels de redireccion: {', '.join(main_metrics.get('redirect_labels', []))}
+- Muestras principales: {num(main_metrics.get('total_main_samples', 0))}
+- Muestras de redireccion: {num(main_metrics.get('total_redirects', 0))}
+- Nombres de las redirecciones: {', '.join(main_metrics.get('redirect_labels', []))}
 
-Escribe un analisis NARRATIVO y DIRECTO (maximo 120 palabras). Menciona CADA redireccion por nombre.
-NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
+Escribe el analisis de las redirecciones. Maximo 130 palabras. Nombra cada una.
+NO repitas la tabla: interpreta lo que dice.
 
-1. Cuantas redirecciones, porcentaje del trafico, patron de nombres.
-2. Tiempos de respuesta vs transacciones principales. Agregan latencia significativa?
-3. Esperadas o problematicas? Recomendacion: optimizar, eliminar o aceptar.
+1. Cuantas son, que parte del trafico representan y en que punto del flujo
+   aparecen.
+2. Cuanto tiempo anaden a lo que espera el usuario frente a las transacciones
+   principales, con su cifra.
+3. Si su presencia es coherente con el diseno de la aplicacion o apunta a algo
+   mal configurado, marcado como hipotesis.
+
+No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
+las conclusiones y recomendaciones del informe.
 """
             return self._generate(prompt, section_name="redirects")
 
@@ -1636,14 +1668,18 @@ NO repitas datos que ya estan en la tabla, enfocate en INTERPRETACION.
             insights_summary = ""
             if insights:
                 tiers = insights['tiers']
+                # ETAPA 3 (D29): mismo contenido, sin la palabra "tier" ni
+                # "ALTA VARIABILIDAD", que el modelo copiaba al informe.
+                def _nombres(lista):
+                    return ', '.join(tx['name'] for tx in lista) if lista else 'ninguna'
                 insights_summary = f"""
-RESUMEN DE INSIGHTS PRE-CLASIFICADOS:
-- Transacciones en tier CRITICO: {len(tiers['critical'])} ({', '.join(tx['name'] for tx in tiers['critical']) if tiers['critical'] else 'ninguna'})
-- Transacciones en tier DEGRADADO: {len(tiers['degraded'])} ({', '.join(tx['name'] for tx in tiers['degraded']) if tiers['degraded'] else 'ninguna'})
-- Transacciones en tier ACEPTABLE: {len(tiers['acceptable'])} ({', '.join(tx['name'] for tx in tiers['acceptable']) if tiers['acceptable'] else 'ninguna'})
-- Transacciones en tier EXCELENTE: {len(tiers['excellent'])} ({', '.join(tx['name'] for tx in tiers['excellent']) if tiers['excellent'] else 'ninguna'})
-- Transacciones con ALTA VARIABILIDAD: {len(insights['high_variability'])} ({', '.join(tx['name'] for tx in insights['high_variability']) if insights['high_variability'] else 'ninguna'})
-- Transacciones con ERRORES: {len(insights['error_transactions'])} ({', '.join(tx['name'] for tx in insights['error_transactions']) if insights['error_transactions'] else 'ninguna'})
+LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
+- Tiempos muy altos (por encima de {num(TIER_DEGRADED)} ms): {len(tiers['critical'])} ({_nombres(tiers['critical'])})
+- Tiempos altos (entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms): {len(tiers['degraded'])} ({_nombres(tiers['degraded'])})
+- Tiempos medios (entre {num(TIER_EXCELLENT)} y {num(TIER_ACCEPTABLE)} ms): {len(tiers['acceptable'])} ({_nombres(tiers['acceptable'])})
+- Tiempos bajos (por debajo de {num(TIER_EXCELLENT)} ms): {len(tiers['excellent'])} ({_nombres(tiers['excellent'])})
+- Transacciones donde unos usuarios esperan mucho mas que otros: {len(insights['high_variability'])} ({_nombres(insights['high_variability'])})
+- Transacciones con errores: {len(insights['error_transactions'])} ({_nombres(insights['error_transactions'])})
 """
 
             # Build acceptance criteria section for Gemini
@@ -1651,69 +1687,70 @@ RESUMEN DE INSIGHTS PRE-CLASIFICADOS:
             if acceptance_criteria and not acceptance_criteria.get('raw_text'):
                 verdict = compute_verdict(metrics, acceptance_criteria)
                 criteria_section = f"""
-CRITERIOS DE ACEPTACION:
-- Concurrencia esperada: {acceptance_criteria.get('concurrency', 'N/A')} usuarios
-- Tiempo de respuesta maximo: {acceptance_criteria.get('response_time', 'N/A')}ms
-- Disponibilidad minima: {acceptance_criteria.get('availability', 'N/A')}%
-- VEREDICTO CALCULADO: {verdict}
+CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
+- Concurrencia esperada: {num(acceptance_criteria.get('concurrency', 0))} usuarios
+- Tiempo de respuesta maximo: {ms(acceptance_criteria.get('response_time', 0))}
+- Disponibilidad minima: {pct(acceptance_criteria.get('availability', 0), 1)}
+- RESULTADO CALCULADO: {verdict}
 
-IMPORTANTE: Tu primera conclusion DEBE ser el veredicto "{verdict}" comparando las metricas contra estos criterios.
-Si el veredicto es NO APTO, explica que criterios se incumplen.
-Si es APTO CON RESERVAS, explica que metricas estan cerca del limite.
+IMPORTANTE: tu primera conclusion DEBE ser ese resultado, "{verdict}", comparando
+las cifras contra estos criterios. Si es NO APTO, di que criterios se incumplen.
+Si es APTO CON RESERVAS, di que cifras quedan cerca del limite.
 """
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
-Has completado el analisis de una prueba de performance JMeter. Sintetiza TODO en conclusiones ejecutivas.
+Has terminado de analizar una prueba de performance. Sintetiza TODO en las
+conclusiones ejecutivas del informe. Esta es la parte del informe donde SI se
+dictamina.
 
-METRICAS CLAVE:
-- Total requests: {metrics['total_requests']:,}
-- Error rate: {metrics['error_rate']:.2f}%
-- Avg response time: {metrics['avg_response_time']:.2f}ms
-- P90: {metrics['p90_response_time']:.2f}ms
-- P95: {metrics['p95_response_time']:.2f}ms
-- P99: {metrics['p99_response_time']:.2f}ms
-- Throughput: {metrics['throughput']:.2f} req/s
-- Duracion: {metrics['duration_seconds']:.0f}s
-- Muestras principales: {metrics.get('total_main_samples', metrics['total_requests']):,}
-- Redirecciones: {metrics.get('total_redirects', 0):,}
+CIFRAS CLAVE DE LA PRUEBA:
+- Total de peticiones: {num(metrics['total_requests'])}
+- Tasa de error global: {pct(metrics['error_rate'])}
+- Tiempo promedio global: {ms(metrics['avg_response_time'])}
+- Caudal global: {num(metrics['throughput'], 2)} por segundo
+- Duracion de la prueba: {num(metrics['duration_seconds'])} segundos
+- Muestras principales: {num(metrics.get('total_main_samples', metrics['total_requests']))}
+- Redirecciones: {num(metrics.get('total_redirects', 0))}
+LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
+{percentiles_bloque(metrics.get('median_response_time', 0), metrics['p90_response_time'], metrics['p95_response_time'], metrics['p99_response_time'])}
 {insights_summary}{criteria_section}
-ANALISIS REALIZADOS:
+LO QUE YA SE ANALIZO, SECCION POR SECCION:
 
-1. TABLA RESUMEN:
+1. RESUMEN DE LA PRUEBA:
 {ai_analysis_summary}
 
 2. ERRORES:
 {ai_analysis_errors}
 
-3. RESPONSE TIMES POR TRANSACCION:
+3. TIEMPOS DE RESPUESTA POR TRANSACCION:
 {ai_analysis_response_times}
 
-4. LATENCY:
+4. LATENCIA:
 {ai_analysis_latency}
 
-5. ERROR RATE:
+5. TASA DE ERROR:
 {ai_analysis_error_rate}
 
-6. CODIGOS HTTP:
+6. CODIGOS DE RESPUESTA:
 {ai_analysis_codes_per_second}
 
-7. TPS:
+7. CAUDAL DE TRANSACCIONES:
 {ai_analysis_transactions_per_second}
 
-8. ACTIVE THREADS:
+8. USUARIOS ACTIVOS:
 {ai_analysis_active_threads}
 {redirect_section}
-Escribe 6 conclusiones ejecutivas como parrafos completos. Maximo 350 palabras total.
-Cubre: veredicto general, tiempos criticos, errores, throughput, estabilidad, acciones prioritarias.
+Escribe 6 conclusiones, cada una un parrafo completo de 3 a 5 oraciones,
+numeradas. Maximo 350 palabras en total. Cubre: el resultado frente a los
+criterios, los tiempos, los errores, la capacidad, la estabilidad y lo que hay
+que resolver primero.
 
-Cada conclusion es un PARRAFO COMPLETO de 3-5 oraciones numerado.
-Menciona transacciones especificas POR NOMBRE con datos.
-
-CADA conclusion debe sintetizar multiples analisis y nombrar transacciones especificas.
+Cada conclusion cruza varias secciones y nombra transacciones concretas con sus
+cifras. No repitas literalmente lo que ya dijo una seccion: sintetiza.
 """
-            return self._generate(prompt, section_name="conclusions")
+            return self._generate(prompt, section_name="conclusions", permite_veredicto=True)
 
         except Exception as e:
             logger.error(f"GEMINI FAILED for conclusions: {str(e)}")
@@ -1756,51 +1793,53 @@ REDIRECCIONES:
             if insights:
                 tiers = insights['tiers']
                 items = []
+                # ETAPA 3 (D29): los mismos grupos, sin jerga.
                 if tiers['critical']:
-                    items.append(f"CRITICO - {len(tiers['critical'])} transacciones sobre {TIER_DEGRADED}ms: {', '.join(tx['name'] for tx in tiers['critical'])}")
+                    items.append(f"Tiempos muy altos - {len(tiers['critical'])} transacciones por encima de {num(TIER_DEGRADED)} ms: {', '.join(tx['name'] for tx in tiers['critical'])}")
                 if tiers['degraded']:
-                    items.append(f"DEGRADADO - {len(tiers['degraded'])} transacciones entre {TIER_ACCEPTABLE}-{TIER_DEGRADED}ms: {', '.join(tx['name'] for tx in tiers['degraded'])}")
+                    items.append(f"Tiempos altos - {len(tiers['degraded'])} transacciones entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms: {', '.join(tx['name'] for tx in tiers['degraded'])}")
                 if insights['high_variability']:
-                    items.append(f"ALTA VARIABILIDAD - {len(insights['high_variability'])} transacciones con P99/avg > 3x: {', '.join(tx['name'] for tx in insights['high_variability'])}")
+                    items.append(f"Unos usuarios esperan mucho mas que otros - {len(insights['high_variability'])} transacciones: {', '.join(tx['name'] for tx in insights['high_variability'])}")
                 if insights['error_transactions']:
-                    items.append(f"CON ERRORES - {len(insights['error_transactions'])} transacciones: {', '.join(tx['name'] for tx in insights['error_transactions'])}")
+                    items.append(f"Con errores - {len(insights['error_transactions'])} transacciones: {', '.join(tx['name'] for tx in insights['error_transactions'])}")
                 if items:
-                    action_items = "\nPROBLEMAS IDENTIFICADOS PARA RECOMENDACIONES:\n" + "\n".join(f"  {i}" for i in items) + "\n"
+                    action_items = "\nPROBLEMAS DETECTADOS EN LA PRUEBA:\n" + "\n".join(f"  {i}" for i in items) + "\n"
 
             # Build acceptance criteria context for recommendations
             criteria_section = ""
             if acceptance_criteria and not acceptance_criteria.get('raw_text'):
                 criteria_section = f"""
-CRITERIOS DE ACEPTACION DEL CLIENTE:
-- Concurrencia esperada: {acceptance_criteria.get('concurrency', 'N/A')} usuarios
-- Tiempo de respuesta maximo: {acceptance_criteria.get('response_time', 'N/A')}ms
-- Disponibilidad minima: {acceptance_criteria.get('availability', 'N/A')}%
+CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
+- Concurrencia esperada: {num(acceptance_criteria.get('concurrency', 0))} usuarios
+- Tiempo de respuesta maximo: {ms(acceptance_criteria.get('response_time', 0))}
+- Disponibilidad minima: {pct(acceptance_criteria.get('availability', 0), 1)}
 
-Las recomendaciones DEBEN estar orientadas a cumplir estos criterios especificos.
+Las recomendaciones tienen que apuntar a cumplir esos criterios concretos.
 """
 
-            prompt = f"""{SYSTEM_PROMPT}{get_metric_unit_instruction(metric_unit)}
+            prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
 
-Genera recomendaciones tecnicas accionables basadas en los resultados de la prueba.
+Escribe las recomendaciones del informe a partir de los resultados de la prueba.
+Esta es una de las dos partes del informe donde SI se dictamina.
 
-METRICAS CLAVE:
-- Total requests: {metrics['total_requests']:,}
-- Error rate: {metrics['error_rate']:.2f}%
-- Avg time: {metrics['avg_response_time']:.2f}ms
-- P95: {metrics['p95_response_time']:.2f}ms
-- P99: {metrics['p99_response_time']:.2f}ms
-- Throughput: {metrics['throughput']:.2f} req/s
+CIFRAS CLAVE DE LA PRUEBA:
+- Total de peticiones: {num(metrics['total_requests'])}
+- Tasa de error global: {pct(metrics['error_rate'])}
+- Tiempo promedio global: {ms(metrics['avg_response_time'])}
+- Caudal global: {num(metrics['throughput'], 2)} por segundo
+LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
+{percentiles_bloque(p95=metrics['p95_response_time'], p99=metrics['p99_response_time'])}
 {action_items}{criteria_section}
-HALLAZGOS DE LOS ANALISIS:
+LO QUE DICEN LOS ANALISIS:
 
-TABLA & TRANSACCIONES:
+RESUMEN Y TRANSACCIONES:
 {ai_analysis_summary}
 
 ERRORES:
 {ai_analysis_errors}
 
-PATRONES DE TIEMPOS:
+TIEMPOS DE RESPUESTA:
 {ai_analysis_response_times}
 
 CAPACIDAD:
@@ -1810,15 +1849,15 @@ INFRAESTRUCTURA:
 {ai_analysis_latency}
 {ai_analysis_active_threads}
 {redirect_section}
-Escribe recomendaciones organizadas por prioridad. Maximo 350 palabras total.
-CRITICAS (2-3): Resolver antes de produccion.
-ALTAS (2-3): Resolver pronto.
-MEDIAS (1-2): Optimizaciones opcionales.
-Cada recomendacion: parrafo de 3-4 oraciones con problema, accion y transacciones afectadas.
+Escribe las recomendaciones ordenadas por prioridad. Maximo 350 palabras.
+CRITICAS (2 o 3): hay que resolverlas antes de salir a produccion.
+ALTAS (2 o 3): hay que resolverlas pronto.
+MEDIAS (1 o 2): mejoras que pueden esperar.
 
-Cada recomendacion debe nombrar las transacciones afectadas con datos.
+Cada recomendacion es un parrafo de 3 o 4 oraciones con el problema, la accion
+concreta y las transacciones afectadas con sus cifras.
 """
-            return self._generate(prompt, section_name="recommendations")
+            return self._generate(prompt, section_name="recommendations", permite_veredicto=True)
 
         except Exception as e:
             logger.error(f"GEMINI FAILED for recommendations: {str(e)}")

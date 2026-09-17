@@ -32,37 +32,19 @@ from sqlalchemy import select
 from app.db.models.transaction_chart_analysis import (
     SECTIONS, SECTIONS_GENERADAS, TransactionChartAnalysis)   # ETAPA 2 (D20)
 from app.services.ai.gemini import (
-    STYLE_REMINDER,
-    SYSTEM_PROMPT,
     get_gemini_analyzer,
     load_ai_config_from_db,
     sanitize_ai_text,
 )
+# ETAPA 3 (D28): `UX_RULE` y `FORMATO_NUMERICO` vivian aqui porque solo hacian
+# falta para hablar de UNA transaccion. Resulto que hacian falta en todas partes:
+# los bloques por transaccion salieron con 3 avisos de estilo y el informe
+# general con 121 (reporte 30 §5). Las dos reglas estan ahora dentro de
+# `BLOQUE_ESTILO`, que llega a los diecinueve prompts por igual.
+from app.services.ai.estilo import num as _n
+from app.services.ai.estilo import ms, percentil_frase, pct, veces
 
 logger = logging.getLogger(__name__)
-
-# Regla nueva de N4.6. Va aqui y NO en el SYSTEM_PROMPT: ese prompt lo comparten
-# los 12 analisis globales ya validados en C2 (commit ef8636c) y el analisis de
-# imagenes; cambiarlo obligaria a revalidar todo eso por una regla que solo
-# aplica cuando se habla de UNA transaccion y de sus percentiles.
-UX_RULE = """
-TRADUCCION A EXPERIENCIA DE USUARIO (obligatorio, el publico es gerencial):
-- Todo percentil que menciones va con su lectura en personas: P90 = 1 de cada 10 usuarios, P95 = 1 de cada 20, P99 = 1 de cada 100, mediana = la mitad de los usuarios.
-- Forma exacta: "1 de cada 10 usuarios espera mas de 3,5 segundos (P90: 3.515 ms)". Primero las personas y el tiempo en segundos, la cifra tecnica despues entre parentesis.
-- Por encima de 1.000 ms expresa el tiempo en segundos con un decimal; por debajo deja los milisegundos.
-- Un percentil suelto, sin decir a cuantos usuarios afecta, no sirve para este informe.
-"""
-
-# N4.6b, defecto 2: el modelo escribia "8,600 muestras" (miles a la inglesa) y
-# mezclaba "1.070 ms" con "1070 ms" en el mismo parrafo. La defensa principal es
-# `_n()`: los datos se le entregan YA formateados a la espanola, asi que copiar
-# es mas facil que reformatear. Esta regla es el cinturon de seguridad.
-FORMATO_NUMERICO = """
-FORMATO NUMERICO ESPANOL (obligatorio):
-- Miles con punto y decimales con coma: 8.600 muestras, 21.060 ms, 1,1 segundos, 0,27%.
-- Las cifras de los datos entregados YA vienen en ese formato: copialas tal cual, no las reescribas.
-- PROHIBIDO el formato ingles (8,600 muestras, 1.1 segundos) y PROHIBIDO mezclar los dos estilos en el mismo texto.
-"""
 
 # N4.6b, defecto 1: el texto de la primera corrida invirtio la definicion y
 # atribuyo la descarga del cuerpo al procesamiento del servidor. Va solo en el
@@ -82,22 +64,19 @@ COMO SE LEE LA LATENCIA EN JMETER (definicion obligatoria, no la inviertas):
 PICO_OBLIGATORIO = ("summary", "chart_response_times", "conclusions", "recommendations")
 
 
-def _n(valor, dec: int = 0) -> str:
-    """Numero a la espanola: miles con punto, decimales con coma."""
-    txt = f"{float(valor or 0):,.{dec}f}"
-    return txt.replace(",", "\x01").replace(".", ",").replace("\x01", ".")
-
 # Que se le pide a cada seccion y su tope de palabras. Las graficas mantienen el
-# tope de las globales (120, regla 8 del SYSTEM_PROMPT); resumen, conclusiones y
-# recomendaciones van a 200 por decision de este sprint.
+# tope de las globales (130); resumen, conclusiones y recomendaciones van a 200
+# por decision de este sprint.
 INSTRUCCIONES: Dict[str, tuple] = {
-    "summary": ("Resumen ejecutivo del comportamiento de esta transaccion: como respondio, que la separa de un servicio sano y que percentiles duelen.", 200),
-    "chart_response_times": ("Analiza la evolucion de sus tiempos de respuesta en el tiempo: nivel base, picos y cuando aparecen.", 120),
-    "chart_latency": ("Analiza su latencia frente al tiempo total: cuanto pesa la red o la espera previa contra el procesamiento del servidor.", 120),
-    "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba: si es constante, si se concentra en un tramo o si no hubo errores.", 120),
-    "chart_codes": ("Analiza los codigos de respuesta de esta transaccion y que indica su reparto sobre la salud del servicio.", 120),
-    "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene, si cae y como se relaciona con sus tiempos.", 120),
-    "conclusions": ("Escribe las conclusiones de ESTA transaccion: que quedo demostrado, con sus cifras, y si el servicio esta listo para produccion.", 200),
+    "summary": ("Resumen del comportamiento de esta transaccion: como respondio, que la separa de un servicio sano y a cuantos usuarios les duele la espera.", 200),
+    "chart_response_times": ("Analiza la evolucion de sus tiempos de respuesta en el tiempo: nivel base, picos y cuando aparecen.", 130),
+    "chart_latency": ("Analiza su latencia frente al tiempo total: cuanto pesa la red o la espera previa contra el procesamiento del servidor.", 130),
+    "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba: si es constante, si se concentra en un tramo o si no hubo errores.", 130),
+    "chart_codes": ("Analiza los codigos de respuesta de esta transaccion y que indica su reparto sobre la salud del servicio.", 130),
+    "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene, si cae y como se relaciona con sus tiempos.", 130),
+    # D30: estas dos ya no se generan (D20), pero si alguien las reactiva no
+    # pueden dictaminar sobre produccion desde el bloque de UNA transaccion.
+    "conclusions": ("Escribe las conclusiones de ESTA transaccion: que quedo demostrado, con sus cifras.", 200),
     "recommendations": ("Escribe las recomendaciones para ESTA transaccion, priorizadas, accionables y justificadas con sus cifras.", 200),
 }
 
@@ -134,7 +113,7 @@ def _serie_digest(series: Dict[str, Any]) -> Dict[str, str]:
         "chart_latency": (f"Serie de latencia, {_n(len(lat))} puntos, promedio {_n(sum(lat)/len(lat) if lat else 0)} ms y maximo {_n(max(lat) if lat else 0)} ms."
                           if lat else "Serie de latencia sin dato en este JTL."),
         "chart_error_rate": (f"Serie de tasa de error, {_n(len(err))} intervalos: {_n(len(con_error))} con al menos un fallo, "
-                             f"pico {_n(max(err) if err else 0, 2)}% en un intervalo."),
+                             f"pico {pct(max(err) if err else 0)} en un intervalo."),
         "chart_codes": f"Codigos de respuesta acumulados de la transaccion: {codes_txt}.",
         "chart_tps": (f"Serie de transacciones por segundo, promedio {_n(sum(tps)/len(tps) if tps else 0, 2)} TPS "
                       f"y maximo {_n(max(tps) if tps else 0, 2)} TPS."),
@@ -142,19 +121,28 @@ def _serie_digest(series: Dict[str, Any]) -> Dict[str, str]:
 
 
 def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any], test_type: str = "load") -> Dict[str, str]:
-    """Los 8 prompts de una transaccion, con SUS metricas reales."""
+    """Los prompts de una transaccion, con SUS metricas reales.
+
+    ETAPA 3 (D33/D34): las cifras siguen saliendo formateadas a la espanola —
+    eso ya funcionaba —, los percentiles pasan a entregarse como la frase de
+    usuario completa, y el bloque de estilo deja de repetirse aqui: lo pone
+    `_generate` una sola vez por llamada.
+    """
     avg, mx = float(m.get("promedio", 0) or 0), float(m.get("max", 0) or 0)
-    ratio = f"{_n(mx / avg, 1)} veces su promedio" if avg > 0 else "sin promedio de referencia"
+    ratio = veces(mx / avg) + " su promedio" if avg > 0 else "sin promedio de referencia"
     digest = _serie_digest(series)
-    # N4.6b: cada cifra pasa por `_n()`. Antes se entregaban con `:,` (formato
-    # ingles) y el modelo copiaba "8,600 muestras" al texto final.
     metricas = f"""METRICAS REALES DE LA TRANSACCION "{label}" (prueba de {test_type}):
 - Muestras ejecutadas: {_n(m.get('muestras', 0))}
-- Tiempo promedio: {_n(avg)} ms | Mediana: {_n(m.get('mediana', 0))} ms | Minimo: {_n(m.get('min', 0))} ms
-- Percentil 90: {_n(m.get('p90', 0))} ms | Percentil 95: {_n(m.get('p95', 0))} ms | Percentil 99: {_n(m.get('p99', 0))} ms
-- Tiempo maximo observado: {_n(mx)} ms ({ratio})
-- Errores: {_n(m.get('errores', 0))} ({_n(m.get('tasa_error', 0), 2)}% de sus muestras)
-- Caudal de la transaccion: {_n(m.get('rendimiento', 0), 2)} por segundo"""
+- Tiempo promedio: {ms(avg)} | Minimo: {ms(m.get('min', 0))}
+- Tiempo maximo observado: {ms(mx)} ({ratio})
+- Errores: {_n(m.get('errores', 0))} ({pct(m.get('tasa_error', 0))} de sus muestras)
+- Caudal de la transaccion: {_n(m.get('rendimiento', 0), 2)} por segundo
+
+LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
+- {percentil_frase(50, m.get('mediana', 0))}
+- {percentil_frase(90, m.get('p90', 0))}
+- {percentil_frase(95, m.get('p95', 0))}
+- {percentil_frase(99, m.get('p99', 0))}"""
 
     prompts: Dict[str, str] = {}
     for section in SECTIONS_GENERADAS:   # ETAPA 2 (D20): ya no se arman los 8
@@ -163,15 +151,13 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
         # reciben las cinco, que es su ambito.
         serie_txt = digest.get(section) or "\n".join(digest.values())
         pico = (
-            f"El maximo de {_n(mx)} ms y su ratio ({ratio}) son OBLIGATORIOS en esta seccion."
+            f"El maximo de {ms(mx)} y su relacion ({ratio}) son OBLIGATORIOS en esta seccion."
             if section in PICO_OBLIGATORIO else
-            f"El maximo de {_n(mx)} ms se menciona SOLO si aporta a esta grafica en concreto; "
+            f"El maximo de {ms(mx)} se menciona SOLO si aporta a esta grafica en concreto; "
             f"si no aporta, no lo repitas: otras secciones del informe ya lo tratan."
         )
         extra = DEFINICION_LATENCIA if section == "chart_latency" else ""
-        prompts[section] = f"""{SYSTEM_PROMPT}
-
-{metricas}
+        prompts[section] = f"""{metricas}
 
 DATOS DE LA SERIE TEMPORAL:
 {serie_txt}
@@ -179,7 +165,8 @@ DATOS DE LA SERIE TEMPORAL:
 {instruccion}
 Maximo {tope} palabras. Habla SOLO de esta transaccion, no del test completo.
 {pico}
-{STYLE_REMINDER}{UX_RULE}{FORMATO_NUMERICO}"""
+No digas si el servicio esta listo para produccion: eso va en las conclusiones
+del informe, no en el bloque de una transaccion."""
     return prompts
 
 

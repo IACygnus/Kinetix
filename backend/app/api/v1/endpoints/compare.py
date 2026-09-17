@@ -89,7 +89,8 @@ async def generate_comparison(
     ai_analysis = ""
     try:
         from app.services.ai.gemini import GeminiAnalyzer, get_gemini_analyzer, FallbackAnalyzer
-        from app.services.ai.gemini import load_ai_config_from_db, SYSTEM_PROMPT
+        from app.services.ai.gemini import load_ai_config_from_db
+        from app.services.ai.estilo import ms, num, pct, percentiles_bloque
 
         ai_conf = await load_ai_config_from_db(db)
         gemini = get_gemini_analyzer(
@@ -99,44 +100,52 @@ async def generate_comparison(
             reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
 
-        prompt = f"""{SYSTEM_PROMPT}
+        # ETAPA 3 (D32/D33/D34): sin markdown en el prompt (el bloque de estilo lo
+        # prohibe en la salida y escribirlo aqui lo invitaba), cifras en espanol,
+        # percentiles ya traducidos y el estilo lo pone `_generate`. Este informe
+        # SI dictamina: es una comparativa completa con recomendaciones, no una
+        # seccion de otro informe.
+        prompt = f"""Analiza la COMPARATIVA entre estas dos pruebas del mismo sistema.
 
-Analiza la COMPARATIVA entre estas dos pruebas del mismo sistema:
+PRUEBA DE CARGA (referencia)
+- Total de peticiones: {num(load_data['total_requests'])}
+- Tiempo de respuesta promedio: {ms(load_data['avg_response_time'])}
+- Tasa de error: {pct(load_data['error_rate'])}
+- Caudal: {num(load_data['throughput'], 2)} por segundo
+- Duracion: {num(load_data['duration_seconds'])} segundos
+Lectura de sus percentiles (copia estas frases tal cual):
+{percentiles_bloque(p90=load_data['p90_response_time'], p95=load_data['p95_response_time'], p99=load_data['p99_response_time'])}
 
-## Prueba de CARGA (baseline)
-- Total requests: {load_data['total_requests']:,}
-- Tiempo de respuesta promedio: {load_data['avg_response_time']:.0f}ms
-- P90: {load_data['p90_response_time']:.0f}ms | P95: {load_data['p95_response_time']:.0f}ms | P99: {load_data['p99_response_time']:.0f}ms
-- Tasa de error: {load_data['error_rate']:.2f}%
-- Throughput: {load_data['throughput']:.2f} req/s
-- Duracion: {load_data['duration_seconds']:.0f}s
+PRUEBA DE ESTRES
+- Total de peticiones: {num(stress_data['total_requests'])}
+- Tiempo de respuesta promedio: {ms(stress_data['avg_response_time'])}
+- Tasa de error: {pct(stress_data['error_rate'])}
+- Caudal: {num(stress_data['throughput'], 2)} por segundo
+- Duracion: {num(stress_data['duration_seconds'])} segundos
+Lectura de sus percentiles (copia estas frases tal cual):
+{percentiles_bloque(p90=stress_data['p90_response_time'], p95=stress_data['p95_response_time'], p99=stress_data['p99_response_time'])}
 
-## Prueba de ESTRES
-- Total requests: {stress_data['total_requests']:,}
-- Tiempo de respuesta promedio: {stress_data['avg_response_time']:.0f}ms
-- P90: {stress_data['p90_response_time']:.0f}ms | P95: {stress_data['p95_response_time']:.0f}ms | P99: {stress_data['p99_response_time']:.0f}ms
-- Tasa de error: {stress_data['error_rate']:.2f}%
-- Throughput: {stress_data['throughput']:.2f} req/s
-- Duracion: {stress_data['duration_seconds']:.0f}s
+CUANTO CAMBIA EL ESTRES FRENTE A LA CARGA
+- Tiempo de respuesta: {pct(comparison['response_time_change_pct'] or 0, 1)}
+- Percentil 90: {pct(comparison['p90_change_pct'] or 0, 1)}
+- Tasa de error: {pct(comparison['error_rate_change_pct'] or 0, 1)}
+- Caudal: {pct(comparison['throughput_change_pct'] or 0, 1)}
 
-## Cambios porcentuales (estres vs carga)
-- Response time: {comparison['response_time_change_pct']}%
-- P90: {comparison['p90_change_pct']}%
-- Error rate: {comparison['error_rate_change_pct']}%
-- Throughput: {comparison['throughput_change_pct']}%
-
-Proporciona en espanol profesional (maximo 500 palabras):
-1. Resumen ejecutivo comparando ambas pruebas
-2. Analisis del punto de quiebre
-3. Evaluacion de resiliencia del sistema
-4. Recomendaciones de capacidad y escalabilidad
+Escribe la comparativa. Maximo 500 palabras.
+1. Que cambia entre una prueba y otra, contado como lo vive el usuario.
+2. Donde se rompe el sistema y con que cifras.
+3. Si aguanta o no, y hasta donde.
+4. Que hace falta en capacidad y escalabilidad.
 """
-        ai_analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="comparison_analysis") or ""
+        ai_analysis = await asyncio.to_thread(
+            gemini._generate, prompt, section_name="comparison_analysis",
+            permite_veredicto=True) or ""
         if not ai_analysis:
             ai_analysis = (
-                f"Comparativa: El sistema muestra un incremento del "
-                f"{comparison['response_time_change_pct'] or 0:.0f}% en tiempo de respuesta "
-                f"bajo estres. La tasa de error cambio un {comparison['error_rate_change_pct'] or 0:.0f}%."
+                f"Comparativa: el sistema muestra un incremento de "
+                f"{pct(comparison['response_time_change_pct'] or 0, 0)} en tiempo de respuesta "
+                f"bajo estres. La tasa de error cambio un "
+                f"{pct(comparison['error_rate_change_pct'] or 0, 0)}."
             )
     except Exception as e:
         logger.error(f"AI comparison analysis failed: {e}")

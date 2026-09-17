@@ -32,6 +32,9 @@ from app.services.ai.gemini import (
     load_ai_config_from_db,
     prepare_insights_for_prompt,
 )
+# ETAPA 3 (D32/D33): los bloques de datos de las graficas se formatean aqui, y
+# se entregan al modelo ya en espanol y con los percentiles traducidos.
+from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
 
 logger = logging.getLogger(__name__)
 
@@ -191,11 +194,16 @@ async def run_ai_and_verdict(
         for _, row in summary_df.iterrows():
             # GRAF1-A: el maximo ya viajaba, pero pasaba desapercibido junto al promedio.
             ratio_max = (row['max'] / row['promedio']) if row['promedio'] > 0 else 0
-            pico = f" [PICO: max {ratio_max:.0f}x el promedio]" if ratio_max >= 10 else ""
+            pico = (f" [PICO: el maximo es {veces(ratio_max)} el promedio]"
+                    if ratio_max >= 10 else "")
+            # ETAPA 3 (D32/D33): cifras en espanol y percentiles ya traducidos a
+            # personas, para que el modelo solo tenga que copiarlos.
             rt_lines.append(
-                f"- {row['label']}: promedio {row['promedio']:.0f}ms, "
-                f"P90 {row['p90']:.0f}ms, P95 {row['p95']:.0f}ms, "
-                f"P99 {row['p99']:.0f}ms, min {row['min']:.0f}ms, max {row['max']:.0f}ms{pico}"
+                f"- {row['label']}: promedio {ms(row['promedio'])}, "
+                f"minimo {ms(row['min'])}, maximo {ms(row['max'])}{pico}\n"
+                f"    {percentil_frase(90, row['p90'])}\n"
+                f"    {percentil_frase(95, row['p95'])}\n"
+                f"    {percentil_frase(99, row['p99'])}"
             )
         logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
         ai_analysis_response_times = await asyncio.to_thread(
@@ -227,9 +235,10 @@ async def run_ai_and_verdict(
         ai_analysis_latency = await asyncio.to_thread(
             gemini.analyze_chart,
             'latency',
-            f"Latencia promedio: {metrics.get('avg_latency', 0):.2f}ms, "
-            f"KB/s recibidos: {metrics.get('kb_per_sec_received', 0):.2f}, "
-            f"KB/s enviados: {metrics.get('kb_per_sec_sent', 0):.2f}",
+            f"Latencia promedio: {ms(metrics.get('avg_latency', 0))}. "
+            f"Tiempo total promedio de respuesta: {ms(metrics.get('avg_response_time', 0))}. "
+            f"Volumen recibido: {kbs(metrics.get('kb_per_sec_received', 0))}. "
+            f"Volumen enviado: {kbs(metrics.get('kb_per_sec_sent', 0))}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -241,8 +250,9 @@ async def run_ai_and_verdict(
         ai_analysis_error_rate = await asyncio.to_thread(
             gemini.analyze_chart,
             'error_rate',
-            f"Tasa de error: {metrics['error_rate']:.2f}% "
-            f"({metrics['total_errors']:,} de {metrics['total_requests']:,} requests)",
+            f"Tasa de error: {pct(metrics['error_rate'])} "
+            f"({num(metrics['total_errors'])} de {num(metrics['total_requests'])} peticiones). "
+            f"Duracion de la prueba: {num(metrics['duration_seconds'])} segundos.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -253,13 +263,13 @@ async def run_ai_and_verdict(
         # Codes per Second
         code_dist = parser.get_response_code_distribution()
         codes_summary = ", ".join(
-            f"HTTP {row['responseCode']}: {int(row['count']):,}"
+            f"HTTP {row['responseCode']}: {num(row['count'])} respuestas"
             for _, row in code_dist.iterrows()
         )
         ai_analysis_codes_per_second = await asyncio.to_thread(
             gemini.analyze_chart,
             'codes_per_second',
-            f"Codigos HTTP: {codes_summary}",
+            f"Codigos de respuesta acumulados de la prueba: {codes_summary}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -270,12 +280,13 @@ async def run_ai_and_verdict(
         # TPS
         tps_lines = []
         for _, row in summary_df.iterrows():
-            tps_lines.append(f"- {row['label']}: {row['rendimiento']:.2f} req/s")
+            tps_lines.append(f"- {row['label']}: {num(row['rendimiento'], 2)} por segundo")
         logger.info(f"TPS: enviando {len(tps_lines)} transacciones a Gemini")
         ai_analysis_transactions_per_second = await asyncio.to_thread(
             gemini.analyze_chart,
             'transactions_per_second',
-            f"TPS total: {metrics['throughput']:.2f} req/s en {len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
+            f"Caudal total: {num(metrics['throughput'], 2)} por segundo, repartido entre "
+            f"{len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )
@@ -287,7 +298,8 @@ async def run_ai_and_verdict(
         ai_analysis_active_threads = await asyncio.to_thread(
             gemini.analyze_chart,
             'active_threads',
-            f"Concurrencia durante {metrics['duration_seconds']:.0f}s de prueba",
+            f"Concurrencia durante {num(metrics['duration_seconds'])} segundos de prueba. "
+            f"Tiempo promedio de respuesta en toda la ventana: {ms(metrics.get('avg_response_time', 0))}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
         )

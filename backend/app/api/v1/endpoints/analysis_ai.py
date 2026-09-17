@@ -16,6 +16,8 @@ from app.db.session import get_db
 from app.core.security import get_current_user
 from app.db.models.test import TestExecution
 from app.db.models.attachment import ExecutionAttachment
+# ETAPA 3 (D32/D33): formato espanol y percentiles traducidos en los prompts.
+from app.services.ai.estilo import ms, num, pct, percentiles_bloque
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,37 +69,37 @@ async def generate_monitoring_analysis(
                 f"[{(att.category or '').upper()} - {att.title or att.filename}]: {att.ai_analysis}"
             )
 
+    # ETAPA 3 (D32/D33): los datos de la prueba se entregan en formato espanol y
+    # con los percentiles ya traducidos a personas, igual que en el informe.
     prompt = (
-        f"Eres un analista de performance que correlaciona metricas de monitoreo de "
-        f"infraestructura con los resultados de una prueba de rendimiento.\n\n"
+        f"Correlaciona las metricas de monitoreo de infraestructura con los "
+        f"resultados de esta prueba de rendimiento.\n\n"
         f"DATOS DE LA PRUEBA EJECUTADA:\n"
         f"- Nombre: {execution.name}\n"
         f"- Tipo: {execution.test_type or 'No especificado'}\n"
-        f"- Total Requests: {execution.total_requests}\n"
-        f"- Error Rate: {execution.error_rate}%\n"
-        f"- Avg Response Time: {execution.avg_response_time}ms\n"
-        f"- P90: {execution.p90_response_time}ms\n"
-        f"- P95: {execution.p95_response_time}ms\n"
-        f"- P99: {execution.p99_response_time}ms\n"
-        f"- Throughput: {execution.throughput} req/s\n"
-        f"- Avg Latency: {execution.avg_latency or 0}ms\n"
-        f"- Duracion: {execution.duration_seconds or 0}s\n\n"
-        f"ANALISIS INDIVIDUALES DE IMAGENES DE MONITOREO:\n"
+        f"- Total de peticiones: {num(execution.total_requests)}\n"
+        f"- Tasa de error: {pct(execution.error_rate)}\n"
+        f"- Tiempo promedio de respuesta: {ms(execution.avg_response_time)}\n"
+        f"- Latencia promedio: {ms(execution.avg_latency or 0)}\n"
+        f"- Caudal: {num(execution.throughput, 2)} por segundo\n"
+        f"- Duracion: {num(execution.duration_seconds or 0)} segundos\n"
+        f"LECTURA DE LOS PERCENTILES (copia estas frases tal cual):\n"
+        f"{percentiles_bloque(p90=execution.p90_response_time, p95=execution.p95_response_time, p99=execution.p99_response_time)}\n\n"
+        f"ANALISIS INDIVIDUALES DE LAS IMAGENES DE MONITOREO:\n"
         f"{chr(10).join(image_analyses) if image_analyses else 'No hay analisis individuales de imagenes disponibles.'}\n\n"
         f"INSTRUCCIONES:\n"
-        f"- Correlaciona los datos de la prueba con lo observado en las metricas de monitoreo\n"
-        f"- Identifica si los recursos de infraestructura (CPU, memoria, threads, etc.) son la causa de los tiempos de respuesta o errores observados\n"
+        f"- Cruza los datos de la prueba con lo que muestran las metricas de monitoreo\n"
+        f"- Di si los recursos de infraestructura (CPU, memoria, hilos) explican los "
+        f"tiempos de respuesta o los errores, marcado como hipotesis\n"
         f"- Indica que recursos estan cerca de su limite y cuales tienen margen\n"
         f"- Relaciona los picos de consumo con los momentos de mayor carga\n"
-        f"- Da recomendaciones especificas de umbrales de alerta basados en lo observado\n"
-        f"- Escribe en espanol profesional colombiano\n"
-        f"- Usa parrafos narrativos de 3-5 oraciones, sin markdown, sin bullets, sin asteriscos\n"
+        f"- Propon umbrales de alerta concretos a partir de lo observado\n"
         f"- Maximo 500 palabras"
     )
 
     analysis = ""
     try:
-        from app.services.ai.gemini import GeminiAnalyzer, get_gemini_analyzer, load_ai_config_from_db, SYSTEM_PROMPT
+        from app.services.ai.gemini import GeminiAnalyzer, get_gemini_analyzer, load_ai_config_from_db
         ai_conf = await load_ai_config_from_db(db)
         gemini = get_gemini_analyzer(
             provider=ai_conf.get("provider", ""),
@@ -105,15 +107,15 @@ async def generate_monitoring_analysis(
             api_key=ai_conf.get("api_key", ""),
             reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
-        full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-        analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="monitoring_analysis") or ""
+        # ETAPA 3 (D34): el bloque de estilo lo pone `_generate`, una sola vez.
+        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="monitoring_analysis") or ""
     except Exception as e:
         logger.error(f"Monitoring AI analysis failed: {e}")
         analysis = (
             f"No fue posible generar el analisis correlacionado. Los datos de la prueba "
-            f"muestran {execution.total_requests} requests con un error rate del "
-            f"{execution.error_rate}% y un tiempo de respuesta promedio de "
-            f"{execution.avg_response_time}ms."
+            f"muestran {num(execution.total_requests)} peticiones con una tasa de error "
+            f"de {pct(execution.error_rate)} y un tiempo de respuesta promedio de "
+            f"{ms(execution.avg_response_time)}."
         )
 
     # Persist in capacity_analysis_json
@@ -174,35 +176,35 @@ async def generate_evidence_analysis(
                 f"[{(att.category or '').upper()} - {att.title or att.filename}]: {att.ai_analysis}"
             )
 
+    # ETAPA 3: mismo formato espanol que el resto del informe, y sin la palabra
+    # "hallazgo", que el propio bloque de estilo prohibe (reporte 30 §2).
     prompt = (
-        f"Eres un analista de performance que correlaciona evidencias y hallazgos "
-        f"con los resultados de una prueba de rendimiento.\n\n"
+        f"Correlaciona las evidencias recogidas con los resultados de esta prueba "
+        f"de rendimiento.\n\n"
         f"DATOS DE LA PRUEBA EJECUTADA:\n"
         f"- Nombre: {execution.name}\n"
         f"- Tipo: {execution.test_type or 'No especificado'}\n"
-        f"- Total Requests: {execution.total_requests}\n"
-        f"- Error Rate: {execution.error_rate}%\n"
-        f"- Avg Response Time: {execution.avg_response_time}ms\n"
-        f"- P90: {execution.p90_response_time}ms\n"
-        f"- P95: {execution.p95_response_time}ms\n"
-        f"- Throughput: {execution.throughput} req/s\n"
-        f"- Duracion: {execution.duration_seconds or 0}s\n\n"
-        f"ANALISIS INDIVIDUALES DE EVIDENCIAS:\n"
+        f"- Total de peticiones: {num(execution.total_requests)}\n"
+        f"- Tasa de error: {pct(execution.error_rate)}\n"
+        f"- Tiempo promedio de respuesta: {ms(execution.avg_response_time)}\n"
+        f"- Caudal: {num(execution.throughput, 2)} por segundo\n"
+        f"- Duracion: {num(execution.duration_seconds or 0)} segundos\n"
+        f"LECTURA DE LOS PERCENTILES (copia estas frases tal cual):\n"
+        f"{percentiles_bloque(p90=execution.p90_response_time, p95=execution.p95_response_time)}\n\n"
+        f"ANALISIS INDIVIDUALES DE LAS EVIDENCIAS:\n"
         f"{chr(10).join(image_analyses) if image_analyses else 'No hay analisis individuales de evidencias disponibles.'}\n\n"
         f"INSTRUCCIONES:\n"
-        f"- Correlaciona los errores y hallazgos evidenciados con el rendimiento de la prueba\n"
-        f"- Clasifica los hallazgos por severidad (critico, alto, medio, bajo)\n"
-        f"- Identifica patrones comunes entre las evidencias\n"
-        f"- Relaciona los errores con metricas especificas (error rate, tiempos de respuesta)\n"
-        f"- Recomienda acciones correctivas priorizadas por impacto\n"
-        f"- Escribe en espanol profesional colombiano\n"
-        f"- Usa parrafos narrativos de 3-5 oraciones, sin markdown, sin bullets, sin asteriscos\n"
+        f"- Cruza los errores evidenciados con el rendimiento de la prueba\n"
+        f"- Ordena los problemas por gravedad para la operacion\n"
+        f"- Senala lo que se repite entre varias evidencias\n"
+        f"- Relaciona cada error con la cifra de la prueba que lo respalda\n"
+        f"- Propon acciones correctivas ordenadas por impacto\n"
         f"- Maximo 400 palabras"
     )
 
     analysis = ""
     try:
-        from app.services.ai.gemini import GeminiAnalyzer, get_gemini_analyzer, load_ai_config_from_db, SYSTEM_PROMPT
+        from app.services.ai.gemini import GeminiAnalyzer, get_gemini_analyzer, load_ai_config_from_db
         ai_conf = await load_ai_config_from_db(db)
         gemini = get_gemini_analyzer(
             provider=ai_conf.get("provider", ""),
@@ -210,15 +212,15 @@ async def generate_evidence_analysis(
             api_key=ai_conf.get("api_key", ""),
             reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
-        full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-        analysis = await asyncio.to_thread(gemini._generate, full_prompt, section_name="evidence_analysis") or ""
+        # ETAPA 3 (D34): el bloque de estilo lo pone `_generate`, una sola vez.
+        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="evidence_analysis") or ""
     except Exception as e:
         logger.error(f"Evidence AI analysis failed: {e}")
         analysis = (
             f"No fue posible generar el analisis correlacionado. Los datos de la prueba "
-            f"muestran {execution.total_requests} requests con un error rate del "
-            f"{execution.error_rate}% y un tiempo de respuesta promedio de "
-            f"{execution.avg_response_time}ms."
+            f"muestran {num(execution.total_requests)} peticiones con una tasa de error "
+            f"de {pct(execution.error_rate)} y un tiempo de respuesta promedio de "
+            f"{ms(execution.avg_response_time)}."
         )
 
     # Persist
