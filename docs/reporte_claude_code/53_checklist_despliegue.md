@@ -220,11 +220,15 @@ docker exec jmeter_backend python3 -c "import socket;print(socket.socket().conne
 El relé TCP hace que el frontend se vea como `http://localhost:5173` dentro del
 contenedor, que es el origen que el backend admite por CORS.
 
-**Ojo:** la carpeta del contenedor tiene hoy **29 archivos** y la fuente fuera del
-repo **24** — los de las Etapas 5 y 6 (`panel_seleccion.py`, `e5_verdictos.py`,
-`capas_tooltip.py`, `export_alcance.py`, `dialogo_export.py`, `capas_exportadas.py`,
-`capas_html_render.py`) y el `hf4_check.py` modificado en 6.5 **solo existen dentro
-del contenedor**. Hay que copiarlos a la fuente antes de recrearlo, o se pierden.
+**Hecho en el cierre de la Etapa 6:** los scripts de las Etapas 5 y 6
+(`panel_seleccion.py`, `e5_verdictos.py`, `capas_tooltip.py`, `export_alcance.py`,
+`dialogo_export.py`, `capas_exportadas.py`, `capas_html_render.py`) y el
+`hf4_check.py` modificado en 6.5 solo existían dentro del contenedor y **ya se
+copiaron a `C:\proyectos\Kinetix_pruebas\e2e\`**, que ahora tiene 29 archivos.
+Los tres que quedan solo en el contenedor (`dbg_login.py`, `dbg_rep.py`,
+`desglose.py`) son desechables.
+
+Sigue pendiente **copiarlos al servidor** si se quiere verificar allí.
 
 Reportes: 46 (§8.2), 19 (§5), 24, 50 (§3).
 
