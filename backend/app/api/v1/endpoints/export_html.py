@@ -25,7 +25,6 @@ from app.core.security import get_current_active_user
 from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
-from app.services.export.report_generator import transaction_analyses_html   # N3.5
 from app.services.export.report_generator import TRANSACTION_CHARTS   # N4.8/N4.9
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
@@ -326,7 +325,7 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
             e = ' style="color:#ef4444;font-weight:600"' if float(m.get('errorPct', 0)) > 0 else ''
             cuerpo.append(
                 f'<div class="{c["section"]}">'
-                f'<div class="{c["section_title"]}">Metricas de la Transaccion</div>'
+                f'<div class="{c["section_title"]}">Reporte Resumen por Transaccion</div>'
                 f'<div class="{c["table_wrap"]}"><table><thead><tr>'
                 '<th>Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
                 '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
@@ -732,17 +731,9 @@ async def export_html(
         from app.services.export.client_logo import get_client_logo_b64
         meta['client_logo'] = await get_client_logo_b64(db, execution)
 
-        # N3.5: transacciones criticas de ESTA ejecucion (vacio -> no se pinta)
-        from app.db.models.transaction_analysis import TransactionAnalysis
-        _txn = await db.execute(
-            select(TransactionAnalysis)
-            .where(TransactionAnalysis.execution_id == execution.id)
-            .order_by(TransactionAnalysis.sort_order)
-        )
-        meta['transaction_analyses'] = [
-            {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
-            for r in _txn.scalars().all()
-        ]
+        # HF-4 (D38): aqui se cargaban las transacciones criticas para el bloque
+        # N3.5, que salio del producto. Las filas de `transaction_analyses` no se
+        # tocan; simplemente ya no se leen para exportar.
 
         # N4.9: mini-informes de ESTA ejecucion. Sin ninguno, las dos piezas salen
         # vacias, el bloque no se pinta y el HTML queda exactamente como hoy.
@@ -1266,8 +1257,6 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 </div>
 
 {ai_box('errors', 'Analisis de Errores', '#f97316')}
-
-{transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=False)}
 
 {tx_body}
 

@@ -28,26 +28,11 @@ from app.services.jtl.jtl_parser import JTLParser
 from app.services.export.report_generator import (
     chart_area, chart_multiline, chart_pie, build_pdf_html, MAX_SERIES_SUFFIX,
     cover_meta_parts,   # N2.3
-    transaction_analyses_html,   # N3.5
 )
-from app.db.models.transaction_analysis import TransactionAnalysis   # N3.5
 
-
-async def _load_transaction_analyses(db, execution_id):
-    """N3.5: transacciones criticas de UNA ejecucion, en su orden.
-
-    Cada seccion del integrado carga las suyas: nunca se mezclan entre
-    ejecuciones. Lista vacia -> el bloque no se pinta.
-    """
-    result = await db.execute(
-        select(TransactionAnalysis)
-        .where(TransactionAnalysis.execution_id == execution_id)
-        .order_by(TransactionAnalysis.sort_order)
-    )
-    return [
-        {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
-        for r in result.scalars().all()
-    ]
+# HF-4 (D38): aqui vivia `_load_transaction_analyses`, que alimentaba el bloque
+# "Analisis por Transaccion Critica" (N3.5). El bloque salio del producto en las
+# cuatro salidas; las filas de `transaction_analyses` quedan intactas en la base.
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.client_logo import get_client_logo_b64   # N1.5
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
@@ -226,8 +211,6 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
 
         # N1.6: logo del cliente para la portada (None si no hay: portada igual que hoy)
         meta['client_logo'] = await get_client_logo_b64(db, execution)
-        # N3.5: las transacciones criticas de ESTA ejecucion, no las de otra
-        meta['transaction_analyses'] = await _load_transaction_analyses(db, execution.id)
         # N4.9: los mini-informes de ESTA ejecucion. Se reusa el constructor de
         # N4.8 (export_pdf.py) en vez de copiarlo: mismo origen de datos, misma
         # criticidad y las mismas 5 graficas. Cada seccion del integrado llama a
@@ -749,8 +732,6 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 {ai_box('errors', 'Analisis de Errores', '#f97316')}
 
-{transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=False)}
-
 {tx_body}
 </div>
 
@@ -910,8 +891,6 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
         # N1.5: logo del cliente para la cabecera. None si el cliente no tiene
         # logo o no se puede resolver: la plantilla entonces no pinta nada.
         meta['client_logo'] = await get_client_logo_b64(db, execution)
-        # N3.5: las transacciones criticas de ESTA ejecucion, no las de otra
-        meta['transaction_analyses'] = await _load_transaction_analyses(db, execution.id)
 
         # Build Plotly traces
         tl_timestamps = _ts_iso_list(tl)

@@ -200,7 +200,19 @@ def markdown_to_html(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def transaction_analyses_html(rows: Optional[List[Dict[str, Any]]], for_pdf: bool = True) -> str:
-    """N3.5: bloque 'Analisis por transaccion critica', una caja por transaccion.
+    """RETIRADO POR HF-4 (D38). YA NO LO LLAMA NADIE.
+
+    El bloque 'Analisis por Transaccion Critica' salio del producto en las cuatro
+    salidas: la especificacion v1.2 §1 no lo contempla y su texto venia de
+    `transaction_analyses.ai_analysis`, que es legacy de solo lectura desde N3.4.
+    Quien quiera el bloque por transaccion tiene `transaction_reports_html`.
+
+    La funcion se conserva sin tocar —no se borra nada— por si Fredy la quiere de
+    vuelta: bastaria volver a llamarla. Si al leer esto sigue sin usarse, se puede
+    retirar entera.
+
+    ---- Documentacion original de N3.5 ----
+    Bloque 'Analisis por transaccion critica', una caja por transaccion.
 
     `ai_box` pinta UNA seccion desde UNA clave fija y no sirve aqui: el numero de
     cajas es variable. Sin filas devuelve cadena vacia — el documento sale
@@ -333,7 +345,8 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
                 f'<td class="num">{float(m.get("kbSent", 0)):.2f}</td></tr>'
             )
             tabla = (
-                '<div class="section"><div class="section-header">Metricas de la Transaccion</div>'
+                # HF-4: el mismo titulo que la tabla del informe general.
+                '<div class="section"><div class="section-header">Reporte Resumen por Transaccion</div>'
                 '<table><thead><tr>'
                 '<th style="text-align:left">Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
                 '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
@@ -1110,8 +1123,10 @@ tbody tr:nth-child(even) {{
 <!-- ===== CHARTS (N2.1: flujo denso, unidad grafica+analisis) ===== -->
 {report_body_html(charts, ia, 'general')}
 
-<!-- ===== N3.5: ANALISIS POR TRANSACCION CRITICA (antes de conclusiones) ===== -->
-{transaction_analyses_html(meta.get('transaction_analyses'), for_pdf=True)}
+<!-- ===== HF-4 (D38): aqui iba el bloque N3.5, retirado del producto. La
+     especificacion v1.2 §1 no lo contempla y su texto era legacy. Las filas de
+     la base NO se tocan. El nombre del bloque no se escribe ni en este
+     comentario: viaja dentro del HTML entregado (leccion D22). ===== -->
 
 <!-- ===== INFORME DE CADA TRANSACCION (ETAPA 2, D17: ANTES de las conclusiones) ===== -->
 {transaction_reports_html(meta.get('transaction_reports'))}

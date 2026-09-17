@@ -452,18 +452,9 @@ async def export_pdf(
         from app.services.export.client_logo import get_client_logo_b64
         meta['client_logo'] = await get_client_logo_b64(db, execution)
 
-        # N3.5: transacciones criticas de ESTA ejecucion. Sin filas, el bloque no
-        # se pinta y el PDF sale identico al de siempre.
-        from app.db.models.transaction_analysis import TransactionAnalysis
-        _txn = await db.execute(
-            select(TransactionAnalysis)
-            .where(TransactionAnalysis.execution_id == execution.id)
-            .order_by(TransactionAnalysis.sort_order)
-        )
-        meta['transaction_analyses'] = [
-            {'label': r.label, 'metrics': r.metrics_json, 'ai_analysis': r.ai_analysis}
-            for r in _txn.scalars().all()
-        ]
+        # HF-4 (D38): aqui se cargaban las transacciones criticas para el bloque
+        # N3.5, que salio del producto. Las filas de `transaction_analyses` no se
+        # tocan; simplemente ya no se leen para exportar.
 
         # N4.8: mini-informe por transaccion, despues de las conclusiones generales.
         # Sin mini-informes la lista queda vacia, el bloque no se pinta y el PDF
