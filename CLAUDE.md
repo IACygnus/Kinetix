@@ -15,9 +15,16 @@
   scripts, ejecución (motor propio), parseo de JTL, dashboards, reportes
   HTML/PDF integrados, monitoreo Grafana/InfluxDB y configuración dinámica de
   IA.
-- **Repositorio:** Git local, branch principal `main`. Último tag publicado: **v3.1.0**.
+- **Repositorio:** Git local. Último tag publicado: **v3.1.0** — las Etapas 1 a 6
+  del plan de corrección **no están etiquetadas**.
 - **Ruta local de trabajo:** `C:\proyectos\Kinetix` (el proyecto se migró de PC;
   cualquier ruta anterior que aparezca en documentos viejos está obsoleta).
+- **Estado del informe:** el plan de corrección contra
+  `docs/ESPECIFICACION-informe.md` v1.2 está **completo**. Etapas 2, 3 y 5
+  validadas por Fredy; la 6 implementada y pendiente de validación. No hay
+  Etapa 4: el plan saltó de la 3 a la 5. Estado vivo y pendientes en
+  `PROJECT_STATUS.md`; deuda de despliegue en
+  `docs/reporte_claude_code/53_checklist_despliegue.md`.
 
 ### 1.1 REMOTOS GIT
 
@@ -118,12 +125,28 @@ Network bridge: `jmeter_network`. Volúmenes nombrados: `postgres_data`,
 ### Diferencias con producción (`docker-compose.prod.yml`)
 
 - `restart: always` en todos los servicios (vs `unless-stopped`).
-- `postgres`, `influxdb`, `grafana` con `ports: []` → puertos cerrados al host.
 - `backend`: `--workers 2`, sin `--reload`, `ENVIRONMENT=production`, sin
   defaults — todos los secretos deben venir de `.env`.
-- `frontend`: usa target **production** del Dockerfile (nginx interno,
-  expone `5173:80`), volúmenes vacíos, sin `npm run dev`.
 - `grafana`: `GF_AUTH_ANONYMOUS_ENABLED=false`, cookie `samesite=strict`.
+
+> ### ⚠ El override de producción NO hace lo que su texto sugiere
+>
+> Verificado en la Etapa 6.6 con `docker compose -f docker-compose.yml -f
+> docker-compose.prod.yml config` (solo lectura). **Compose FUSIONA las listas
+> en vez de reemplazarlas**, así que:
+>
+> | Lo que el archivo parece decir | Lo que la fusión produce de verdad |
+> |---|---|
+> | `postgres`, `influxdb`, `grafana` con `ports: []` → cerrados | **5432, 8086 y 3000 publicados en `0.0.0.0`** |
+> | (el backend no se menciona) | **8001 publicado en `0.0.0.0`** |
+> | `frontend` con nginx interno | `target: builder` **sobrevive**: se construye la fase de Vite |
+> | `frontend: volumes: []` | el bind-mount `./frontend:/app` **sigue ahí** |
+> | `frontend: ports 5173:80` | **dos** mapeos peleándose por el 5173 del host |
+>
+> Para cerrar un puerto hay que **publicarlo en una interfaz concreta**
+> (`127.0.0.1:5432:5432`), no vaciar la lista. Detalle, consecuencias y orden de
+> arreglo en `docs/reporte_claude_code/53_checklist_despliegue.md` §2 y en el
+> reporte 37 (HF-3).
 
 ---
 
@@ -171,9 +194,12 @@ backend/app/
 │   ├── base_class.py
 │   ├── session.py                        # get_db dependency
 │   └── models/
-│       ├── ai_config.py
+│       ├── ai_config.py                   # + reasoning_effort (ETAPA 2)
+│       ├── ai_design_data_file.py
+│       ├── ai_script_design.py
 │       ├── attachment.py
 │       ├── client.py
+│       ├── client_logo.py
 │       ├── data_file.py
 │       ├── integrated_report.py
 │       ├── monitoring.py
@@ -181,10 +207,20 @@ backend/app/
 │       ├── scenario.py
 │       ├── script_design.py
 │       ├── test.py
+│       ├── transaction_analysis.py        # críticas marcadas (legacy, solo lectura)
+│       ├── transaction_chart_analysis.py  # ETAPA 2 — textos del informe por transacción
 │       └── user.py
 ├── schemas/                              # Pydantic schemas (auth, ai_config, …)
 └── services/
-    ├── ai/gemini.py                      # GeminiAnalyzer + Fallback + analyze_image
+    ├── ai/
+    │   ├── gemini.py                     # GeminiAnalyzer + Fallback + analyze_image
+    │   ├── estilo.py                     # ETAPA 3 — formato español, bloque de estilo, detectores
+    │   ├── analysis_pipeline.py          # ETAPA 2 — orquestación de las secciones
+    │   ├── transaction_analysis.py       # informe por transacción
+    │   ├── transaction_report.py         # ídem
+    │   ├── har_chunk_router.py
+    │   ├── har_flow_analyzer.py
+    │   └── jmx_chunk_assembler.py
     ├── engine/                           # Motor propio de performance testing
     │   ├── ai_correlation.py
     │   ├── data_file_service.py
@@ -203,9 +239,14 @@ backend/app/
     │   └── wsdl_importer.py
     ├── export/
     │   ├── high_cardinality_strategy.py
-    │   └── report_generator.py           # build_pdf_html
+    │   ├── report_generator.py           # build_pdf_html
+    │   ├── seleccion.py                  # ETAPA 6 — lee ?tx= y ?capa=, filtra y valida
+    │   ├── capas_html.py                 # ETAPA 6 — CSS/JS/selector del control de capas
+    │   └── client_logo.py                # logo del cliente en la portada
     ├── jmx_parser.py
-    ├── jtl/jtl_parser.py                 # CSV + XML JTL → DataFrames
+    ├── jtl/
+    │   ├── jtl_parser.py                 # CSV + XML JTL → DataFrames
+    │   └── transaction_series.py         # ETAPA 2 — las 5 series de UNA transacción
     └── parsers/
         ├── format_detector.py
         ├── locust_parser.py
@@ -231,15 +272,19 @@ frontend/src/
 │   ├── auth/Login.tsx
 │   ├── charts/{ByLabelChart, StatsTable, TimelineChart}.tsx
 │   ├── clients/{ClientsPage, AssignmentsPage}.tsx
-│   ├── common/{LoadingSpinner, ProtectedRoute}.tsx
+│   ├── common/{LoadingSpinner, ProtectedRoute, AvisoEstilo}.tsx   # AvisoEstilo: ETAPA 3 (D36)
 │   ├── dashboard/
 │   │   ├── AttachmentSection.tsx
 │   │   ├── CapacityAnalysis.tsx
 │   │   ├── ChartYAxisZoom.tsx
 │   │   ├── ComparisonReport.tsx
-│   │   ├── Dashboard.tsx                 # ⚠ Protegido — 1304 líneas
+│   │   ├── Dashboard.tsx                 # ⚠ Protegido — 1045 líneas
 │   │   ├── DashboardHome.tsx
-│   │   └── UploadJTL.tsx
+│   │   ├── ReportBody.tsx                # ETAPA 2 (D21) — el cuerpo, por ALCANCE
+│   │   ├── SummaryTable.tsx              # ETAPA 2 (D15) — la tabla, por ALCANCE
+│   │   ├── TransactionReportSection.tsx  # ETAPA 2 — los bloques por transacción
+│   │   ├── ExportScopeDialog.tsx         # ETAPA 6 (D50) — ¿qué incluyo al exportar?
+│   │   └── UploadJTL.tsx                 # panel de selección (ETAPA 5)
 │   ├── execution/{ScenarioForm, LiveMetricsChart, ExecutionHistory}.tsx
 │   ├── integrated/{ConsolidatedAnalysisSection, DashboardEmbed,
 │   │                ExecutionReportSection, MonitoringReportSection}.tsx
@@ -251,7 +296,7 @@ frontend/src/
 │   └── users/{UserForm, UserList}.tsx
 ├── config/chartConfig.ts
 ├── context/AuthContext.tsx               # cookies httpOnly + sliding session
-├── hooks/usePDFExport.ts
+├── hooks/{usePDFExport, useChartLayers}.ts   # useChartLayers: ETAPA 6 (D46-D48)
 ├── pages/
 │   ├── AIScriptDesigner.tsx              # Generador de JMX con IA
 │   ├── EvidencePage.tsx
@@ -289,6 +334,7 @@ httpOnly `access_token`.
 |---|---|---|
 | GET | `/gemini-test` | Diagnóstico de conectividad Gemini |
 | POST | `/extract-jtl-labels` | Lista labels de un JTL |
+| POST | `/extract-jtl-transactions` | Filas del panel de selección (ETAPA 5): muestras, promedio, TPS, errores |
 | POST | `/validate-jtl` | Valida estructura de JTL |
 | POST | `/parse-jmx` | Extrae nombres de threads del JMX |
 | POST | `/upload` | **Pipeline completo**: parse JTL + 12+2 análisis IA + persistencia |
@@ -299,9 +345,34 @@ httpOnly `access_token`.
 | PUT | `/executions/{id}/analysis` | Editar análisis IA |
 | GET/PUT | `/executions/{id}/capacity` | Análisis de capacidad |
 
+#### Informe por transacción (ETAPA 2, `upload.py`)
+| Verbo | Path | Función |
+|---|---|---|
+| GET | `/executions/{id}/transaction-analyses` | Transacciones críticas + `report_labels` (las que TIENEN informe) |
+| GET | `/executions/{id}/transaction-charts?label=` | Las 5 series de UNA transacción |
+| POST | `/executions/{id}/transaction-report` | Generar el informe de una transacción |
+| GET | `/executions/{id}/transaction-report?label=` | Sus secciones + `style_warnings` (ETAPA 3) |
+| PUT | `/executions/{id}/transaction-report/{section}` | Editar una sección |
+| GET | `/executions/{id}/transaction-reports/status` | Avance de la generación automática |
+
 ### `export` (`/executions/{id}/export`)
 - GET `/executions/{id}/export/html` — HTML interactivo con Plotly
 - GET `/executions/{id}/export/pdf` — PDF (WeasyPrint + matplotlib)
+
+**Parámetros de alcance y capas (ETAPA 6).** Los dos exportadores individuales —y
+**solo** ellos: el integrado queda fuera por v1.2 §6— aceptan:
+
+| Parámetro | Efecto |
+|---|---|
+| *(ninguno)* | todas las transacciones y las dos capas: **el documento de siempre** |
+| `?tx=` (vacío) | solo el informe general |
+| `?tx=<label>&tx=<label>` | el general más esas. Un label sin análisis → **400** |
+| `?capa=<idGrafica>:<promedio\|maximo>` | esa gráfica se dibuja con una sola capa |
+
+`idGrafica` es `general\|rt` o `tx:<nombre>\|rt`, **el mismo identificador que arma
+`useChartLayers.idGrafica` en el frontend**. Lo que no se entienda se ignora y esa
+gráfica sale con las dos capas. Los lee `services/export/seleccion.py`, una sola
+definición para las dos salidas.
 
 ### `users` (`/users`)
 CRUD completo + `PATCH /{id}/toggle` (activar/desactivar) +
@@ -393,6 +464,14 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 | **`scenarios`** | id, name, script_id FK, test_type (load/stress/spike/soak/custom), thread_group_config (JSON: initial_users/step_users/step_duration_sec/hold_duration_sec/max_users/ramp_down_sec/total_duration_sec/think_time_ms/iterations), acceptance_criteria (JSON) |
 | **`performance_executions`** | id, scenario_id FK, user_id FK, status (pending/starting/running/stopping/completed/error/cancelled), jtl_file_path, jmx_file_path, output_filename, summary_metrics (JSON), scenario_snapshot (JSON), error_message, started_at, completed_at |
 | **`integrated_reports`** | id (UUID), name, sections (JSONB), consolidated_analysis (JSONB), created_by FK |
+| **`transaction_chart_analyses`** | id, execution_id, label, section, ai_analysis, generated_at, is_edited, ai_analysis_updated_at, sort_order, created_at — **ETAPA 2**: los textos del informe por transacción. `SECTIONS_GENERADAS` = `summary` + `chart_response_times/latency/error_rate/codes/tps`. Las filas viejas de `conclusions`/`recommendations` siguen ahí y **se ignoran** (D20) |
+| **`transaction_analyses`** | id, execution_id, label, is_critical, marked_by (ai/user), metrics_json, ai_analysis, ai_analysis_updated_at, sort_order, created_at — transacciones marcadas como críticas. **Legacy de solo lectura desde N3.4**: `ai_analysis` ya no se pinta en ninguna salida |
+| **`client_logos`** | logo del cliente para la portada |
+| **`ai_script_designs`** · **`ai_design_data_files`** | AI Script Designer |
+
+**Columna añadida sin Alembic:** `ai_config.reasoning_effort VARCHAR(20)`
+(`docs/sql/etapa2_reasoning_effort.sql`, idempotente). Aplicada en desarrollo,
+**pendiente en producción**.
 
 ---
 
@@ -405,8 +484,37 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
   anteriores (gpt-4o, gpt-4.1, gemini-*) en ningún diagnóstico ni refactor.
   Si un fallo parece del modelo, se investiga la causa real — no se degrada
   el modelo como atajo.
+- **`reasoning_effort`** (`ai_config.reasoning_effort`: `low` / `medium` /
+  `high`, `NULL` = `low`) se añadió en la Etapa 2 y **solo se envía a los
+  modelos de OpenAI que lo soportan**. La columna se aplica con
+  `docs/sql/etapa2_reasoning_effort.sql` (regla 10: sin Alembic).
+  **Aplicada en desarrollo, PENDIENTE en producción** — sin ella la lectura de
+  `ai_config` falla, el error se degrada a un `warning` y **todos los informes
+  salen con texto de `FallbackAnalyzer` sin avisar**.
+- **Timeouts y reintentos** (Etapa 1): `CLIENTE_TIMEOUT_S = 120.0` en el cliente
+  OpenAI —el SDK trae 600 s de lectura por defecto— y reintento de errores
+  transitorios a los 2 s y 4 s.
 
-### `backend/app/services/ai/gemini.py` (1525 líneas)
+### `backend/app/services/ai/estilo.py` (480 líneas — ETAPA 3)
+
+Un solo módulo para las cinco piezas que comparten los **19 prompts** del informe:
+
+1. **Formato español determinista** (`num`, `pct`, `ms`, `tiempo`, `veces`). Los
+   bloques de datos se le entregan al modelo **ya formateados**.
+2. **Frases de percentil** (`percentil_frase`, `mediana_frase`): "1 de cada 10
+   usuarios espera más de 3,5 segundos (P90: 3.515 ms)".
+3. **El bloque de estilo único** (`BLOQUE_ESTILO`, `PERMISO_VEREDICTO`,
+   `REFERENCIA_ESTILO`), que viaja **una sola vez** por petición. Sustituyó a
+   `STYLE_REMINDER`, `UX_RULE` y `FORMATO_NUMERICO`, que se solapaban y no
+   llegaban a los mismos prompts.
+4. **El detector de estilo** (`detectar_estilo`, `terminos_de`).
+5. **La trazabilidad de cifras** (`trazar_cifras`).
+
+Los dos detectores **solo detectan y reportan**: no regeneran, no reescriben, no
+bloquean y no llaman a la IA. Son deterministas. Lo que encuentran sale como
+aviso ámbar en pantalla (`AvisoEstilo.tsx`), nunca como corrección automática.
+
+### `backend/app/services/ai/gemini.py` (2043 líneas)
 
 - **Providers soportados:** Gemini (`google-generativeai`) y OpenAI
   (`openai >=1.0.0`). El dispatcher decide en runtime según
@@ -419,12 +527,22 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 - **Flujo de análisis (`/upload`):**
   1. Parse JTL → DataFrame.
   2. `prepare_insights_for_prompt()` (pre-clasificación en tiers).
-  3. 12 secciones IA + 2 (recomendaciones, conclusiones) de forma
-     **secuencial** (12 pasos escritos a mano en `run_ai_and_verdict`, uno
-     detrás de otro), con `sanitize_ai_text()` aplicado a cada salida.
+  3. Las secciones del informe general, de forma **secuencial**, con
+     `sanitize_ai_text()` aplicado a cada salida y el bloque de estilo de
+     `estilo.py` en el prompt. **Throughput Over Time ya no se pide** (D19) y
+     "Response Time Over Time" tampoco.
   4. `compute_verdict()` (cumple/no cumple acceptance criteria).
   5. `compute_per_transaction_verdicts()` (KNX-09).
   6. `update_ai_usage_in_db()` para sincronizar contadores.
+  7. Los informes por transacción se generan aparte, **6 secciones cada uno**
+     (resumen + 5 gráficas), con su propio sondeo de estado
+     (`/transaction-reports/status`). **Sin conclusiones ni recomendaciones por
+     transacción** (D20).
+
+> **Tiempo de generación (v1.2 §5):** el informe tardaba ~40 s y hoy tarda más de
+> 5 minutos con `gpt-5.5`. Retirar Throughput ahorra 1 llamada por informe y
+> quitar las conclusiones por transacción ahorra 2 por transacción; **agrupar
+> llamadas sigue sin medir**. El modelo no se degrada como atajo.
 
 #### `GENERATION_CONFIG`
 ```python
@@ -504,7 +622,41 @@ PROVIDERS = {
 
 ## 7. SISTEMA DE REPORTES
 
-### `backend/app/services/export/report_generator.py` (940 líneas)
+### Estructura del informe (v1.2 §1) — la misma en las CUATRO salidas
+
+```
+PORTADA
+INFORME GENERAL
+  Tabla resumen por transacción (todas) + su análisis
+  Response Times · Latency · Error Rate · Response Codes · TPS · Active Threads
+  (cada gráfica con su análisis)
+[nombre de la transacción 1]        ← página nueva en el PDF
+  Tabla resumen filtrada + su análisis
+  Las mismas gráficas MENOS Active Threads (los hilos son de toda la prueba)
+[nombre de la transacción 2]
+  …
+CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
+```
+
+- **No existe "mini-informe".** El título de cada informe por transacción es el
+  nombre de la transacción, y nada más.
+- **"Throughput Over Time" salió del producto entero** (v1.2 §1.2). El escalar
+  `throughput` (req/s) del KPI y de la tabla resumen **NO** se tocó.
+- **"Response Time Over Time"** (promedio agregado) también salió: la fuente de
+  verdad es "Response Times por Transacción" con su serie dual promedio/máximo.
+- El bloque **"Análisis por Transacción Crítica"** se retiró en el HF-4 de las
+  cuatro salidas; su función se borró en la Etapa 6.5.
+- **Las conclusiones y recomendaciones por transacción no existen**: van una sola
+  vez, al final, sobre toda la prueba.
+
+**Control de capas (ETAPA 6, v1.2 §3).** "Response Times" es la **única** gráfica
+con serie dual (promedio sólido, máximo punteado, sufijo `' (max)'` en los dos
+lados del código). Lleva un selector "Ambas · Promedio · Máximo" en pantalla, en
+el HTML exportado y —vía `?capa=`— en el PDF. Ninguna otra gráfica lo lleva. En
+pantalla el tooltip pliega el máximo dentro de la fila de su promedio:
+`Auth  405 ms (máx. 414 ms)`.
+
+### `backend/app/services/export/report_generator.py` (1103 líneas)
 
 Módulo central que comparte generación de gráficas (matplotlib → base64) y
 construcción de HTML para el exportador PDF.
@@ -518,6 +670,16 @@ construcción de HTML para el exportador PDF.
   - Accent **Indigo `#4f46e5`** (estándar visual SQA).
 - **Helpers compartidos:** `chart_area()`, `chart_multiline()`, `chart_pie()`
   retornan imágenes base64 listas para `<img src="data:image/png;base64,...">`.
+- **`chart_multiline(..., dual_max=True, capa=…)`** — `capa` acepta `'ambas'`
+  (por defecto, el gráfico de siempre), `'promedio'` o `'maximo'`. Con `'maximo'`
+  la serie punteada **toma el nombre de su promedio** en la leyenda: si no, el
+  gráfico saldría sin leyenda y no habría forma de saber qué transacción es cada
+  línea. El color se asigna siempre, aunque la serie no se dibuje.
+- **`report_body_html` / `transaction_reports_html`** — el MISMO render pinta el
+  informe general y el de cada transacción (ETAPA 2, D21).
+- **`BODY_CHARTS`** es la lista única de gráficas del cuerpo, con las dos formas
+  de nombrar cada una. Su gemela en el HTML es `HTML_BODY_CHARTS`
+  (`export_html.py`): misma idea, otro motor de gráficas.
 
 ### `backend/app/api/v1/endpoints/export_html.py`
 
@@ -529,10 +691,16 @@ construcción de HTML para el exportador PDF.
 - `GET /executions/{id}/export/pdf` — WeasyPrint + matplotlib renderiza PDF
   desde el HTML de `build_pdf_html()`.
 
-### `backend/app/api/v1/endpoints/integrated_report.py` (1866 líneas)
+### `backend/app/api/v1/endpoints/integrated_report.py` (2236 líneas)
 
 Reporte integrado con drag-and-drop: combina secciones de varios reportes en
 un único documento.
+
+> **No pasa por los endpoints individuales**: construye sus bloques por
+> transacción llamando en proceso a `_build_transaction_reports` (PDF) y
+> `build_transaction_reports_plotly` (HTML). Por eso el **selector de
+> exportación no aplica aquí** (v1.2 §6), aunque sí hereda el control de capas
+> del HTML, porque comparte `_bloque_grafica_html`.
 
 - **`POST /reports/integrated/export-pdf`** y `…/export-html`.
 - **`_build_att_html(section, attachments, ai_analysis, title_prefix, for_pdf=False)`**:
@@ -696,16 +864,37 @@ Lee la primera línea no-vacía y devuelve `True` si empieza con `<?xml` o
 > Fredy. Cualquier cambio debe ser quirúrgico (1 fix por prompt, diff
 > mínimo, validación visual previa).
 
-| Archivo | Líneas |
+| Archivo | Líneas (2026-09-17) |
 |---|---|
-| `frontend/src/components/dashboard/Dashboard.tsx` | 1304 |
+| `frontend/src/components/dashboard/Dashboard.tsx` | 1045 |
 | `frontend/src/pages/ScriptDesigner.tsx` | 967 |
 | `backend/app/services/jtl/jtl_parser.py` | 515 |
 | `backend/app/services/engine/virtual_user.py` | 194 |
-| `backend/app/services/export/report_generator.py` | 940 |
+| `backend/app/services/export/report_generator.py` | 1103 |
+| `backend/app/api/v1/endpoints/export_html.py` | 1416 |
+| `backend/app/api/v1/endpoints/export_pdf.py` | 547 |
 | `backend/app/services/engine/` (carpeta completa) | — motor propio |
 
 **NO refactorizar sin autorización explícita de Fredy.**
+
+### Cómo se trabajó un protegido en el plan de corrección
+
+Las Etapas 2 a 6 tocaron varios de estos archivos con autorización explícita y
+alcance escrito. El método que funcionó, por si hace falta repetirlo:
+
+1. **Un diagnóstico read-only fija una estimación de líneas por archivo**, y una
+   condición de parada: superar la estimación en más de un 50 % obliga a avisar
+   antes de seguir.
+2. **La lógica nueva vive en módulos nuevos, no protegidos.** `Dashboard.tsx`
+   pasó de 1304 a 1045 líneas *ganando* funcionalidad, porque el cuerpo del
+   informe, la tabla y el diálogo de exportación salieron a `ReportBody.tsx`,
+   `SummaryTable.tsx` y `ExportScopeDialog.tsx`.
+3. **Cuando el umbral se cruza, se mira qué está engordando el archivo.** En la
+   Etapa 6.4, `export_html.py` se pasó por llevar dentro 25 líneas de JavaScript y
+   8 de CSS; salieron a `services/export/capas_html.py` y el archivo volvió a
+   entrar en presupuesto. Reporte 49.
+4. **Si hay que mover código, primero una extracción pura** con equivalencia
+   comprobada (condición C1), y los cambios funcionales después, en otro paso.
 
 ---
 
@@ -808,7 +997,36 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
 20. **`docs/ESPECIFICACION-informe.md` es la referencia única de cómo debe
     quedar el informe.** Todo cambio del informe se valida contra ese
     documento; si el cambio pedido contradice la especificación, se avisa
-    antes de implementarlo.
+    antes de implementarlo. Versión vigente: **v1.2**.
+21. **`sanitize_ai_text()` no basta: los textos pasan además por
+    `services/ai/estilo.py`** (ETAPA 3). El bloque de estilo único viaja **una
+    sola vez** por petición y los dos detectores —`detectar_estilo` y
+    `trazar_cifras`— **solo detectan y reportan**: no regeneran, no reescriben,
+    no bloquean y no llaman a la IA. Lo que encuentran sale como aviso ámbar en
+    pantalla (`AvisoEstilo.tsx`), no como corrección automática.
+22. **Las cifras se formatean en Python, no se le piden al modelo.** Los bloques
+    de datos se le entregan ya en formato español (`8.600` · `0,27%` ·
+    `1,1 segundos`): copiar es más fácil que reformatear.
+23. **El informe por transacción es el general, filtrado — y se pinta con el
+    MISMO componente.** `ReportBody.tsx` y `SummaryTable.tsx` se parametrizan por
+    alcance (`{kind:'general'}` o `{kind:'transaction', label}`). No se crea una
+    plantilla paralela: fue el origen del problema que la Etapa 2 vino a corregir.
+24. **Cada alcance guarda en su canal (condición C2).** El informe general en
+    `test_executions`; el de transacción en `transaction_chart_analyses`; el
+    integrado en los `overrides` de su sección. Cualquier cambio en la edición o
+    el autoguardado se valida con `cableado_c2.py` y `cableado_c2_integrado.py`.
+25. **Al probar, primero mirar si el endpoint persiste.** Si persiste, se usan
+    ejecuciones `E*` creadas para la prueba, nunca datos de Fredy (regla del
+    reporte 38). Y se trabaja sobre informes **ya generados** siempre que se
+    pueda: cada generación cuesta llamadas de IA reales.
+26. **`/auth/login` está limitado a 5 intentos por 15 minutos y por IP, y los
+    logins correctos TAMBIÉN consumen cupo.** Nunca reintentar en bucle: los
+    scripts reutilizan la sesión de `/tmp/e2e_sesion.json`. Ver el HF-3 (reporte
+    37) para lo que esto significa en producción.
+27. **Para acentuar archivos desde la línea de órdenes, `perl` en modo bytes.**
+    Con `-CSD` trata los bytes del argumento `-e` como Latin-1 y los vuelve a
+    codificar: deja `TransacciÃ³n`. Comprobar siempre después con
+    `grep -c "Ã" <archivos>`.
 
 ---
 
@@ -826,14 +1044,34 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
 
 ### Diferencias clave en servidor
 
-- El Dockerfile del frontend usa **target: production** (stage `AS production`
-  con nginx). El compose dev usa `target: builder` (Vite dev server). Este
-  cambio **vive solo en el servidor** — no se ha mergeado a `main`.
-- `frontend` expone `5173:80` (nginx interno escucha en 80).
 - `restart: always` en todos los servicios.
-- Puertos `postgres`, `influxdb`, `grafana` cerrados al host (acceso solo
-  vía red interna del compose).
 - CORS exacto sin wildcards; `ENVIRONMENT=production`.
+- El frontend de producción tiene que salir de la **última fase** del
+  `frontend/Dockerfile` (`FROM nginx:alpine`, **sin nombre**: no existe ningún
+  stage llamado `production`) y exponer `5173:80`. El override commiteado **no lo
+  consigue** — ver el aviso de §2. Que en el servidor funcione indica que alguien
+  lo editó a mano allí; ese cambio no está en el repositorio.
+
+> ### ⚠ Los puertos NO están cerrados
+>
+> `postgres` (5432), `influxdb` (8086), `grafana` (3000) **y `backend` (8001)**
+> quedan publicados en `0.0.0.0` tras la fusión de los dos compose. Comprobar en
+> el servidor con `docker port <contenedor>` y con las reglas del NSG de Azure.
+> Mientras siga así, `X-Forwarded-For` es falsificable por cualquiera que alcance
+> el 8001.
+
+### Antes de desplegar: leer el checklist
+
+`docs/reporte_claude_code/53_checklist_despliegue.md` reúne toda la deuda
+operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
+
+1. `docs/sql/etapa2_reasoning_effort.sql` en la base del servidor. **Sin esa
+   columna los informes salen en modo respaldo y no avisan.**
+2. Arreglar los puertos y el `target` del frontend en `docker-compose.prod.yml`,
+   verificando con `docker compose … config`.
+3. `up -d --build`: las Etapas 2, 3, 5 y 6 cambian backend **y** frontend.
+4. HF-3 (reporte 37) si el despliegue es multiusuario: hoy **cinco entradas en
+   quince minutos dejan a toda la plataforma sin acceso**.
 
 ### Credenciales
 
@@ -869,6 +1107,35 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
   a tablas existentes requieren `ALTER TABLE` manual o drop+recreate dev DB.
 - **`withCredentials: true` + `allow_credentials=True`** son obligatorios para
   que las cookies httpOnly + CSRF funcionen — CORS con `*` no es compatible.
-- **Frontend Dockerfile target:** dev usa `builder` (Vite con HMR), prod usa
-  `production` (nginx con build estático). El cambio de target es manual y
-  vive en el servidor.
+- **Frontend Dockerfile:** dev usa `target: builder` (Vite con HMR); producción
+  necesita la **última fase**, `FROM nginx:alpine`, que **no tiene nombre** (no
+  existe ningún stage `production`). El `docker-compose.prod.yml` commiteado no
+  la selecciona — ver el aviso de §2.
+- **Compose FUSIONA las listas, no las reemplaza.** `ports: []` y `volumes: []`
+  en un override **no borran nada**. Para cerrar un puerto hay que publicarlo en
+  una interfaz concreta (`127.0.0.1:5432:5432`). Verificar siempre con
+  `docker compose -f a.yml -f b.yml config` antes de creerse un override.
+
+### Del plan de corrección (Etapas 1-6)
+
+- **En desarrollo NO hace falta rebuild**: el backend corre `uvicorn --reload`
+  con `./backend` montado y el frontend es el dev server de Vite con `./frontend`
+  montado. Basta **Ctrl + Shift + R**. En el servidor **sí** hace falta.
+- **Una plantilla paralela siempre acaba divergiendo.** El informe por
+  transacción tenía la suya y por eso no se parecía al general; se arregló
+  parametrizando por *alcance* el MISMO componente. Vale igual en el backend:
+  `seleccion.py` y `capas_html.py` existen para que PDF y HTML no puedan
+  interpretar distinto el mismo parámetro.
+- **Meter JavaScript y CSS dentro de un endpoint lo engorda sin que se note.**
+  Si un archivo protegido se pasa de presupuesto, mirar primero *qué* lo está
+  engordando: en la Etapa 6 la respuesta era texto de JS y CSS, y sacarlo a un
+  módulo resolvió las dos cosas a la vez.
+- **Contar lo que se ve, no lo que se supone.** Las pruebas cuentan trazos del
+  SVG y comparan los PNG del PDF byte a byte. Tres comprobaciones de la Etapa 6
+  pasaban sin mirar nada: una buscaba una cadena que era un comentario HTML, otra
+  leía `inner_text` de nodos SVG (siempre vacío) y otra usaba una clave de
+  diccionario no única.
+- **Los scripts de prueba también dependen del producto.** Al acentuar los
+  títulos hubo que actualizar `hf4_check.py`, que los comparaba sin tilde.
+- **`perl -CSD` destroza el UTF-8** al sustituir desde la línea de órdenes: modo
+  bytes, y `grep -c "Ã"` después.
