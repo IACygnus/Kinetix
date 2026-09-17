@@ -30,6 +30,7 @@ import {
   shouldRotateLabels,
   MAX_SUFFIX,
 } from '../../config/chartConfig';
+import { Capa, CAPAS, idGrafica } from '../../hooks/useChartLayers';
 
 export type ReportScope =
   | { kind: 'general' }
@@ -41,9 +42,26 @@ interface CustomTooltipProps {
   label?: string;
   unit?: string;
   formatter?: (val: number) => string;
+  /** ETAPA 6 (D47): series apagadas desde la leyenda. Recharts ya las deja fuera
+   *  del payload, pero el filtro explicito hace la regla comprobable y protege
+   *  de un cambio de comportamiento de la libreria. */
+  ocultas?: Set<string>;
 }
 
-function CustomChartTooltip({ active, payload, label, unit = 'ms', formatter }: CustomTooltipProps) {
+/**
+ * ETAPA 6 (D47): UNA linea por transaccion, nunca dos.
+ *
+ * Antes la serie de maximos entraba en el payload como una serie mas y el
+ * tooltip listaba "Auth" y "Auth (max)" por separado — el duplicado que denuncia
+ * v1.2 §3. Ahora el maximo se pliega dentro de la fila de su promedio:
+ *
+ *   ambas capas   ->  Auth        422 ms (máx. 1.013 ms)
+ *   una sola capa ->  Auth        422 ms
+ *
+ * La deteccion es por sufijo `MAX_SUFFIX`, el mismo criterio que ya usa
+ * ScrollableLegend para descartarlas de la leyenda: una sola convencion.
+ */
+function CustomChartTooltip({ active, payload, label, unit = 'ms', formatter, ocultas }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
 
   const fmt = formatter || ((val: number) => {
@@ -53,20 +71,78 @@ function CustomChartTooltip({ active, payload, label, unit = 'ms', formatter }: 
     return CHART_TOOLTIP.formatCount(val);
   });
 
+  // Una entrada por transaccion, con sus dos capas dentro. `orden` conserva el
+  // orden de llegada para que dos transacciones con el mismo valor no bailen.
+  type FilaTooltip = { nombre: string; color: string; avg?: number; max?: number };
+  const filas = new Map<string, FilaTooltip>();
+  payload.forEach((p: any) => {
+    if (p.value == null) return;
+    const clave = String(p.dataKey ?? p.name ?? '');
+    const esMax = clave.endsWith(MAX_SUFFIX);
+    const base = esMax ? clave.slice(0, -MAX_SUFFIX.length) : clave;
+    if (ocultas?.has(base)) return;
+    const fila: FilaTooltip = filas.get(base) || { nombre: base, color: p.color };
+    if (esMax) fila.max = p.value; else { fila.avg = p.value; fila.color = p.color; }
+    filas.set(base, fila);
+  });
+
+  const items = Array.from(filas.values())
+    .sort((a, b) => (b.avg ?? b.max ?? 0) - (a.avg ?? a.max ?? 0));
+  if (items.length === 0) return null;
+
   return (
     <div className="bg-slate-900 text-white rounded-lg shadow-2xl border border-slate-700 p-3 max-w-xs">
       <p className="text-xl text-slate-400 mb-2 font-mono border-b border-slate-700 pb-1">{label}</p>
       <div className="space-y-1 max-h-48 overflow-y-auto">
-        {payload.filter((p: any) => p.value != null).sort((a: any, b: any) => (b.value || 0) - (a.value || 0)).map((entry: any, idx: number) => (
+        {items.map((fila, idx: number) => (
           <div key={idx} className="flex items-center justify-between gap-3 text-xl">
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
-              <span className="truncate text-slate-300">{entry.name || entry.dataKey}</span>
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: fila.color }} />
+              <span className="truncate text-slate-300">{fila.nombre}</span>
             </div>
-            <span className="font-mono font-semibold text-white flex-shrink-0">{fmt(entry.value)}</span>
+            <span className="font-mono font-semibold text-white flex-shrink-0">
+              {/* Sin promedio visible (capa "Máximo") se muestra solo el maximo,
+                  sin el rotulo: es el unico valor que hay en pantalla. */}
+              {fila.avg != null
+                ? `${fmt(fila.avg)}${fila.max != null ? ` (máx. ${fmt(fila.max)})` : ''}`
+                : fmt(fila.max as number)}
+            </span>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ===== SELECTOR DE CAPAS (ETAPA 6, D46) =====
+/**
+ * Selector segmentado "Ambas · Promedio · Máximo" de UNA grafica.
+ *
+ * Solo lo llevan las graficas con serie dual —hoy, Response Times— y se pinta
+ * en la cabecera, junto al titulo: `ChartYAxisZoom` puede devolver null cuando
+ * la serie tiene menos de 5 puntos, asi que el selector no puede colgar de el.
+ * Mismos colores que los botones de zoom para que lean como un solo juego de
+ * controles.
+ */
+function SelectorCapas({ valor, onChange }: { valor: Capa; onChange: (c: Capa) => void }) {
+  const base = 'text-xs px-2.5 py-1 border transition-colors';
+  return (
+    <div className="inline-flex rounded-lg overflow-hidden border border-gray-300" data-testid="selector-capas">
+      {CAPAS.map(({ valor: v, texto }, i) => (
+        <button
+          key={v}
+          onClick={() => onChange(v)}
+          aria-pressed={valor === v}
+          data-capa={v}
+          className={`${base} ${i > 0 ? 'border-l' : ''} border-y-0 border-r-0 ${
+            valor === v
+              ? 'bg-[#f5a623] text-[#0a1628] font-semibold'
+              : 'bg-white text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          {texto}
+        </button>
+      ))}
     </div>
   );
 }
@@ -215,6 +291,11 @@ export interface ReportBodyCtx {
     hiddenLines: Set<string>,
     setHiddenLines: React.Dispatch<React.SetStateAction<Set<string>>>,
   ) => void;
+  /** ETAPA 6 (D46-D48): control de capas por grafica. El estado vive en
+   *  Dashboard —ancestro comun de los dos alcances— porque al exportar hay que
+   *  leer la seleccion de todas las graficas de la pantalla. */
+  capaDe: (id: string) => Capa;
+  setCapa: (id: string, capa: Capa) => void;
 }
 
 export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: ReportBodyCtx }) {
@@ -232,26 +313,41 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
     hiddenLinesTPS, setHiddenLinesTPS,
     hiddenLinesCodes, setHiddenLinesCodes,
     minH, emitEdit, getYDomain, extractY, handleYRange, AnalysisBox, handleLegendClick,
+    capaDe, setCapa,
   } = ctx;
   // ETAPA 2 (D18/D21): el unico punto donde el alcance cambia lo que se pinta.
   // Todo lo demas es identico en general y en transaccion, que es justamente lo
   // que pide v1.2 §1: "el mismo informe general, filtrado".
   const esGeneral = scope.kind === 'general';
 
+  // ETAPA 6 (D46): Response Times es la unica grafica del producto con serie
+  // dual, asi que es la unica que lleva selector. Su id identifica alcance y
+  // grafica, y es el mismo que viaja al backend al exportar (D49).
+  const idRT = idGrafica(esGeneral ? 'general' : `tx:${(scope as any).label}`, 'rt');
+  const capaRT = capaDe(idRT);
+  const verPromedio = capaRT !== 'maximo';
+  const verMaximo = capaRT !== 'promedio';
+
   return (
           <div className="bg-white rounded-b-2xl shadow-lg p-6 space-y-10 border border-gray-200 border-t-0">
             {/* 1. Response Times */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-              <h3 className="text-3xl font-bold text-gray-800 mb-4 border-l-4 border-[#0a1628] pl-4">Response Times por Transaccion</h3>
+              {/* ETAPA 6 (D46): el selector de capas va en la cabecera, junto al titulo. */}
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <h3 className="text-3xl font-bold text-gray-800 border-l-4 border-[#0a1628] pl-4">Response Times por Transacción</h3>
+                {rtMaxLabels.length > 0 && <SelectorCapas valor={capaRT} onChange={(c) => setCapa(idRT, c)} />}
+              </div>
               <ResponsiveContainer width="100%" height={700}>
                 <LineChart data={responseTimesByLabel.data} margin={CHART_LAYOUT.padding}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                   <XAxis {...getXAxisProps(responseTimesByLabel.data.length, responseTimesByLabel.labels.length)} />
                   <YAxis tick={{ fontSize: 14 }} tickCount={10} domain={getYDomain('rtByLabel')} allowDataOverflow={true} label={{ value: 'Tiempo (ms)', angle: -90, position: 'insideLeft', style: { fontSize: 14 } }} />
-                  <Tooltip content={<CustomChartTooltip unit="ms" />} />
+                  <Tooltip content={<CustomChartTooltip unit="ms" ocultas={hiddenLinesResponseTimes} />} />
                   <Legend content={<ScrollableLegend hiddenLines={hiddenLinesResponseTimes} onToggle={(key) => handleLegendClick(key, hiddenLinesResponseTimes, setHiddenLinesResponseTimes)} onSetAll={setHiddenLinesResponseTimes} />} verticalAlign="bottom" />
+                  {/* ETAPA 6 (D46): la capa y la leyenda son ejes independientes — una
+                      transaccion apagada en la leyenda sigue apagada en cualquier capa. */}
                   {responseTimesByLabel.labels.map((label: string, idx: number) => (
-                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 3 }} isAnimationActive={false} />
+                    <Line key={label} type="monotone" dataKey={label} stroke={getColorForIndex(idx)} strokeWidth={1.5} dot={false} connectNulls hide={hiddenLinesResponseTimes.has(label) || !verPromedio} activeDot={{ r: 3 }} isAnimationActive={false} />
                   ))}
                   {/* GRAF1-B: maximo por transaccion — fina y punteada, mismo color que su promedio.
                       legendType="none" la excluye del payload de la leyenda (sin entrada duplicada);
@@ -260,7 +356,7 @@ export default function ReportBody({ scope, ctx }: { scope: ReportScope; ctx: Re
                     <Line key={`${label}${MAX_SUFFIX}`} type="monotone" dataKey={`${label}${MAX_SUFFIX}`}
                       stroke={getColorForIndex(responseTimesByLabel.labels.indexOf(label))} strokeWidth={0.8}
                       strokeDasharray="2 3" strokeOpacity={0.85} dot={false} connectNulls legendType="none"
-                      hide={hiddenLinesResponseTimes.has(label)} activeDot={{ r: 2 }} isAnimationActive={false} />
+                      hide={hiddenLinesResponseTimes.has(label) || !verMaximo} activeDot={{ r: 2 }} isAnimationActive={false} />
                   ))}
                 </LineChart>
               </ResponsiveContainer>

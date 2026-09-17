@@ -18,6 +18,7 @@ import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
 import ReportBody, { ReportBodyCtx } from './ReportBody';
 import SummaryTable, { SummaryRow } from './SummaryTable';
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
+import { ChartLayers } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
 
 // ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
 // transaccion se retiraron (v1.2 §1.1): van una sola vez al final del informe.
@@ -124,11 +125,15 @@ function seriesParaReportBody(label: string, series: any) {
  *  Es un componente propio porque cada bloque necesita su estado (leyendas
  *  plegadas y zoom de eje Y) y los hooks no pueden vivir dentro de un .map.
  *  Regla 16: todos los hooks, antes de cualquier return. */
-function BloqueGraficasTx({ label, series, secciones, guardarSeccion }: {
+function BloqueGraficasTx({ label, series, secciones, guardarSeccion, capas }: {
   label: string;
   series: any;
   secciones: Seccion[];
   guardarSeccion: (label: string, section: string, texto: string) => Promise<void>;
+  /** ETAPA 6 (D46-D48): el control de capas, instanciado una sola vez en
+   *  Dashboard para que al exportar se pueda leer la seleccion de toda la
+   *  pantalla, no solo la del bloque que se este mirando. */
+  capas: ChartLayers;
 }) {
   const [hiddenRT, setHiddenRT] = useState<Set<string>>(new Set());
   const [hiddenTPS, setHiddenTPS] = useState<Set<string>>(new Set());
@@ -212,6 +217,7 @@ function BloqueGraficasTx({ label, series, secciones, guardarSeccion }: {
     hiddenLinesCodes: hiddenCodes, setHiddenLinesCodes: setHiddenCodes,
     minH: Math.max(CHART_LAYOUT.minHeight, 700),   // el mismo alto que el general
     emitEdit, getYDomain, extractY, handleYRange, AnalysisBox, handleLegendClick,
+    capaDe: capas.capaDe, setCapa: capas.setCapa,
   };
 
   return <ReportBody scope={{ kind: 'transaction', label }} ctx={ctx} />;
@@ -262,12 +268,14 @@ function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: 
   );
 }
 
-export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0 }: {
+export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0, capas }: {
   executionId: string;
   /** ETAPA 2 (D15): las filas de by_label que Dashboard ya pidio a /charts. Se pasan
    *  en vez de volver a pedir el endpoint entero (850 KB) solo para una fila. */
   byLabel?: SummaryRow[];
   durationSeconds?: number;
+  /** ETAPA 6 (D46-D48): se recibe de Dashboard y se reparte a cada bloque. */
+  capas: ChartLayers;
 }) {
   const [labels, setLabels] = useState<string[]>([]);
   const [abierta, setAbierta] = useState<string | null>(null);
@@ -602,6 +610,7 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
                         series={est.series}
                         secciones={secciones}
                         guardarSeccion={guardarSeccion}
+                        capas={capas}
                       />
                     )}
                   </div>

@@ -45,12 +45,20 @@ export const CHART_LEGEND = {
   iconSize: 12,
 };
 
+// ETAPA 6 (D47): formato español EXPLICITO, no el del navegador. Con
+// `toLocaleString(undefined, ...)` el mismo informe se veia "1,013.00 ms" o
+// "1.013,00 ms" segun la maquina; el informe es en español y sus cifras tambien
+// (miles con punto, decimales con coma), como pide v1.2 §4.
+const ES = 'es-CO';
+
 export const CHART_TOOLTIP = {
   enabled: true,
-  formatMs: (val: number) => `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ms`,
-  formatTps: (val: number) => `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} req/s`,
-  formatPercent: (val: number) => `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
-  formatCount: (val: number) => val.toLocaleString(),
+  // Los milisegundos van sin decimales: dos decimales de milisegundo es
+  // precision inventada y ensucia la linea del tooltip ("422 ms (máx. 1.013 ms)").
+  formatMs: (val: number) => `${val.toLocaleString(ES, { maximumFractionDigits: 0 })} ms`,
+  formatTps: (val: number) => `${val.toLocaleString(ES, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} req/s`,
+  formatPercent: (val: number) => `${val.toLocaleString(ES, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
+  formatCount: (val: number) => val.toLocaleString(ES),
 };
 
 export const CHARTS_SPEC = {

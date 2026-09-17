@@ -11,6 +11,7 @@ import ReportBody from './ReportBody';   // ETAPA 2 (D21): el cuerpo del informe
 import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
+import { useChartLayers } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
 import {
   CHART_LAYOUT,
   getCodeColor,
@@ -102,6 +103,11 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   const [hiddenLinesResponseTimes, setHiddenLinesResponseTimes] = useState<Set<string>>(new Set());
   const [hiddenLinesCodes, setHiddenLinesCodes] = useState<Set<string>>(new Set());
   const [hiddenLinesTPS, setHiddenLinesTPS] = useState<Set<string>>(new Set());
+
+  // ETAPA 6 (D46-D48): capas promedio/maximo por grafica. Vive aqui, que es el
+  // ancestro comun del informe general y de los bloques por transaccion, porque
+  // al exportar hay que mandar la seleccion de TODA la pantalla (D49).
+  const capas = useChartLayers();
 
   // KNX-10: Collapsible charts
   const [chartsExpanded, setChartsExpanded] = useState(true);
@@ -908,6 +914,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               hiddenLinesTPS, setHiddenLinesTPS,
               hiddenLinesCodes, setHiddenLinesCodes,
               minH, emitEdit, getYDomain, extractY, handleYRange, AnalysisBox, handleLegendClick,
+              capaDe: capas.capaDe, setCapa: capas.setCapa,
             }} />
           )}
         </div>
@@ -921,6 +928,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             executionId={executionId}
             byLabel={charts.by_label || []}
             durationSeconds={execution.duration_seconds}
+            capas={capas}
           />
         )}
 
