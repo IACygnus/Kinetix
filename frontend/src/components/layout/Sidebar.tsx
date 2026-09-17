@@ -28,6 +28,10 @@ import {
   GitCompare,
   Sparkles,
   Code,
+  // MODULO DE HORAS (ETAPA H1)
+  Clock,
+  FolderKanban,
+  ListChecks,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -141,6 +145,24 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Historial Integrado',
           path: '/performance/integrated/history',
           icon: <ClipboardList className="w-6 h-6" />,
+        },
+      ],
+    },
+    {
+      // MODULO DE HORAS (ETAPA H1, H-D10). Sin `roles`: en horas todos ven todo
+      // (§8). Registro, Consulta, Reportes e Importacion se anaden en H2-H4.
+      label: 'Horas',
+      icon: <Clock className="w-7 h-7" />,
+      children: [
+        {
+          label: 'Proyectos',
+          path: '/horas/proyectos',
+          icon: <FolderKanban className="w-6 h-6" />,
+        },
+        {
+          label: 'Actividades',
+          path: '/horas/actividades',
+          icon: <ListChecks className="w-6 h-6" />,
         },
       ],
     },
