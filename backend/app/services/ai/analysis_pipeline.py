@@ -181,6 +181,7 @@ async def run_ai_and_verdict(
             gemini.analyze_errors,
             errors_for_analysis, metrics['total_requests'], test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_errors is None:
             logger.info("Using FALLBACK for errors")
@@ -210,6 +211,7 @@ async def run_ai_and_verdict(
             gemini.analyze_chart,
             'response_times', "\n".join(rt_lines), test_type=test_type, insights=insights,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_response_times is None:
             logger.info("Using FALLBACK for response_times")
@@ -241,6 +243,7 @@ async def run_ai_and_verdict(
             f"Volumen enviado: {kbs(metrics.get('kb_per_sec_sent', 0))}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_latency is None:
             logger.info("Using FALLBACK for latency")
@@ -255,6 +258,7 @@ async def run_ai_and_verdict(
             f"Duracion de la prueba: {num(metrics['duration_seconds'])} segundos.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_error_rate is None:
             logger.info("Using FALLBACK for error_rate")
@@ -272,6 +276,7 @@ async def run_ai_and_verdict(
             f"Codigos de respuesta acumulados de la prueba: {codes_summary}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_codes_per_second is None:
             logger.info("Using FALLBACK for codes_per_second")
@@ -289,6 +294,7 @@ async def run_ai_and_verdict(
             f"{len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_transactions_per_second is None:
             logger.info("Using FALLBACK for transactions_per_second")
@@ -302,6 +308,7 @@ async def run_ai_and_verdict(
             f"Tiempo promedio de respuesta en toda la ventana: {ms(metrics.get('avg_response_time', 0))}.",
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
+            acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
         )
         if ai_analysis_active_threads is None:
             logger.info("Using FALLBACK for active_threads")

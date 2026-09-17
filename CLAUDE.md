@@ -997,7 +997,7 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
 20. **`docs/ESPECIFICACION-informe.md` es la referencia única de cómo debe
     quedar el informe.** Todo cambio del informe se valida contra ese
     documento; si el cambio pedido contradice la especificación, se avisa
-    antes de implementarlo. Versión vigente: **v1.2**.
+    antes de implementarlo. Versión vigente: **v1.3**.
 21. **`sanitize_ai_text()` no basta: los textos pasan además por
     `services/ai/estilo.py`** (ETAPA 3). El bloque de estilo único viaja **una
     sola vez** por petición y los dos detectores —`detectar_estilo` y

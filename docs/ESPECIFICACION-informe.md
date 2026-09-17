@@ -1,6 +1,6 @@
 # Especificación funcional del informe — Kinetix Pro
 
-**Versión 1.2 · Aprobada por Fredy Bonilla**
+**Versión 1.3 · Aprobada por Fredy Bonilla**
 
 Referencia única de cómo debe quedar el informe. Todo prompt de desarrollo se valida
 contra este documento, no contra mensajes anteriores.
@@ -86,11 +86,21 @@ prueba. Es la misma definición que usa la tabla resumen del informe
 
 El bloque desplegable "Criterios por Transaccion" que hoy vive aparte **desaparece**.
 
-Cada fila de la tabla se despliega y muestra los criterios de aceptación de esa
-transacción (concurrencia, tiempo de respuesta, disponibilidad), editables. Al
-cambiarlos, **la criticidad de esa transacción se recalcula de inmediato**.
+**Cada fila tiene un botón "Criterios" en la última columna que despliega sus
+criterios**: concurrencia, tiempo de respuesta y disponibilidad, editables. El
+botón dice de un vistazo con qué se evalúa esa fila — **"Globales"** si no tiene
+valores propios, **"Propios"** si los tiene. Al cambiarlos, **la criticidad de esa
+transacción se recalcula de inmediato**. Pueden quedar varias filas abiertas a la
+vez.
 
 Sin criterios propios, se evalúa con los globales.
+
+**La IA usa esos mismos criterios.** En los análisis de una transacción se le
+entrega el límite que se le aplica —el propio si lo tiene, el general si no—
+diciéndole cuál de los dos es. En los análisis del informe general se le entregan
+los criterios globales más la lista de las transacciones que tienen criterio
+propio, con sus valores, para que el texto no pueda contradecir la tabla de
+veredictos.
 
 ---
 
@@ -204,3 +214,4 @@ integrado (PDF y HTML), con la excepción indicada en §6 para el selector de ex
 |---|---|
 | 1.1 | Versión aprobada inicial |
 | 1.2 | Definición de TPS (§2.1) · selector de exportación solo en individuales (§6, §7) · validación por etapa completa (§8) |
+| 1.3 | Botón "Criterios" por fila (§2.2) · la IA usa los criterios efectivos de cada transacción (§2.2) |

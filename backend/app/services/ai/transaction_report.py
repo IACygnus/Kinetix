@@ -43,6 +43,9 @@ from app.services.ai.gemini import (
 # `BLOQUE_ESTILO`, que llega a los diecinueve prompts por igual.
 from app.services.ai.estilo import num as _n
 from app.services.ai.estilo import ms, percentil_frase, pct, veces
+# ETAPA 5b (D55): el umbral efectivo de ESTA transaccion —el suyo propio o el
+# general— resuelto con la MISMA regla que usa la tabla de veredictos.
+from app.services.ai.criterios import bloque_de_transaccion
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +123,21 @@ def _serie_digest(series: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any], test_type: str = "load") -> Dict[str, str]:
+def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
+                          test_type: str = "load",
+                          acceptance_criteria: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """Los prompts de una transaccion, con SUS metricas reales.
 
     ETAPA 3 (D33/D34): las cifras siguen saliendo formateadas a la espanola —
     eso ya funcionaba —, los percentiles pasan a entregarse como la frase de
     usuario completa, y el bloque de estilo deja de repetirse aqui: lo pone
     `_generate` una sola vez por llamada.
+
+    ETAPA 5b (D55): `acceptance_criteria` son los criterios de la ejecucion
+    ENTEROS; `bloque_de_transaccion` resuelve cual le toca a esta —el suyo propio
+    si lo tiene, el general si no— y lo dice en el prompt. Sin criterios, o con
+    criterios en prosa (`raw_text`), devuelve cadena vacia y los seis prompts
+    salen exactamente como antes de esta etapa.
     """
     avg, mx = float(m.get("promedio", 0) or 0), float(m.get("max", 0) or 0)
     ratio = veces(mx / avg) + " su promedio" if avg > 0 else "sin promedio de referencia"
@@ -142,7 +153,8 @@ LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
 - {percentil_frase(50, m.get('mediana', 0))}
 - {percentil_frase(90, m.get('p90', 0))}
 - {percentil_frase(95, m.get('p95', 0))}
-- {percentil_frase(99, m.get('p99', 0))}"""
+- {percentil_frase(99, m.get('p99', 0))}
+{bloque_de_transaccion(acceptance_criteria, label)}"""
 
     prompts: Dict[str, str] = {}
     for section in SECTIONS_GENERADAS:   # ETAPA 2 (D20): ya no se arman los 8
@@ -199,6 +211,7 @@ async def _upsert(db, execution_id, label: str, section: str, texto: Optional[st
 async def generate_transaction_report(
     db, execution_id, label: str, metrics: Dict[str, Any], series: Dict[str, Any],
     test_type: str = "load", analyzer=None, sections: Optional[List[str]] = None,
+    acceptance_criteria: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Genera y persiste las secciones. Nunca lanza por un fallo de IA.
 
@@ -212,7 +225,8 @@ async def generate_transaction_report(
     """
     objetivo = [s for s in SECTIONS_GENERADAS if not sections or s in sections]
     counters = {"total": len(objetivo), "generated": 0, "failed": 0}
-    prompts = build_section_prompts(label, metrics, series, test_type)
+    # ETAPA 5b (D55): los criterios de la ejecucion entran en los seis prompts.
+    prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria)
 
     if analyzer is None:
         try:

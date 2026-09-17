@@ -67,6 +67,12 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
     tiempo,
     veces,
 )
+# ETAPA 5b (D55): la resolucion del umbral efectivo de cada transaccion vive en
+# un solo sitio, y este modulo la usa tanto para calcular los veredictos como
+# para contarselos a los prompts.
+from app.services.ai.criterios import (
+    bloque_completo, bloque_general, criterios_efectivos,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -448,16 +454,14 @@ def compute_per_transaction_verdicts(
     if acceptance_criteria is None or acceptance_criteria.get('raw_text'):
         return {}
 
-    global_rt = float(acceptance_criteria.get('response_time', 2000))
-    global_avail = float(acceptance_criteria.get('availability', 99.0))
-    per_txn = acceptance_criteria.get('per_transaction', {})
-
     verdicts = {}
     for _, row in summary_df.iterrows():
         label = row['label']
-        txn_criteria = per_txn.get(label, {})
-        rt_threshold = float(txn_criteria.get('response_time', global_rt))
-        er_threshold = 100.0 - float(txn_criteria.get('availability', global_avail))
+        # ETAPA 5b (D55): la misma resolucion que reciben los prompts. Antes se
+        # calculaba aqui a mano; ahora sale de `criterios.py`, para que el texto
+        # de la IA y esta tabla no puedan hablar de umbrales distintos.
+        rt_threshold, avail_threshold, _propios = criterios_efectivos(acceptance_criteria, label)
+        er_threshold = 100.0 - avail_threshold
 
         p90 = float(row['p90'])
         error_rate = float(row['tasa_error'])
@@ -1378,6 +1382,8 @@ class GeminiAnalyzer:
                     criteria_text += f"- Tiempo de respuesta maximo aceptable: {ms(acceptance_criteria['response_time'])}\n"
                 if acceptance_criteria.get("availability"):
                     criteria_text += f"- Disponibilidad minima: {pct(acceptance_criteria['availability'], 1)}\n"
+                # ETAPA 5b (D55): las que NO se miden con ese criterio.
+                criteria_text += bloque_general(acceptance_criteria)
 
             logger.info(f"Enviando {len(summary_df)} transacciones a Gemini para analisis de tabla resumen")
 
@@ -1431,6 +1437,7 @@ eso va en las conclusiones del informe.
         test_type: str = "load",
         test_date: str = "N/A",
         metric_unit: str = "TPS",
+        acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
     ) -> Optional[str]:
         """Analisis detallado de errores por transaccion y codigo HTTP"""
         if not error_data or len(error_data) == 0:
@@ -1488,7 +1495,7 @@ CONTEXTO:
 - Total de peticiones: {num(total_requests)}
 - Transacciones con errores: {len(error_data)}
 - Codigos de respuesta distintos: {len(error_by_code)}
-
+{bloque_completo(acceptance_criteria)}
 Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
 con error. NO repitas la tabla: interpreta lo que dice.
 
@@ -1515,6 +1522,7 @@ trabajo: eso va en las conclusiones y recomendaciones del informe.
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
         metric_unit: str = "TPS",
+        acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
     ) -> Optional[str]:
         """Analisis de graficos individuales con contexto del tipo de prueba"""
         try:
@@ -1571,7 +1579,7 @@ Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas 
 
 DATOS DE LA GRAFICA "{chart_name}":
 {data_summary}
-{tier_context}
+{tier_context}{bloque_completo(acceptance_criteria)}
 Escribe el analisis de esta grafica. Maximo 130 palabras.
 NO repitas los datos: interpreta lo que muestran.
 
@@ -1696,7 +1704,7 @@ CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
 IMPORTANTE: tu primera conclusion DEBE ser ese resultado, "{verdict}", comparando
 las cifras contra estos criterios. Si es NO APTO, di que criterios se incumplen.
 Si es APTO CON RESERVAS, di que cifras quedan cerca del limite.
-"""
+{bloque_general(acceptance_criteria)}"""
 
             prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}
@@ -1815,7 +1823,7 @@ CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
 - Disponibilidad minima: {pct(acceptance_criteria.get('availability', 0), 1)}
 
 Las recomendaciones tienen que apuntar a cumplir esos criterios concretos.
-"""
+{bloque_general(acceptance_criteria)}"""
 
             prompt = f"""{get_metric_unit_instruction(metric_unit)}
 {test_ctx}

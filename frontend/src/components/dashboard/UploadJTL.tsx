@@ -618,14 +618,16 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
                 {/* ETAPA 5 (D39): las columnas de v1.2 §2.1 — sin p90 ni Max, con TPS. */}
                 <table className="w-full text-sm">
                   <thead className="text-xs uppercase text-gray-500 border-b border-gray-200">
+                    {/* ETAPA 5b (D54): sale la flecha de la izquierda y entra una
+                        ultima columna "Criterios" con un boton por fila. */}
                     <tr>
                       <th className="py-2 pr-2 text-left w-8"></th>
-                      <th className="py-2 pr-1 text-left w-6"></th>
                       <th className="py-2 pr-2 text-left">Transacción</th>
                       <th className="py-2 px-2 text-right">Muestras</th>
                       <th className="py-2 px-2 text-right">Promedio</th>
                       <th className="py-2 px-2 text-right">TPS</th>
-                      <th className="py-2 pl-2 text-right">Errores</th>
+                      <th className="py-2 px-2 text-right">Errores</th>
+                      <th className="py-2 pl-2 text-center">Criterios</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -643,15 +645,6 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
                                 onChange={e => setManualSel(prev => ({ ...prev, [t.label]: e.target.checked }))}
                                 className="w-4 h-4 accent-[#f5a623] cursor-pointer" />
                             </td>
-                            {/* D40: cada fila se despliega, y pueden estar abiertas varias a la vez. */}
-                            <td className="py-2 pr-1 align-top">
-                              <button type="button" aria-label={`Criterios de ${t.label}`}
-                                aria-expanded={abierta}
-                                onClick={() => setFilasAbiertas(p => ({ ...p, [t.label]: !p[t.label] }))}
-                                className="text-gray-400 hover:text-gray-700">
-                                {abierta ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                              </button>
-                            </td>
                             <td className="py-2 pr-2">
                               <span className="font-medium text-gray-700">{t.label}</span>
                               {esCritica && (
@@ -667,8 +660,28 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
                             <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.muestras)}</td>
                             <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.promedio)} ms</td>
                             <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt2(t.tps)}</td>
-                            <td className="py-2 pl-2 text-right tabular-nums text-gray-600">
+                            <td className="py-2 px-2 text-right tabular-nums text-gray-600">
                               {fmt(t.errores)} <span className="text-gray-400">({fmt2(t.tasa_error)}%)</span>
+                            </td>
+                            {/* ETAPA 5b (D54): el boton dice de un vistazo con que se
+                                evalua la fila, y es lo que abre sus criterios. D40 sigue
+                                en pie: pueden estar varias filas abiertas a la vez. */}
+                            <td className="py-2 pl-2 text-center">
+                              <button type="button"
+                                data-testid="boton-criterios"
+                                data-tx={t.label}
+                                data-estado={conPropios ? 'propios' : 'globales'}
+                                aria-label={`Criterios de ${t.label}`}
+                                aria-expanded={abierta}
+                                onClick={() => setFilasAbiertas(p => ({ ...p, [t.label]: !p[t.label] }))}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors ${
+                                  conPropios
+                                    ? 'border-indigo-300 bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                                    : 'border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}>
+                                {conPropios ? 'Propios' : 'Globales'}
+                                {abierta ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                              </button>
                             </td>
                           </tr>
                           {abierta && (
