@@ -155,6 +155,35 @@ export interface TransactionMetrics {
   motivo: string;
 }
 
+/**
+ * ETAPA 6 (D49-D51): que incluye un informe exportado.
+ *
+ *  - `tx` sin definir  -> el parametro no viaja: TODAS las transacciones, que es
+ *    lo que hacen hoy los dos botones y lo que sigue haciendo cualquier llamada
+ *    que no pase opciones.
+ *  - `tx: []`          -> viaja `?tx=` vacio: SOLO el informe general.
+ *  - `tx: ['Auth']`    -> viaja `?tx=Auth`: el general mas esa.
+ *  - `capas`           -> `?capa=<idGrafica>:<valor>` por cada grafica que no
+ *    este en "Ambas" (lo que devuelve `capasComoParams`).
+ */
+export interface ExportOpciones {
+  tx?: string[] | null;
+  capas?: string[];
+}
+
+function exportQuery(o?: ExportOpciones): string {
+  const p = new URLSearchParams();
+  if (o?.tx != null) {
+    // La lista vacia manda un `tx` vacio a proposito: es como se distingue
+    // "solo el general" de "no se pidio nada" (el backend lee los dos casos).
+    if (o.tx.length === 0) p.append('tx', '');
+    else o.tx.forEach((t) => p.append('tx', t));
+  }
+  (o?.capas || []).forEach((c) => p.append('capa', c));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
 export const testAPI = {
   extractJTLLabels: async (file: File): Promise<{ labels: string[]; count: number }> => {
     const formData = new FormData();
@@ -252,15 +281,15 @@ export const testAPI = {
     return response.data;
   },
 
-  exportHTML: async (id: string) => {
-    const response = await api.get(`/executions/${id}/export/html`, {
+  exportHTML: async (id: string, opciones?: ExportOpciones) => {
+    const response = await api.get(`/executions/${id}/export/html${exportQuery(opciones)}`, {
       responseType: 'blob',
     });
     return response.data;
   },
 
-  exportPDF: async (id: string) => {
-    const response = await api.get(`/executions/${id}/export/pdf`, {
+  exportPDF: async (id: string, opciones?: ExportOpciones) => {
+    const response = await api.get(`/executions/${id}/export/pdf${exportQuery(opciones)}`, {
       responseType: 'blob',
     });
     return response.data;

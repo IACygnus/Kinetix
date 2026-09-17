@@ -2,12 +2,12 @@
 Export PDF endpoint – thin wrapper around report_generator.
 Parses JTL, builds charts + HTML via the shared module, renders PDF with WeasyPrint.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -29,6 +29,9 @@ from app.services.export.report_generator import (
     TRANSACTION_CHARTS,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
+# ETAPA 6 (D50/D51): que transacciones entran en el documento. Vive aparte para
+# que las dos salidas individuales lean el parametro con el mismo codigo.
+from app.services.export.seleccion import filtrar_transacciones, seleccion_de_query
 
 try:
     from weasyprint import HTML
@@ -176,7 +179,7 @@ def _criticidad(metrics, marcada):
     return ' &middot; '.join(partes)
 
 
-async def _build_transaction_reports(db, execution, df, statistics):
+async def _build_transaction_reports(db, execution, df, statistics, seleccion=None):
     """N4.8: los bloques de mini-informe que van al PDF, uno por transaccion.
 
     Fuente de las transacciones: las que TIENEN texto en
@@ -191,6 +194,11 @@ async def _build_transaction_reports(db, execution, df, statistics):
 
     Cualquier fallo de una transaccion la deja fuera y sigue con las demas: un
     mini-informe no puede tumbar la generacion del PDF completo.
+
+    ETAPA 6 (D50/D51): `seleccion` es lo que eligio Fredy en el dialogo de
+    exportacion — `None` todas (lo de siempre), `[]` solo el informe general, o
+    la lista de las que marco. Se aplica DESPUES de calcular el orden, para que
+    quitar una transaccion no reordene las otras.
     """
     from app.db.models.transaction_chart_analysis import (
         TransactionChartAnalysis,
@@ -205,6 +213,9 @@ async def _build_transaction_reports(db, execution, df, statistics):
         .order_by(TransactionChartAnalysis.sort_order)
     )).scalars().all()
     if not filas:
+        # Sin ninguna fila, cualquier transaccion pedida es desconocida: 400, no
+        # un PDF silenciosamente incompleto (D51).
+        filtrar_transacciones([], seleccion)
         return []
 
     # Orden de aparicion estable: el de la tabla resumen, que es el que el lector
@@ -223,6 +234,10 @@ async def _build_transaction_reports(db, execution, df, statistics):
         [lb for lb, sec in textos.items() if any(sec.values())],
         key=lambda lb: (orden.get(lb, len(orden)), lb),
     )
+    # La validacion va contra las etiquetas CON analisis: pedir una que no lo
+    # tenga es un 400 (D51), y se comprueba antes de decidir si hay algo que
+    # pintar para que el error no dependa de si la ejecucion trae bloques.
+    etiquetas = filtrar_transacciones(etiquetas, seleccion)
     if not etiquetas:
         return []
 
@@ -278,10 +293,16 @@ async def _check_execution_access(db: AsyncSession, user: User, execution) -> No
 @router.get("/executions/{execution_id}/export/pdf")
 async def export_pdf(
     execution_id: str,
+    tx: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Export professional PDF report with charts and AI analysis."""
+    """Export professional PDF report with charts and AI analysis.
+
+    ETAPA 6 (D50/D51): `?tx=<label>` repetido elige que informes por transaccion
+    entran. Sin el parametro entran todas —el PDF de siempre—; con `?tx=` vacio,
+    solo el informe general.
+    """
 
     if not WEASYPRINT_AVAILABLE:
         raise HTTPException(status_code=500, detail="WeasyPrint no disponible en el servidor")
@@ -460,7 +481,8 @@ async def export_pdf(
         # Sin mini-informes la lista queda vacia, el bloque no se pinta y el PDF
         # sale identico al de siempre (mismo criterio que N1.6 y N3.5).
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
-        meta['transaction_reports'] = await _build_transaction_reports(db, execution, _df_tx, statistics)
+        meta['transaction_reports'] = await _build_transaction_reports(
+            db, execution, _df_tx, statistics, seleccion_de_query(tx))
 
         html_content = build_pdf_html(meta, statistics, redirect_stats, ia, charts_b64)
 

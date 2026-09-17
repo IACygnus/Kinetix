@@ -11,7 +11,8 @@ import ReportBody from './ReportBody';   // ETAPA 2 (D21): el cuerpo del informe
 import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
-import { useChartLayers } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
+import { useChartLayers, capasComoParams } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
+import ExportScopeDialog, { FormatoExport, SeleccionExport } from './ExportScopeDialog';   // ETAPA 6 (D50)
 import {
   CHART_LAYOUT,
   getCodeColor,
@@ -108,6 +109,9 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   // ancestro comun del informe general y de los bloques por transaccion, porque
   // al exportar hay que mandar la seleccion de TODA la pantalla (D49).
   const capas = useChartLayers();
+
+  // ETAPA 6 (D50): que formato se pidio exportar; null = dialogo cerrado.
+  const [dialogoExport, setDialogoExport] = useState<FormatoExport | null>(null);
 
   // KNX-10: Collapsible charts
   const [chartsExpanded, setChartsExpanded] = useState(true);
@@ -284,9 +288,9 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     }
   };
 
-  const handleExportHTML = async () => {
+  const handleExportHTML = async (tx: SeleccionExport) => {
     try {
-      const blob = await testAPI.exportHTML(executionId!);
+      const blob = await testAPI.exportHTML(executionId!, { tx, capas: capasComoParams(capas.capas) });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -301,13 +305,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     }
   };
 
-  const handleExportPDF = async () => {
+  const handleExportPDF = async (tx: SeleccionExport) => {
     setIsExportingPDF(true);
     setPdfProgress(10);
 
     try {
       setPdfProgress(30);
-      const blob = await testAPI.exportPDF(executionId!);
+      const blob = await testAPI.exportPDF(executionId!, { tx, capas: capasComoParams(capas.capas) });
       setPdfProgress(90);
 
       const url = window.URL.createObjectURL(blob);
@@ -1000,11 +1004,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             <Save className="w-7 h-7" />
             {saving ? 'Guardando...' : 'Guardar Todos los Cambios'}
           </button>
-          <button onClick={handleExportHTML} disabled={isExportingPDF} className="flex items-center gap-3 px-10 py-4 bg-sqa-gold text-sqa-navy text-xl font-bold rounded-2xl shadow-lg hover:bg-sqa-gold-light transition-all disabled:opacity-50">
+          {/* ETAPA 6 (D50): los dos botones abren el dialogo de alcance; quien
+              exporta es su callback. Cancelar no exporta nada. */}
+          <button onClick={() => setDialogoExport('html')} disabled={isExportingPDF} className="flex items-center gap-3 px-10 py-4 bg-sqa-gold text-sqa-navy text-xl font-bold rounded-2xl shadow-lg hover:bg-sqa-gold-light transition-all disabled:opacity-50">
             <FileCode className="w-7 h-7" />
             Exportar HTML
           </button>
-          <button onClick={handleExportPDF} disabled={isExportingPDF} className="flex items-center gap-3 px-10 py-4 bg-sqa-gold text-sqa-navy text-xl font-bold rounded-2xl shadow-lg hover:bg-sqa-gold-light transition-all disabled:opacity-50 relative overflow-hidden">
+          <button onClick={() => setDialogoExport('pdf')} disabled={isExportingPDF} className="flex items-center gap-3 px-10 py-4 bg-sqa-gold text-sqa-navy text-xl font-bold rounded-2xl shadow-lg hover:bg-sqa-gold-light transition-all disabled:opacity-50 relative overflow-hidden">
             {isExportingPDF ? (
               <><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-sqa-navy"></div><span>Generando... {pdfProgress}%</span></>
             ) : (
@@ -1012,6 +1018,19 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             )}
           </button>
         </div>}
+
+        {/* ETAPA 6 (D50): el dialogo pide su propia lista de transacciones y
+            decide solo; aqui solo se dice que formato se pulso. */}
+        <ExportScopeDialog
+          executionId={executionId}
+          formato={dialogoExport}
+          onCancelar={() => setDialogoExport(null)}
+          onExportar={(sel) => {
+            const f = dialogoExport;
+            setDialogoExport(null);
+            if (f === 'pdf') handleExportPDF(sel); else if (f === 'html') handleExportHTML(sel);
+          }}
+        />
 
         {!embedded && (
         <div className="text-center text-gray-500 text-xl py-8 border-t border-gray-200">

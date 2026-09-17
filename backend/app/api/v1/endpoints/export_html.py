@@ -2,12 +2,12 @@
 Export HTML endpoint – standalone HTML with interactive Plotly.js charts.
 Plotly.js loaded from CDN. Full interactivity: hover, zoom, pan, toggle series.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import uuid
 import json
 import re
@@ -27,6 +27,9 @@ from app.services.export.high_cardinality_strategy import apply_top_n_aggregatio
 from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
 from app.services.export.report_generator import TRANSACTION_CHARTS   # N4.8/N4.9
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
+# ETAPA 6 (D50/D51): mismo lector de parametros que el PDF — una sola definicion
+# de que significa `?tx=` para las dos salidas individuales.
+from app.services.export.seleccion import filtrar_transacciones, seleccion_de_query
 # ExecutionAttachment removed — individual exports no longer include monitoring/evidence
 
 router = APIRouter()
@@ -50,7 +53,7 @@ _TX_SIN_TEXTO = ('<em style="color:#94a3b8">Esta grafica forma parte del informe
                  'transaccion pero su texto no se genero (fallo o quedo pendiente).</em>')
 
 
-async def build_transaction_reports_plotly(db, execution, df, statistics):
+async def build_transaction_reports_plotly(db, execution, df, statistics, seleccion=None):
     """N4.9: los mini-informes de una ejecucion, con traces de Plotly.
 
     Gemela de `_build_transaction_reports` (N4.8, export_pdf.py) y con el MISMO
@@ -64,6 +67,10 @@ async def build_transaction_reports_plotly(db, execution, df, statistics):
     en vez de PNG de matplotlib, porque el HTML es interactivo.
 
     Sin filas devuelve [] y el bloque no se pinta.
+
+    ETAPA 6 (D50/D51): `seleccion` es lo que eligio Fredy en el dialogo —`None`
+    todas (lo de siempre), `[]` solo el informe general, o la lista marcada— y se
+    interpreta con el MISMO codigo que el PDF (`services/export/seleccion.py`).
     """
     from app.db.models.transaction_chart_analysis import (
         TransactionChartAnalysis,
@@ -79,6 +86,9 @@ async def build_transaction_reports_plotly(db, execution, df, statistics):
         .order_by(TransactionChartAnalysis.sort_order)
     )).scalars().all()
     if not filas:
+        # Sin ninguna fila, cualquier transaccion pedida es desconocida: 400, no
+        # un HTML silenciosamente incompleto (D51).
+        filtrar_transacciones([], seleccion)
         return []
 
     textos = {}
@@ -94,6 +104,8 @@ async def build_transaction_reports_plotly(db, execution, df, statistics):
         [lb for lb, sec in textos.items() if any(sec.values())],
         key=lambda lb: (orden.get(lb, len(orden)), lb),
     )
+    # La seleccion se aplica DESPUES del orden: decide que entra, no en que orden.
+    etiquetas = filtrar_transacciones(etiquetas, seleccion)
     if not etiquetas:
         return []
 
@@ -483,10 +495,16 @@ def _compute_redirect_totals(redirect_stats: List[Dict[str, Any]]) -> Dict[str, 
 @router.get("/executions/{execution_id}/export/html")
 async def export_html(
     execution_id: str,
+    tx: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Export standalone HTML report with interactive Plotly.js charts and AI analysis."""
+    """Export standalone HTML report with interactive Plotly.js charts and AI analysis.
+
+    ETAPA 6 (D50/D51): `?tx=<label>` repetido elige que informes por transaccion
+    entran. Sin el parametro entran todas —el HTML de siempre—; con `?tx=` vacio,
+    solo el informe general.
+    """
 
     try:
         exec_uuid = uuid.UUID(execution_id)
@@ -738,7 +756,8 @@ async def export_html(
         # N4.9: mini-informes de ESTA ejecucion. Sin ninguno, las dos piezas salen
         # vacias, el bloque no se pinta y el HTML queda exactamente como hoy.
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
-        _tx_reports = await build_transaction_reports_plotly(db, execution, _df_tx, statistics)
+        _tx_reports = await build_transaction_reports_plotly(
+            db, execution, _df_tx, statistics, seleccion_de_query(tx))
         _tx_body, _tx_js = transaction_reports_plotly_html(_tx_reports)
 
         # ---- Build HTML (individual: NO monitoring/evidence attachments) ----
