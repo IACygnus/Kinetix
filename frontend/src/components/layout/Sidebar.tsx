@@ -30,6 +30,7 @@ import {
   Code,
   // MODULO DE HORAS (ETAPA H1)
   Clock,
+  CalendarClock,
   FolderKanban,
   ListChecks,
 } from 'lucide-react';
@@ -154,6 +155,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       label: 'Horas',
       icon: <Clock className="w-7 h-7" />,
       children: [
+        {
+          label: 'Registro',
+          path: '/horas/registro',
+          icon: <CalendarClock className="w-6 h-6" />,
+        },
         {
           label: 'Proyectos',
           path: '/horas/proyectos',

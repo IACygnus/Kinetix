@@ -31,6 +31,7 @@ import IntegratedReportPage from './pages/IntegratedReportPage';
 // MODULO DE HORAS (ETAPA H1, H-D9): todo cuelga de /horas.
 import ActividadesPage from './pages/horas/ActividadesPage';
 import ProyectosPage from './pages/horas/ProyectosPage';
+import RegistroPage from './pages/horas/RegistroPage';
 import IntegratedReportsHistory from './pages/IntegratedReportsHistory';
 import ScriptHistory from './pages/ScriptHistory';
 
@@ -83,6 +84,7 @@ function App() {
                 comprueba el backend, no la pantalla. */}
             <Route path="/horas/proyectos" element={<ProyectosPage />} />
             <Route path="/horas/actividades" element={<ActividadesPage />} />
+            <Route path="/horas/registro" element={<RegistroPage />} />
 
             {/* Monitoring */}
             <Route path="/monitoring/realtime" element={<MonitoringRealtime />} />
