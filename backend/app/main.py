@@ -26,6 +26,12 @@ from app.db.models.attachment import ExecutionAttachment
 from app.db.models.client_logo import ClientLogo
 from app.db.models.transaction_analysis import TransactionAnalysis   # N3.4
 from app.db.models.transaction_chart_analysis import TransactionChartAnalysis   # N4.5
+# MODULO DE HORAS (ETAPA H1). Sin este import `create_all` no ve las tablas: es
+# la pieza que se olvida. Las siete son NUEVAS, no alteran nada de analisis.
+from app.db.models.time_tracking import (   # noqa: F401
+    Activity, Holiday, Project, ProjectActivity, ProjectActivityChange,
+    TimeEntry, WorkCalendar,
+)
 from app.core.security import get_password_hash
 
 # Configurar logging
@@ -274,6 +280,11 @@ async def startup_event():
     await migrate_script_designs_table()
     await migrate_attachments_table()
     await seed_admin_user()
+    # MODULO DE HORAS (H1.2): actividades iniciales, jornada y festivos. Es
+    # idempotente: comprueba antes de insertar y no pisa lo que se haya cambiado
+    # a mano. Va al final porque no la necesita nadie mas para arrancar.
+    from app.db.seed_time_tracking import seed_time_tracking
+    await seed_time_tracking()
     logger.info("Aplicacion lista")
 
 
