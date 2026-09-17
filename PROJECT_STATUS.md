@@ -10,19 +10,21 @@
 - **Branch activa:** `backup-trabajo-local`. **Todo el producto vive ahí.** `main`
   sigue en su commit `Initial commit` y no contiene nada.
 - **Último tag publicado:** `v3.1.0` (*high cardinality chart optimization*).
-  Los cambios de las Etapas 1-6 **no están etiquetados todavía**.
+  Los cambios de las Etapas 1-7 **no están etiquetados todavía**.
 - **Remoto de push:** `github` (`IACygnus/Kinetix`), el único. `azure` tiene el
   push bloqueado a propósito.
-- **Árbol de trabajo:** limpio. Todo lo de las seis etapas está commiteado.
+- **Árbol de trabajo:** limpio. Todo lo de las siete etapas está commiteado.
 - **Ambiente local:** funcional. `docker compose up -d` levanta los cinco
   servicios (`jmeter_postgres`, `jmeter_backend`, `jmeter_frontend`,
   `jmeter_influxdb`, `jmeter_grafana`).
 - **Producción (`kinetix.sqasa.co` @ 20.81.141.77):** sincronización
-  **pendiente**. Ver `docs/reporte_claude_code/53_checklist_despliegue.md`.
+  **pendiente**. Checklist en `docs/reporte_claude_code/53_checklist_despliegue.md`, y su
+  versión CORREGIDA —puertos, target del frontend, media y DEBUG— en
+  `docs/reporte_claude_code/59_handoff_despliegue_analisis.md` §4.
 
-### Plan de corrección del informe — Etapas 1 a 6
+### Plan de corrección del informe — Etapas 1 a 7
 
-Referencia única: **`docs/ESPECIFICACION-informe.md` v1.2**. Todo cambio del
+Referencia única: **`docs/ESPECIFICACION-informe.md` v1.3**. Todo cambio del
 informe se valida contra ese documento.
 
 | Etapa | Qué cubrió | Estado |
@@ -31,11 +33,13 @@ informe se valida contra ese documento.
 | 2 | Estructura del informe (v1.2 §1): informe por transacción con el mismo diseño del general, sin conclusiones propias, sin Throughput Over Time | **validada por Fredy** |
 | 3 | Estilo de los textos de IA (§4): bloque de estilo único en los 19 prompts, formato español determinista, detector de jerga | **validada por Fredy** |
 | 5 | Panel de selección (§2): columnas Transacción · Muestras · Promedio · TPS · Errores, criterios desplegables por fila | **validada por Fredy** |
+| 5b | Botón "Criterios" por fila (§2.2) y **la IA usa los criterios efectivos** de cada transacción: el texto y la tabla de veredictos ya no pueden contradecirse | implementada, **pendiente validación** |
 | 6 | Gráficas, exportación y cierre (§3, §6, §7): control de capas, tooltip, selector de exportación, tildes | implementada, **pendiente validación** |
+| 7 | **Informe integrado completo**: sus bloques por transacción en pantalla y overrides propios en los exportados | implementada, **pendiente validación** |
 
 No hay Etapa 4: el plan saltó de la 3 a la 5.
 
-Reportes de las seis etapas: `docs/reporte_claude_code/01…53`, numerados de
+Reportes de las siete etapas: `docs/reporte_claude_code/01…59`, numerados de
 forma consecutiva, con hash de commit y fecha en la primera línea.
 
 ---
@@ -52,6 +56,7 @@ forma consecutiva, con hash de commit y fecha en la primera línea.
 | `services/jtl/transaction_series.py` | 2 | las 5 series de UNA transacción, calculadas en proceso desde el DataFrame ya parseado |
 | `services/export/seleccion.py` | 6 | lee `?tx=` y `?capa=`, filtra y valida. Una definición para PDF y HTML |
 | `services/export/capas_html.py` | 6 | CSS, JS, selector y visibilidad inicial del control de capas del HTML |
+| `services/ai/criterios.py` | 5b | **la única** resolución del umbral efectivo de cada transacción: la usan los prompts **y** `compute_per_transaction_verdicts`, así que texto y tabla no pueden discrepar |
 | `services/export/client_logo.py` | 2 | logo del cliente en la portada |
 | `db/models/transaction_analysis.py` | — | transacciones marcadas como críticas (legacy de solo lectura desde N3.4) |
 | `db/models/transaction_chart_analysis.py` | 2 | los textos del informe por transacción. `SECTIONS_GENERADAS` = summary + las 5 gráficas |
@@ -66,6 +71,7 @@ forma consecutiva, con hash de commit y fecha en la primera línea.
 | `components/common/AvisoEstilo.tsx` | 3 | el aviso ámbar con los términos de jerga detectados |
 | `hooks/useChartLayers.ts` | 6 | el control de capas promedio/máximo, en memoria de sesión |
 | `components/dashboard/ExportScopeDialog.tsx` | 6 | el diálogo "¿qué incluyo en la exportación?" |
+| `components/dashboard/TransactionReportSection.tsx` | 7 | además: canal de overrides del integrado (`tx\|<label>\|<section>`) |
 
 ### `reasoning_effort`
 
@@ -191,8 +197,12 @@ CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
 ## PENDIENTES
 
 ### Del plan de corrección
-1. **Validación de Fredy de la Etapa 6** — guion en
-   `docs/reporte_claude_code/52_ETAPA6_para_fredy_cierre.md`.
+1. **Validación de Fredy de las Etapas 5b, 6 y 7** — guiones en
+   `56_ETAPA5b_para_fredy_cierre.md`, `52_ETAPA6_para_fredy_cierre.md` y
+   `60_ETAPA7_para_fredy_cierre.md`.
+1b. **Decidir el alcance de "solo análisis"** y responder las cinco preguntas de
+   `59_handoff_despliegue_analisis.md` §5. Ese documento está escrito para abrir
+   un chat nuevo sin el historial de las etapas.
 
 ### De producto (anteriores al plan, siguen abiertos)
 2. **Historial de informe integrado** — falta la pantalla de reapertura/edición
@@ -219,8 +229,15 @@ CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
    config`: compose **fusiona** las listas, así que los `ports: []` no cierran
    nada — **5432, 8086, 3000 y 8001 quedan publicados en `0.0.0.0`** — y el
    `target: builder` del compose base sobrevive, de modo que el frontend de
-   producción se construiría con la fase de Vite y no con nginx. Hay que
-   arreglarlo antes de desplegar.
+   producción se construiría con la fase de Vite y no con nginx.
+   **Matizado en la Etapa 7:** Fredy verificó desde internet que los cuatro
+   puertos **no responden** — el NSG de Azure los cierra —, y el target correcto
+   **vive en el servidor**, desde donde ya se despliega. Pasa de urgencia a
+   **deuda**. Con un reverso que hay que mirar antes de tocarlo: el bind
+   `./backend:/app` que sobrevive a esa misma fusión es lo único que hoy conserva
+   `/app/media`, donde viven las capturas de monitoreo y evidencias (31 filas en
+   `execution_attachments`, carpeta gitignorada, sin volumen nombrado).
+   Detalle en `59_handoff_despliegue_analisis.md` §4.2, §4.3 y §4.5.
 10. **HF-3 — rate limit de `/auth/login` inservible en producción.** Con nginx
     proxando a `localhost:8001` todos los usuarios llegan con la misma IP:
     **cinco entradas en quince minutos dejan a toda la plataforma sin acceso**.

@@ -15,16 +15,17 @@
   scripts, ejecución (motor propio), parseo de JTL, dashboards, reportes
   HTML/PDF integrados, monitoreo Grafana/InfluxDB y configuración dinámica de
   IA.
-- **Repositorio:** Git local. Último tag publicado: **v3.1.0** — las Etapas 1 a 6
+- **Repositorio:** Git local. Último tag publicado: **v3.1.0** — las Etapas 1 a 7
   del plan de corrección **no están etiquetadas**.
 - **Ruta local de trabajo:** `C:\proyectos\Kinetix` (el proyecto se migró de PC;
   cualquier ruta anterior que aparezca en documentos viejos está obsoleta).
 - **Estado del informe:** el plan de corrección contra
-  `docs/ESPECIFICACION-informe.md` v1.2 está **completo**. Etapas 2, 3 y 5
-  validadas por Fredy; la 6 implementada y pendiente de validación. No hay
-  Etapa 4: el plan saltó de la 3 a la 5. Estado vivo y pendientes en
+  `docs/ESPECIFICACION-informe.md` **v1.3** está **completo**. Etapas 2, 3 y 5
+  validadas por Fredy; **5b, 6 y 7** implementadas y pendientes de validación.
+  No hay Etapa 4: el plan saltó de la 3 a la 5. Estado vivo y pendientes en
   `PROJECT_STATUS.md`; deuda de despliegue en
-  `docs/reporte_claude_code/53_checklist_despliegue.md`.
+  `docs/reporte_claude_code/53_checklist_despliegue.md` y su **versión corregida**
+  en `docs/reporte_claude_code/59_handoff_despliegue_analisis.md` §4.
 
 ### 1.1 REMOTOS GIT
 
@@ -134,6 +135,13 @@ Network bridge: `jmeter_network`. Volúmenes nombrados: `postgres_data`,
 > Verificado en la Etapa 6.6 con `docker compose -f docker-compose.yml -f
 > docker-compose.prod.yml config` (solo lectura). **Compose FUSIONA las listas
 > en vez de reemplazarlas**, así que:
+>
+> **Matiz de la Etapa 7:** Fredy comprobó desde internet que 5432, 8086, 3000 y
+> 8001 **no responden** — el NSG de Azure los cierra y la protección es efectiva.
+> Lo de abajo sigue siendo cierto a nivel de Docker y queda como deuda, no como
+> urgencia. Y ojo con el reverso: el bind `./backend:/app` que sobrevive a la
+> fusión es lo único que hoy conserva `/app/media` (las capturas de monitoreo y
+> evidencias). Ver `59_handoff_despliegue_analisis.md` §4.2 y §4.5.
 >
 > | Lo que el archivo parece decir | Lo que la fusión produce de verdad |
 > |---|---|
@@ -283,6 +291,7 @@ frontend/src/
 │   │   ├── ReportBody.tsx                # ETAPA 2 (D21) — el cuerpo, por ALCANCE
 │   │   ├── SummaryTable.tsx              # ETAPA 2 (D15) — la tabla, por ALCANCE
 │   │   ├── TransactionReportSection.tsx  # ETAPA 2 — los bloques por transacción
+│   │   │                                 # ETAPA 7 (D58) — overrides del integrado
 │   │   ├── ExportScopeDialog.tsx         # ETAPA 6 (D50) — ¿qué incluyo al exportar?
 │   │   └── UploadJTL.tsx                 # panel de selección (ETAPA 5)
 │   ├── execution/{ScenarioForm, LiveMetricsChart, ExecutionHistory}.tsx
@@ -699,8 +708,35 @@ un único documento.
 > **No pasa por los endpoints individuales**: construye sus bloques por
 > transacción llamando en proceso a `_build_transaction_reports` (PDF) y
 > `build_transaction_reports_plotly` (HTML). Por eso el **selector de
-> exportación no aplica aquí** (v1.2 §6), aunque sí hereda el control de capas
+> exportación no aplica aquí** (v1.3 §6), aunque sí hereda el control de capas
 > del HTML, porque comparte `_bloque_grafica_html`.
+
+### ETAPA 7 — el integrado, completo
+
+- **La pantalla muestra lo mismo que el informe individual** (D57). Monta
+  `DashboardEmbed` → `Dashboard embedded={true}`, que ahora **sí** renderiza
+  `TransactionReportSection`. Las otras guardas `!embedded` de `Dashboard.tsx` se
+  quedan: las conclusiones por ejecución las consolida el integrado (v1.3 §0), y
+  los botones de exportar y el autoguardado son de la pantalla individual.
+- **Editar dentro del integrado NO toca la ejecución** (D58, regla F4). La
+  edición de un análisis por transacción viaja por el canal `onAnalysisEdit` que
+  ya existía y se guarda como override con clave **`tx|<label>|<section>`** en
+  `integrated_reports.sections[i].overrides.analysis`, junto a las claves de
+  columna. `transaction_chart_analyses` no cambia.
+- **Los exportados aplican esos overrides** (D59) con `_aplicar_overrides_tx`,
+  que vive **aquí y no en los constructores** de `export_pdf.py` /
+  `export_html.py`: esos dos están protegidos y siguen devolviendo lo que hay en
+  base. El integrado decide encima.
+- **Nada se migra** (D60): un integrado sin claves `tx|` se ve con los textos
+  originales. Mismo criterio que `ai_analysis_throughput`, que salió del mapa en
+  la Etapa 2 y cuyos overrides siguen en la base sin pintarse.
+- **El consolidado no cambia** (D61): `_section_analyses_for_prompt` itera sobre
+  `_SECCION_LABEL`, que son nombres de columna, así que las claves `tx|` nunca
+  entran en su prompt.
+
+> `frontend/src/components/integrated/ExecutionReportSection.tsx` (195 líneas)
+> **no lo importa nadie** desde que el integrado pasó a `DashboardEmbed`. Código
+> muerto señalado en el reporte 57, no retirado.
 
 - **`POST /reports/integrated/export-pdf`** y `…/export-html`.
 - **`_build_att_html(section, attachments, ai_analysis, title_prefix, for_pdf=False)`**:
