@@ -4,6 +4,10 @@ Router API centralizado - v2.0
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import auth
+# MODULO DE HORAS (ETAPA H1, H-D9): router propio bajo /time, separado del
+# modulo de analisis.
+from app.api.v1.endpoints import time_activities
+from app.api.v1.endpoints import time_projects
 from app.api.v1.endpoints import upload
 from app.api.v1.endpoints import export_html
 from app.api.v1.endpoints import export_pdf
@@ -95,3 +99,9 @@ api_router.include_router(
     prefix="/script-designer/ai",
     tags=["AI Design Data Files"],
 )
+
+# ===================== MODULO DE HORAS (ETAPA H1) =====================
+# H-D9: todo el modulo cuelga de /time, para que se distinga de un vistazo de
+# los routers del modulo de analisis y del motor.
+api_router.include_router(time_activities.router, prefix="/time/activities", tags=["Horas — Actividades"])
+api_router.include_router(time_projects.router, prefix="/time/projects", tags=["Horas — Proyectos"])
