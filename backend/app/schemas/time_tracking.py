@@ -7,7 +7,8 @@ La validación de las horas en pasos de 0,25 (H-D8) vive aquí además de en la
 base: el schema devuelve un **422 con mensaje legible** y la restricción de la
 base es la última red, que devolvería un 500 feo si llegara a saltar.
 """
-from datetime import datetime
+from datetime import date, datetime
+from datetime import date as DateOnly
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
@@ -132,6 +133,130 @@ class ProjectActivityUpsert(BaseModel):
     @classmethod
     def _paso(cls, v):
         return validar_paso(v, "Las horas estimadas")
+
+
+# ===================== REGISTRO DE HORAS (ETAPA H2) =====================
+
+class TimeEntryCreate(BaseModel):
+    """§1.1. `user_id` solo lo manda el admin al registrar por otra persona
+    (H-D13); si no viene, son las horas de quien registra."""
+    user_id: Optional[UUID] = None
+    date: DateOnly
+    project_id: UUID
+    activity_id: UUID
+    hours: Decimal
+    billable: bool
+    overtime: bool = False
+    notes: Optional[str] = None
+
+    @field_validator("hours")
+    @classmethod
+    def _paso(cls, v):
+        return validar_paso(v)
+
+    @field_validator("date")
+    @classmethod
+    def _sin_futuro(cls, v):
+        """H-D21: hacia atrás sin límite —§4.2.3 habla del olvido—, pero no se
+        adelantan horas que todavía no se han trabajado."""
+        if v > date.today():
+            raise ValueError("No se pueden registrar horas con fecha futura")
+        return v
+
+
+class TimeEntryUpdate(BaseModel):
+    date: Optional[DateOnly] = None
+    project_id: Optional[UUID] = None
+    activity_id: Optional[UUID] = None
+    hours: Optional[Decimal] = None
+    billable: Optional[bool] = None
+    overtime: Optional[bool] = None
+    notes: Optional[str] = None
+
+    @field_validator("hours")
+    @classmethod
+    def _paso(cls, v):
+        return validar_paso(v) if v is not None else v
+
+    @field_validator("date")
+    @classmethod
+    def _sin_futuro(cls, v):
+        if v is not None and v > date.today():
+            raise ValueError("No se pueden registrar horas con fecha futura")
+        return v
+
+
+class TimeEntryResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_name: str = ""
+    created_by: Optional[UUID] = None
+    created_by_name: str = ""
+    date: DateOnly
+    client_id: Optional[UUID] = None
+    client_name: str = ""
+    project_id: UUID
+    project_name: str = ""
+    project_status: str = "activo"
+    activity_id: UUID
+    activity_name: str = ""
+    hours: Decimal
+    billable: bool
+    overtime: bool
+    notes: Optional[str] = None
+    source: str = "manual"
+    # H-D16: si esta actividad, en este proyecto, ya pasó de lo estimado. Se
+    # calcula en el backend para que la pantalla no sume por su cuenta.
+    over_estimate: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DiaResponse(BaseModel):
+    """Un día ya resuelto por `services/horas/calendario.py`. La pantalla lo
+    pinta tal cual: no recalcula ni la jornada ni el 'incompleto'."""
+    date: DateOnly
+    expected_hours: Decimal
+    ordinary_hours: Decimal
+    overtime_hours: Decimal
+    total_hours: Decimal
+    is_holiday: bool = False
+    is_absence: bool = False
+    non_working_reason: str = ""
+    incomplete: bool = False
+    missing_hours: Decimal = Decimal("0")
+    entries: List[TimeEntryResponse] = []
+
+
+class WeekResponse(BaseModel):
+    user_id: UUID
+    user_name: str = ""
+    week_start: DateOnly
+    week_end: DateOnly
+    days: List[DiaResponse] = []
+    total_expected: Decimal = Decimal("0")
+    total_ordinary: Decimal = Decimal("0")
+    total_overtime: Decimal = Decimal("0")
+
+
+class PendingDayResponse(BaseModel):
+    date: DateOnly
+    expected_hours: Decimal
+    ordinary_hours: Decimal
+    missing_hours: Decimal
+    # El lunes de su semana: es lo que el enlace de H-D18 necesita para abrir la
+    # vista con ese día enfocado.
+    week_start: DateOnly
+
+
+class ActivityAvailabilityResponse(BaseModel):
+    """Lo que necesita el aviso de exceso (H-D16) sin pedir el detalle entero."""
+    activity_id: UUID
+    activity_name: str
+    estimated_hours: Decimal
+    consumed_hours: Decimal
+    remaining_hours: Decimal
+    over_estimate: bool
 
 
 class ProjectActivityChangeResponse(BaseModel):
