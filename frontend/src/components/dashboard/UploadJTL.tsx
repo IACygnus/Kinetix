@@ -650,9 +650,10 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
                               {esCritica && (
                                 <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-amber-200 text-amber-900">crítica</span>
                               )}
-                              {conPropios && (
-                                <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-indigo-100 text-indigo-800">criterios propios</span>
-                              )}
+                              {/* ETAPA 5b (ajuste): aqui vivia el chip "criterios propios".
+                                  Decia lo mismo que el boton de la columna "Criterios", que
+                                  es ahora el UNICO indicador de con que se evalua la fila.
+                                  El chip "crítica" se queda: eso es otra cosa. */}
                               {motivo && (
                                 <div className="text-xs text-gray-500 mt-0.5" title={motivo}>{motivo}</div>
                               )}

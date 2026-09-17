@@ -88,17 +88,29 @@ globales"** y todo vuelve a como estaba. Puede dejar varias filas abiertas a la 
 
 ---
 
-## Una cosa para que decida
+## Ajuste posterior: el chip "criterios propios" se retiró
 
-Junto al nombre de la transacción sigue apareciendo el chip índigo **"criterios propios"**,
-que ahora dice lo mismo que el botón nuevo:
+Al cerrar la etapa quedó señalado que junto al nombre seguía apareciendo un chip índigo
+**"criterios propios"** que decía lo mismo que el botón nuevo:
 
 ```
-1. Auth   crítica   criterios propios   …   [Propios ▸]
+antes:    1. Auth   crítica   criterios propios   …   [Propios ▸]
+ahora:    1. Auth   crítica                       …   [Propios ▸]
 ```
 
-**No lo quité** porque no estaba en lo acordado. Si prefiere que el botón sea el único
-indicador, es quitar una línea.
+**Retirado.** El botón de la columna "Criterios" es el **único** indicador de con qué se
+evalúa cada fila. El chip **"crítica" se mantiene**: eso es otra cosa — dice que la
+transacción está marcada para análisis, no con qué criterio se la mide.
+
+Es un cambio de una línea en `UploadJTL.tsx`, sin tocar nada más. Verificado:
+
+- **`panel_boton_criterios.py`**: 27 comprobaciones, todas pasan, incluida una nueva —
+  *"ningún chip 'criterios propios' junto al nombre"*— para que no pueda volver por
+  descuido.
+- **`panel_seleccion.py`** (la prueba de la Etapa 5) comprobaba precisamente ese chip;
+  ahora comprueba el estado del botón. **Todo en verde.**
+- **Paridad de criticidad 25/25**, 492 tests del backend igual que antes, `tsc` limpio.
+- **0 llamadas a la IA.**
 
 ---
 
