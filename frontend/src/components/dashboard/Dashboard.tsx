@@ -69,7 +69,7 @@ const EditableTextArea = memo(function EditableTextArea({
         if (debounceMs) { clearDraft(); draftTimer.current = window.setTimeout(() => { draftTimer.current = null; onSave(v); }, debounceMs); }
       }}
       onBlur={() => { clearDraft(); onSave(localValue); }}
-      placeholder={placeholder || 'Click para editar el analisis...'}
+      placeholder={placeholder || 'Click para editar el análisis...'}
       className={className || 'w-full p-4 border-2 border-gray-300 rounded-xl text-xl text-gray-800 focus:ring-2 focus:ring-orange-400/50 focus:border-orange-500 resize-y cursor-text hover:border-orange-300 transition-colors'}
       style={{ minHeight }}
     />
@@ -242,7 +242,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
     } catch (error: any) {
       console.error('Error loading data:', error);
       setLoadError(error?.response?.status === 401
-        ? 'Sesion expirada. Por favor inicie sesion nuevamente.'
+        ? 'Sesión expirada. Por favor inicie sesión nuevamente.'
         : 'Error al cargar el reporte. Verifique la conexion e intente de nuevo.');
     } finally {
       setLoading(false);
@@ -404,11 +404,11 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
   const AnalysisBox = useCallback(({ value, onChange, campo }: { value: string; onChange: (v: string) => void; campo?: string }) => (
     <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
       <div className="flex items-center justify-between mb-2">
-        <h4 className="font-bold text-orange-600 text-xl">Analisis</h4>
+        <h4 className="font-bold text-orange-600 text-xl">Análisis</h4>
         <span className="text-xs text-gray-400 italic">Click para editar</span>
       </div>
       <AvisoEstilo terminos={campo ? avisosRef.current[campo] : undefined} />
-      <EditableTextArea initialValue={value} onSave={onChange} placeholder="Analisis..." debounceMs={autoSaveMs} />
+      <EditableTextArea initialValue={value} onSave={onChange} placeholder="Análisis..." debounceMs={autoSaveMs} />
     </div>
   ), []);
 
@@ -510,8 +510,8 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           <div>
             <p className="font-semibold text-lg">
               {aiToast.success
-                ? `Analisis generado con ${aiToast.provider === 'gemini' ? 'Gemini AI' : aiToast.provider}`
-                : 'Analisis generado localmente'}
+                ? `Análisis generado con ${aiToast.provider === 'gemini' ? 'Gemini AI' : aiToast.provider}`
+                : 'Análisis generado localmente'}
             </p>
             <p className="text-sm opacity-80 mt-1">
               {/* B6.3: el aviso nombra el provider y el modelo REALES y el motivo
@@ -524,7 +524,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             </p>
             <p className="text-sm opacity-70 mt-0.5">
               {aiToast.success
-                ? 'El informe incluye analisis inteligente de rendimiento'
+                ? 'El informe incluye análisis inteligente de rendimiento'
                 : 'El informe fue generado con el analizador estadistico de respaldo'}
             </p>
           </div>
@@ -571,7 +571,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               <p className="text-2xl font-bold mt-1">{execution.name}</p>
             </div>
             <div>
-              <p className="text-white/50 text-base uppercase tracking-wider">Duracion</p>
+              <p className="text-white/50 text-base uppercase tracking-wider">Duración</p>
               <p className="text-2xl font-bold mt-1">{execution.duration_seconds ? `${Math.floor(execution.duration_seconds / 60)}m ${Math.floor(execution.duration_seconds % 60)}s` : '--'}</p>
             </div>
             <div>
@@ -665,13 +665,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           <div className="mb-8">
             <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
               <div className="bg-[#0a1628] px-6 py-4">
-                <h2 className="text-3xl font-bold text-white">Veredicto por Transaccion</h2>
+                <h2 className="text-3xl font-bold text-white">Veredicto por Transacción</h2>
               </div>
               <div className="p-6">
                 <table className="w-full text-lg">
                   <thead>
                     <tr className="border-b-2 border-gray-200">
-                      <th className="text-left py-3 px-4 text-base font-bold text-gray-500 uppercase">Transaccion</th>
+                      <th className="text-left py-3 px-4 text-base font-bold text-gray-500 uppercase">Transacción</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">P90 (ms)</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">Umbral RT (ms)</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">% Error</th>
@@ -718,7 +718,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             total={execution}
           />
           <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
-            <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis del Reporte Resumen</h3>
+            <h3 className="text-3xl font-bold text-orange-600 mb-3">Análisis del Reporte Resumen</h3>
             <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
             <AvisoEstilo terminos={avisosRef.current["ai_analysis_summary"]} />
             <EditableTextArea initialValue={analysisSummary} onSave={emitEdit('ai_analysis_summary', setAnalysisSummary)} placeholder="El analisis aparecera aqui..." debounceMs={autoSaveMs} />
@@ -777,10 +777,10 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                 </div>
               </div>
               <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
-                <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Redirecciones</h3>
+                <h3 className="text-3xl font-bold text-orange-600 mb-3">Análisis de Redirecciones</h3>
                 <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
                 <AvisoEstilo terminos={avisosRef.current["ai_analysis_redirects"]} />
-                <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Analisis de redirecciones..." debounceMs={autoSaveMs} />
+                <EditableTextArea initialValue={analysisRedirects} onSave={emitEdit('ai_analysis_redirects', setAnalysisRedirects)} placeholder="Análisis de redirecciones..." debounceMs={autoSaveMs} />
               </div>
             </div>
           )}
@@ -790,7 +790,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
         {errorData.length > 0 && (
           <div className="mb-8">
             <div className="bg-[#0a1628] rounded-t-2xl px-6 py-4">
-              <h2 className="text-3xl font-bold text-white">Analisis de Errores</h2>
+              <h2 className="text-3xl font-bold text-white">Análisis de Errores</h2>
             </div>
             <div className="bg-white rounded-b-2xl shadow-lg p-6 border border-gray-200 border-t-0">
               <div className="mb-6 bg-red-50 border-2 border-red-200 rounded-xl p-6">
@@ -807,7 +807,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
-                  <h3 className="text-3xl font-bold text-gray-800 mb-4">Distribucion de Codigos de Error</h3>
+                  <h3 className="text-3xl font-bold text-gray-800 mb-4">Distribución de Códigos de Error</h3>
                   <ResponsiveContainer width="100%" height={500}>
                     <PieChart>
                       <Pie
@@ -849,13 +849,13 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                   </ResponsiveContainer>
                 </div>
                 <div>
-                  <h3 className="text-3xl font-bold text-gray-800 mb-4">Detalle de Errores por Transaccion</h3>
+                  <h3 className="text-3xl font-bold text-gray-800 mb-4">Detalle de Errores por Transacción</h3>
                   <div className="overflow-auto max-h-[400px]">
                     <table className="w-full">
                       <thead className="bg-[#0a1628] sticky top-0">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xl font-bold text-white">Transaccion</th>
-                          <th className="px-4 py-3 text-left text-xl font-bold text-white">Codigo</th>
+                          <th className="px-4 py-3 text-left text-xl font-bold text-white">Transacción</th>
+                          <th className="px-4 py-3 text-left text-xl font-bold text-white">Código</th>
                           <th className="px-4 py-3 text-left text-xl font-bold text-white">Errores</th>
                           <th className="px-4 py-3 text-left text-xl font-bold text-white">%</th>
                         </tr>
@@ -876,10 +876,10 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
               </div>
             </div>
             <div className="mt-4 bg-white rounded-2xl shadow-lg p-6 border-l-4 border-orange-500 border border-gray-200">
-              <h3 className="text-3xl font-bold text-orange-600 mb-3">Analisis de Errores</h3>
+              <h3 className="text-3xl font-bold text-orange-600 mb-3">Análisis de Errores</h3>
               <span className="text-xs text-gray-400 italic mb-1 block">Click para editar</span>
               <AvisoEstilo terminos={avisosRef.current["ai_analysis_errors"]} />
-              <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Analisis de errores..." debounceMs={autoSaveMs} />
+              <EditableTextArea initialValue={analysisErrors} onSave={emitEdit('ai_analysis_errors', setAnalysisErrors)} placeholder="Análisis de errores..." debounceMs={autoSaveMs} />
             </div>
           </div>
         )}
@@ -976,7 +976,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
             </div>
             <div className="mt-2 text-xl text-blue-700">
               {pdfProgress < 30 && 'Preparando contenido...'}
-              {pdfProgress >= 30 && pdfProgress < 60 && 'Capturando graficas...'}
+              {pdfProgress >= 30 && pdfProgress < 60 && 'Capturando gráficas...'}
               {pdfProgress >= 60 && pdfProgress < 90 && 'Generando documento...'}
               {pdfProgress >= 90 && 'Finalizando...'}
             </div>

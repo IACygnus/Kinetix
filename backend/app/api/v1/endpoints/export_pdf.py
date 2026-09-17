@@ -528,7 +528,7 @@ async def export_pdf(
                                 <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Valor</th>
                                 <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Umbral</th>
                                 <th style="padding:2mm 1.5mm;text-align:center;font-size:6.5pt">Estado</th>
-                                <th style="padding:2mm 1.5mm;text-align:left;font-size:6.5pt">Analisis</th>
+                                <th style="padding:2mm 1.5mm;text-align:left;font-size:6.5pt">Análisis</th>
                             </tr></thead>
                             <tbody>{cap_rows}</tbody>
                         </table>

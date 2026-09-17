@@ -472,7 +472,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
                 </table>
             </div>
         </div>
-        {ai_box('redirects', 'Analisis de Redirecciones', '#f97316')}
+        {ai_box('redirects', 'Análisis de Redirecciones', '#f97316')}
         '''
 
     # Error bars
@@ -608,7 +608,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
     # titulo y en el badge). Sin criterios, esa fila no se pinta.
     _cm = cover_meta_parts(meta)
     fila_criterios = (
-        f'<div style="margin-top:.9rem"><div class="plotly-meta-label">Criterios de Aceptacion</div>'
+        f'<div style="margin-top:.9rem"><div class="plotly-meta-label">Criterios de Aceptación</div>'
         f'<div class="plotly-meta-value">{_cm["criteria"]}</div></div>'
     ) if _cm['criteria'] else ''
     _logo_img = (
@@ -631,13 +631,13 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 <div style="text-align:right"><div style="font-size:.8rem;opacity:.7">Realizado por:</div><div style="font-weight:600">Celula de Performance SQA</div></div>
 </div>
 <div class="plotly-header-meta">
-<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
+<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Análisis de Performance {test_badge}</div>
 <div class="plotly-project-name">{meta['name']}</div>
 <div class="plotly-meta-block">
 <div class="plotly-meta-izq">
 <div style="display:flex;gap:2rem;flex-wrap:wrap">
-<div style="flex:1 1 55%"><div class="plotly-meta-label">Ejecucion</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-sec">{_cm['range']}</div></div>
-<div style="flex:1 1 30%"><div class="plotly-meta-label">Duracion</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
+<div style="flex:1 1 55%"><div class="plotly-meta-label">Ejecución</div><div class="plotly-meta-value">{_cm['date']}</div><div class="plotly-meta-sec">{_cm['range']}</div></div>
+<div style="flex:1 1 30%"><div class="plotly-meta-label">Duración</div><div class="plotly-meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
 {fila_criterios}
 <div style="margin-top:.9rem"><div class="plotly-meta-label">Archivo</div><div class="plotly-meta-sec">{files_list}</div></div>
@@ -665,11 +665,11 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 </div>
 
 <div class="plotly-section">
-<div class="plotly-section-title">Reporte Resumen por Transaccion</div>
+<div class="plotly-section-title">Reporte Resumen por Transacción</div>
 <div class="plotly-table-wrap">
 <table>
 <thead><tr>
-<th>Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>
+<th>Transacción</th><th>Muestras</th><th>Errores</th><th>% Error</th>
 <th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>
 <th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>
 </tr></thead>
@@ -678,7 +678,7 @@ def _build_plotly_html_isolated(execution_data: dict, prefix: str = "") -> str:
 </div>
 </div>
 
-{ai_box('summary', 'Analisis del Reporte Resumen')}
+{ai_box('summary', 'Análisis del Reporte Resumen')}
 
 {redirect_section}
 
@@ -691,7 +691,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 <div id="{id_rt_label}" class="plotly-chart-div"></div>
 {_ctrl_y_axis(id_rt_label, rt_label_p99, rt_label_max)}
 </div>
-{ai_box('responseTimes', 'Analisis - Response Times por Transaccion')}
+{ai_box('responseTimes', 'Análisis - Response Times por Transacción')}
 
 <!-- UI-2: grafica agregada de tiempos retirada (ver docs/reporte_bug/ui2-ajustes-visuales.md) -->
 
@@ -700,35 +700,35 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 <div id="{id_latency}" class="plotly-chart-div"></div>
 {_ctrl_y_axis(id_latency, latency_p99, latency_max)}
 </div>
-{ai_box('latency', 'Analisis - Latency')}
+{ai_box('latency', 'Análisis - Latency')}
 
 <div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#ef4444">Error Rate Over Time</div>
 <div id="{id_error_rate}" class="plotly-chart-div"></div>
 {_ctrl_basic(id_error_rate)}
 </div>
-{ai_box('errorRate', 'Analisis - Error Rate')}
+{ai_box('errorRate', 'Análisis - Error Rate')}
 
 <div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#6366f1">Response Codes per Second</div>
 <div id="{id_codes}" class="plotly-chart-div"></div>
 {_ctrl_basic(id_codes)}
 </div>
-{ai_box('codesPerSecond', 'Analisis - Response Codes')}
+{ai_box('codesPerSecond', 'Análisis - Response Codes')}
 
 <div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#10b981">Transactions per Second</div>
 <div id="{id_tps}" class="plotly-chart-div"></div>
 {_ctrl_basic(id_tps)}
 </div>
-{ai_box('tps', 'Analisis - Transactions per Second')}
+{ai_box('tps', 'Análisis - Transactions per Second')}
 
 <div class="plotly-chart-section">
 <div class="plotly-chart-title" style="border-left-color:#6366f1">Active Threads Over Time</div>
 <div id="{id_threads}" class="plotly-chart-div"></div>
 {_ctrl_basic(id_threads)}
 </div>
-{ai_box('activeThreads', 'Analisis - Active Threads')}
+{ai_box('activeThreads', 'Análisis - Active Threads')}
 
 <div class="plotly-grid-2">
 <div class="plotly-chart-section">
@@ -741,7 +741,7 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 </div>
 </div>
 
-{ai_box('errors', 'Analisis de Errores', '#f97316')}
+{ai_box('errors', 'Análisis de Errores', '#f97316')}
 
 {tx_body}
 </div>
@@ -1225,10 +1225,10 @@ def _build_exec_html(execution, section: SectionInput, overrides=None) -> str:
             <tr><td style="padding:6px">Throughput</td><td style="padding:6px;text-align:right">{(execution.throughput or 0):.2f} req/s</td></tr>
         </table>
         <div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0">
-            <h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Analisis General</h3>
+            <h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Análisis General</h3>
             <p style="font-size:13px;line-height:1.6;color:#334155">{_summary or 'Sin analisis disponible.'}</p>
         </div>
-        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Analisis de Errores</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_errors}</p></div>' if _errors else ''}
+        {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Análisis de Errores</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_errors}</p></div>' if _errors else ''}
         {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Tiempos de Respuesta</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_rt}</p></div>' if _rt else ''}
         {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Conclusiones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_concl}</p></div>' if _concl else ''}
         {f'<div style="background:#fff7ed;border-left:4px solid #f97316;padding:12px;border-radius:8px;margin:8px 0"><h3 style="color:#0a1628;margin:0 0 8px 0;font-size:13px">Recomendaciones</h3><p style="font-size:13px;line-height:1.6;color:#334155">{_recs}</p></div>' if _recs else ''}
@@ -1449,7 +1449,7 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
         if att_text:
             per_img_ai = (
                 f'<div style="{ai_box_style}">'
-                f'<div style="{ai_title_style}">Analisis</div>'
+                f'<div style="{ai_title_style}">Análisis</div>'
                 f'<div style="{ai_text_style}">{att_text}</div>'
                 f'</div>'
             )
@@ -1465,7 +1465,7 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
     if ai_analysis:
         analysis_html = (
             f'<div style="{ai_box_style}">'
-            f'<div style="{ai_title_style}">Analisis Global</div>'
+            f'<div style="{ai_title_style}">Análisis Global</div>'
             f'<div style="{ai_text_style}">{ai_analysis}</div>'
             f'</div>'
         )
@@ -1525,7 +1525,7 @@ async def generate_integrated_report(
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("monitoring_ai_analysis", "")
             # Monitoring section: show images + per-image AI. Global analysis goes to conclusions only.
-            sections_html.append(_build_att_html(section, atts, "", "Metricas de Monitoreo"))
+            sections_html.append(_build_att_html(section, atts, "", "Métricas de Monitoreo"))
             # Collect individual image analyses + global analysis for conclusions
             for att in atts:
                 if att.ai_analysis:
@@ -1686,7 +1686,7 @@ async def export_integrated_pdf(
         elif section.type == "monitoring":
             atts = await _get_attachments(db, exec_id, "monitoring")
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(_build_att_html(section, atts, "", "Metricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
+            html_parts.append(_build_att_html(section, atts, "", "Métricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
 
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence")
@@ -1778,7 +1778,7 @@ async def export_integrated_html(
         elif section.type == "monitoring":
             atts = await _get_attachments(db, exec_id, "monitoring")
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Metricas de Monitoreo", image_overrides=_imgs)}</div>')
+            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Métricas de Monitoreo", image_overrides=_imgs)}</div>')
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence")
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")

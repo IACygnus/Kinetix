@@ -177,7 +177,7 @@ def chart_pie(code_dist):
         at.set_fontsize(7)
         at.set_color('white')
         at.set_fontweight('bold')
-    ax.set_title('Distribucion de Response Codes', fontsize=10,
+    ax.set_title('Distribución de Response Codes', fontsize=10,
                  fontweight='bold', color='#1e293b')
     fig.tight_layout()
     return fig_to_base64(fig)
@@ -212,61 +212,6 @@ def markdown_to_html(text: str) -> str:
 # HTML builder
 # ---------------------------------------------------------------------------
 
-def transaction_analyses_html(rows: Optional[List[Dict[str, Any]]], for_pdf: bool = True) -> str:
-    """RETIRADO POR HF-4 (D38). YA NO LO LLAMA NADIE.
-
-    El bloque 'Analisis por Transaccion Critica' salio del producto en las cuatro
-    salidas: la especificacion v1.2 §1 no lo contempla y su texto venia de
-    `transaction_analyses.ai_analysis`, que es legacy de solo lectura desde N3.4.
-    Quien quiera el bloque por transaccion tiene `transaction_reports_html`.
-
-    La funcion se conserva sin tocar —no se borra nada— por si Fredy la quiere de
-    vuelta: bastaria volver a llamarla. Si al leer esto sigue sin usarse, se puede
-    retirar entera.
-
-    ---- Documentacion original de N3.5 ----
-    Bloque 'Analisis por transaccion critica', una caja por transaccion.
-
-    `ai_box` pinta UNA seccion desde UNA clave fija y no sirve aqui: el numero de
-    cajas es variable. Sin filas devuelve cadena vacia — el documento sale
-    exactamente como antes (mismo criterio que el logo en N1).
-
-    Una fila sin analisis (la que fallo o la que paso del tope de 10) se pinta
-    igual, con sus metricas y una nota: la transaccion la marco Fredy y ocultarla
-    en silencio le haria creer que se analizo.
-    """
-    if not rows:
-        return ''
-    if for_pdf:
-        titulo = ('<div class="section-title" style="margin-top:6mm">'
-                  'Analisis por Transaccion Critica</div>')
-        caja, met, txt = (
-            'background:#fff7ed;border-left:1.2mm solid #4f46e5;border-radius:2mm;'
-            'padding:3mm 4mm;margin:0 0 3mm 0;break-inside:avoid',
-            'font-size:8pt;color:#475569;margin:1mm 0 2mm 0',
-            'font-size:9pt;line-height:1.5;color:#334155')
-        nom = 'font-size:11pt;font-weight:700;color:#0a1628'
-    else:
-        titulo = '<div class="section-title" style="margin-top:1.5rem">Analisis por Transaccion Critica</div>'
-        caja, met, txt = (
-            'background:#fff7ed;border-left:4px solid #4f46e5;border-radius:8px;'
-            'padding:1rem 1.2rem;margin:0 0 1rem 0',
-            'font-size:.8rem;color:#475569;margin:.25rem 0 .6rem 0',
-            'font-size:.9rem;line-height:1.7;color:#334155')
-        nom = 'font-size:1rem;font-weight:700;color:#0a1628'
-
-    cajas = []
-    for r in rows:
-        m = r.get('metrics') or {}
-        linea = (f"{int(m.get('muestras', 0)):,} muestras &middot; promedio {float(m.get('promedio', 0)):.0f} ms"
-                 f" &middot; p90 {float(m.get('p90', 0)):.0f} ms &middot; max {float(m.get('max', 0)):.0f} ms"
-                 f" &middot; {int(m.get('errores', 0)):,} errores ({float(m.get('tasa_error', 0)):.2f}%)")
-        cuerpo = (markdown_to_html(r['ai_analysis']) if r.get('ai_analysis')
-                  else '<em>Esta transaccion se marco como critica pero no se genero su analisis individual.</em>')
-        cajas.append(f'<div style="{caja}"><div style="{nom}">{r.get("label", "")}</div>'
-                     f'<div style="{met}">{linea}</div><div style="{txt}">{cuerpo}</div></div>')
-    return titulo + ''.join(cajas)
-
 
 # N4.8: titulos de las 5 graficas del mini-informe y el color de su barra, en el
 # orden aprobado. Las claves son las de CHART_TYPES (N4.3) y las de las secciones
@@ -276,7 +221,7 @@ TRANSACTION_CHARTS = (
     ('response_times', 'Tiempos de Respuesta', '#8884d8'),
     ('latency', 'Latencia', '#9c27b0'),
     ('error_rate', 'Tasa de Error', '#f44336'),
-    ('codes', 'Codigos de Respuesta', '#4CAF50'),
+    ('codes', 'Códigos de Respuesta', '#4CAF50'),
     ('tps', 'Transacciones por Segundo', '#2196F3'),
 )
 
@@ -359,9 +304,9 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
             )
             tabla = (
                 # HF-4: el mismo titulo que la tabla del informe general.
-                '<div class="section"><div class="section-header">Reporte Resumen por Transaccion</div>'
+                '<div class="section"><div class="section-header">Reporte Resumen por Transacción</div>'
                 '<table><thead><tr>'
-                '<th style="text-align:left">Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
+                '<th style="text-align:left">Transacción</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
                 '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
                 '<th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>'
                 f'</tr></thead><tbody>{fila}</tbody></table></div>'
@@ -376,7 +321,7 @@ def transaction_reports_html(reports: Optional[List[Dict[str, Any]]]) -> str:
         # El cuerpo es el del informe general, filtrado a esta transaccion (D21).
         # `_SIN_TEXTO` conserva el criterio de N3.5: una grafica cuyo analisis
         # fallo o quedo pendiente se pinta igual y se dice por que.
-        partes = [cabecera, tabla, _caja('Analisis de la Transaccion', sec.get('summary')),
+        partes = [cabecera, tabla, _caja('Análisis de la Transacción', sec.get('summary')),
                   report_body_html(graf, sec, 'transaction', _SIN_TEXTO)]
         bloques.append(''.join(partes))
 
@@ -444,26 +389,26 @@ def _chart_unit_html(title: str, color: str, img_b64: Optional[str],
 # v1.2 §1: "el informe por transaccion es el informe general, filtrado".
 #   (clave_general, clave_tx, titulo, color, texto_general, seccion_tx, titulo_ia)
 BODY_CHARTS = (
-    ('rt_label', 'response_times', 'Response Times por Transaccion', '#8884d8',
-     'responseTimes', 'chart_response_times', 'Analisis - Response Times por Transaccion'),
+    ('rt_label', 'response_times', 'Response Times por Transacción', '#8884d8',
+     'responseTimes', 'chart_response_times', 'Análisis - Response Times por Transacción'),
     # ETAPA 2 (D19): "Throughput Over Time" iba aqui y se retiro del producto
     # entero (v1.2 §1.2). El escalar throughput (req/s) de la portada y de la
     # tabla resumen NO se toca: lo que sale es la GRAFICA y su analisis.
     ('latency', 'latency', 'Latency Over Time', '#9c27b0',
-     'latency', 'chart_latency', 'Analisis - Latency'),
+     'latency', 'chart_latency', 'Análisis - Latency'),
     ('error_rate', 'error_rate', 'Error Rate Over Time', '#f44336',
-     'errorRate', 'chart_error_rate', 'Analisis - Error Rate'),
+     'errorRate', 'chart_error_rate', 'Análisis - Error Rate'),
     ('codes', 'codes', 'Response Codes per Second', '#4CAF50',
-     'codesPerSecond', 'chart_codes', 'Analisis - Response Codes'),
+     'codesPerSecond', 'chart_codes', 'Análisis - Response Codes'),
     ('tps', 'tps', 'Transactions per Second', '#4CAF50',
-     'tps', 'chart_tps', 'Analisis - Transactions per Second'),
+     'tps', 'chart_tps', 'Análisis - Transactions per Second'),
 )
 
 # Solo en el alcance general: los hilos son de toda la prueba (D18) y la
 # distribucion de codigos es del conjunto.
 GENERAL_ONLY_CHARTS = (
-    ('threads', 'Active Threads Over Time', '#2196F3', 'activeThreads', 'Analisis - Active Threads'),
-    ('pie', 'Distribucion de Response Codes', '#ff9800', 'errors', 'Analisis de Errores'),
+    ('threads', 'Active Threads Over Time', '#2196F3', 'activeThreads', 'Análisis - Active Threads'),
+    ('pie', 'Distribución de Response Codes', '#ff9800', 'errors', 'Análisis de Errores'),
 )
 
 
@@ -685,7 +630,7 @@ def build_pdf_html(
                 <tbody>{redir_rows}{redir_total_row}</tbody>
             </table>
         </div>
-        {ai_box('redirects', 'Analisis de Redirecciones', '#4f46e5')}
+        {ai_box('redirects', 'Análisis de Redirecciones', '#4f46e5')}
         '''
 
     # ----- full HTML -----
@@ -1117,10 +1062,10 @@ tbody tr:nth-child(even) {{
 
 <!-- ===== TABLA RESUMEN ===== -->
 <div class="section">
-    <div class="section-header">Reporte Resumen por Transaccion</div>
+    <div class="section-header">Reporte Resumen por Transacción</div>
     <table>
         <thead><tr>
-            <th style="text-align:left">Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>
+            <th style="text-align:left">Transacción</th><th>Muestras</th><th>Errores</th><th>% Error</th>
             <th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>
             <th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>
         </tr></thead>
@@ -1129,7 +1074,7 @@ tbody tr:nth-child(even) {{
     </table>
 </div>
 
-{ai_box('summary', 'Analisis del Reporte Resumen')}
+{ai_box('summary', 'Análisis del Reporte Resumen')}
 
 {redirect_section}
 

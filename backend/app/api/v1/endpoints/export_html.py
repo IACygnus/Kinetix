@@ -245,25 +245,25 @@ _TX_UNIDAD = {'response_times': ',.0f', 'latency': ',.0f',
 # report_generator.py: misma idea, otro motor de graficas.
 #   (sufijo_id, titulo, color, texto_general, titulo_ia, clave_tx, seccion_tx)
 HTML_BODY_CHARTS = (
-    ('rt-label', 'Response Times por Transaccion', '#8b5cf6',
-     'responseTimes', 'Analisis - Response Times por Transaccion',
+    ('rt-label', 'Response Times por Transacción', '#8b5cf6',
+     'responseTimes', 'Análisis - Response Times por Transacción',
      'response_times', 'chart_response_times'),
     # ETAPA 2 (D19): "Throughput Over Time" iba aqui y se retiro del producto
     # entero (v1.2 §1.2). El escalar throughput (req/s) del KPI y de la tabla
     # resumen NO se toca: lo que sale es la GRAFICA y su analisis.
     ('latency', 'Latency Over Time', '#8b5cf6',
-     'latency', 'Analisis - Latency', 'latency', 'chart_latency'),
+     'latency', 'Análisis - Latency', 'latency', 'chart_latency'),
     ('error-rate', 'Error Rate Over Time', '#ef4444',
-     'errorRate', 'Analisis - Error Rate', 'error_rate', 'chart_error_rate'),
+     'errorRate', 'Análisis - Error Rate', 'error_rate', 'chart_error_rate'),
     ('codes', 'Response Codes per Second', '#6366f1',
-     'codesPerSecond', 'Analisis - Response Codes', 'codes', 'chart_codes'),
+     'codesPerSecond', 'Análisis - Response Codes', 'codes', 'chart_codes'),
     ('tps', 'Transactions per Second', '#10b981',
-     'tps', 'Analisis - Transactions per Second', 'tps', 'chart_tps'),
+     'tps', 'Análisis - Transactions per Second', 'tps', 'chart_tps'),
 )
 
 # Solo en el alcance general: los hilos son de toda la prueba (D18).
 HTML_GENERAL_ONLY = (
-    ('threads', 'Active Threads Over Time', '#6366f1', 'activeThreads', 'Analisis - Active Threads'),
+    ('threads', 'Active Threads Over Time', '#6366f1', 'activeThreads', 'Análisis - Active Threads'),
 )
 
 
@@ -354,9 +354,9 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
             e = ' style="color:#ef4444;font-weight:600"' if float(m.get('errorPct', 0)) > 0 else ''
             cuerpo.append(
                 f'<div class="{c["section"]}">'
-                f'<div class="{c["section_title"]}">Reporte Resumen por Transaccion</div>'
+                f'<div class="{c["section_title"]}">Reporte Resumen por Transacción</div>'
                 f'<div class="{c["table_wrap"]}"><table><thead><tr>'
-                '<th>Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
+                '<th>Transacción</th><th>Muestras</th><th>Errores</th><th>% Error</th>'
                 '<th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>'
                 '<th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>'
                 '</tr></thead><tbody><tr>'
@@ -381,7 +381,7 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
                           'encontraron las metricas de esta transaccion en el resumen de esta '
                           'ejecucion.</em></div></div>')
 
-        cuerpo.append(caja('Analisis de la Transaccion', sec.get('summary')))
+        cuerpo.append(caja('Análisis de la Transacción', sec.get('summary')))
 
         # ETAPA 2 (D21): las graficas se piden a HTML_BODY_CHARTS y se pintan con
         # _bloque_grafica_html, la MISMA pieza del informe general. De ahi vienen
@@ -394,7 +394,7 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
                 # Sin serie no hay grafica, pero el texto de esa seccion no se
                 # pierde: se pinta igual con su caja (criterio de N3.5).
                 if sec.get(seccion):
-                    cuerpo.append(caja(f'Analisis - {titulo}', sec.get(seccion)))
+                    cuerpo.append(caja(f'Análisis - {titulo}', sec.get(seccion)))
                 continue
             cid = f'{prefix}chart-tx{i}-{clave.replace("_", "-")}'
             # ETAPA 6 (D49): solo Response Times tiene serie dual; las demas no
@@ -402,7 +402,7 @@ def transaction_reports_plotly_html(reports, prefix: str = '', md=None, clases=N
             _capa = r.get('capa', 'ambas') if clave == 'response_times' else None
             cuerpo.append(_bloque_grafica_html(
                 cid, titulo, color, _ctrl_basic(cid, _capa),
-                caja(f'Analisis - {titulo}', sec.get(seccion)), c))
+                caja(f'Análisis - {titulo}', sec.get(seccion)), c))
             js.append(
                 "Plotly.newPlot('%s', %s, window.n49Layout('%s'), "
                 "(typeof plotlyConfig !== 'undefined' ? plotlyConfig : {responsive:true}));"
@@ -833,14 +833,14 @@ async def export_html(
                         </tr>'''
                     capacity_html = f'''
                     <div class="section" style="margin-bottom:24px">
-                        <div class="section-title">Analisis de Capacidades del Sistema</div>
+                        <div class="section-title">Análisis de Capacidades del Sistema</div>
                         <table style="width:100%;border-collapse:collapse;font-size:.85rem">
                             <thead><tr style="background:#0a1628;color:white">
                                 <th style="padding:8px;text-align:left">Recurso</th>
                                 <th style="padding:8px;text-align:center">Valor</th>
                                 <th style="padding:8px;text-align:center">Umbral</th>
                                 <th style="padding:8px;text-align:center">Estado</th>
-                                <th style="padding:8px;text-align:left">Analisis</th>
+                                <th style="padding:8px;text-align:left">Análisis</th>
                             </tr></thead>
                             <tbody>{cap_rows}</tbody>
                         </table>
@@ -934,7 +934,7 @@ def _build_plotly_html(
     from app.services.export.report_generator import cover_meta_parts
     _cm = cover_meta_parts(meta)
     fila_criterios = (
-        f'<div style="margin-top:.9rem"><div class="meta-label">Criterios de Aceptacion</div>'
+        f'<div style="margin-top:.9rem"><div class="meta-label">Criterios de Aceptación</div>'
         f'<div class="meta-value">{_cm["criteria"]}</div></div>'
     ) if _cm['criteria'] else ''
 
@@ -1008,7 +1008,7 @@ def _build_plotly_html(
                 </table>
             </div>
         </div>
-        {ai_box('redirects', 'Analisis de Redirecciones', '#f97316')}
+        {ai_box('redirects', 'Análisis de Redirecciones', '#f97316')}
         '''
 
     # ---- Error bars (CSS-only, no chart needed) ----
@@ -1242,13 +1242,13 @@ tr:hover{{background:#f8fafc}}
 <div style="text-align:right"><div style="font-size:.8rem;opacity:.7">Realizado por:</div><div style="font-weight:600">Celula de Performance SQA</div></div>
 </div>
 <div class="header-meta">
-<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Analisis de Performance {test_badge}</div>
+<div style="font-size:.75rem;opacity:.7;text-transform:uppercase;letter-spacing:.5px">Reporte de Análisis de Performance {test_badge}</div>
 <div class="project-name">{meta['name']}</div>
 <div class="meta-block">
 <div class="meta-zona-izq">
 <div style="display:flex;gap:2rem;flex-wrap:wrap">
-<div style="flex:1 1 55%"><div class="meta-label">Ejecucion</div><div class="meta-value">{_cm['date']}</div><div class="meta-sec">{_cm['range']}</div></div>
-<div style="flex:1 1 30%"><div class="meta-label">Duracion</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
+<div style="flex:1 1 55%"><div class="meta-label">Ejecución</div><div class="meta-value">{_cm['date']}</div><div class="meta-sec">{_cm['range']}</div></div>
+<div style="flex:1 1 30%"><div class="meta-label">Duración</div><div class="meta-value">{duration_min}m {duration_sec}s</div></div>
 </div>
 {fila_criterios}
 <div style="margin-top:.9rem"><div class="meta-label">Archivo</div><div class="meta-sec">{files_list}</div></div>
@@ -1276,11 +1276,11 @@ tr:hover{{background:#f8fafc}}
 </div>
 
 <div class="section">
-<div class="section-title">Reporte Resumen por Transaccion</div>
+<div class="section-title">Reporte Resumen por Transacción</div>
 <div class="table-wrap">
 <table>
 <thead><tr>
-<th>Transaccion</th><th>Muestras</th><th>Errores</th><th>% Error</th>
+<th>Transacción</th><th>Muestras</th><th>Errores</th><th>% Error</th>
 <th>Promedio</th><th>Mediana</th><th>P90</th><th>P95</th><th>P99</th>
 <th>Min</th><th>Max</th><th>TPS</th><th>KB/s Recv</th><th>KB/s Sent</th>
 </tr></thead>
@@ -1289,7 +1289,7 @@ tr:hover{{background:#f8fafc}}
 </div>
 </div>
 
-{ai_box('summary', 'Analisis del Reporte Resumen')}
+{ai_box('summary', 'Análisis del Reporte Resumen')}
 
 {redirect_section}
 
@@ -1304,16 +1304,16 @@ Interactivo: Scroll para zoom &bull; Arrastre para seleccionar zona &bull; Doble
 
 <div class="grid-2">
 <div class="chart-section">
-<div class="chart-title" style="border-left-color:#f59e0b">Distribucion de Response Codes</div>
+<div class="chart-title" style="border-left-color:#f59e0b">Distribución de Response Codes</div>
 <div id="chart-pie" class="plotly-chart" style="min-height:380px"></div>
 </div>
 <div class="chart-section">
-<div class="chart-title" style="border-left-color:#ef4444">Errores por Transaccion</div>
+<div class="chart-title" style="border-left-color:#ef4444">Errores por Transacción</div>
 {error_bars_html}
 </div>
 </div>
 
-{ai_box('errors', 'Analisis de Errores', '#f97316')}
+{ai_box('errors', 'Análisis de Errores', '#f97316')}
 
 {tx_body}
 

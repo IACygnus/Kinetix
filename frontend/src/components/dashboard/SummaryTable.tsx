@@ -44,7 +44,7 @@ export default function SummaryTable({ rows, durationSeconds, total, titulo = 'R
             <table className="w-full table-auto text-lg">
               <thead className="bg-[#0a1628]">
                 <tr>
-                  <th className="px-3 py-2 text-left text-base font-bold text-white uppercase">Transaccion</th>
+                  <th className="px-3 py-2 text-left text-base font-bold text-white uppercase">Transacción</th>
                   <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Muestras</th>
                   <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">Errores</th>
                   <th className="px-3 py-2 text-right text-base font-bold text-white uppercase">% Error</th>
