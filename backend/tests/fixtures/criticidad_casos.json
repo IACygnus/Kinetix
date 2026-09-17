@@ -1,0 +1,146 @@
+{
+  "_comentario": [
+    "ETAPA 5 (D42) — los casos de paridad de la regla de criticidad.",
+    "Los corren LOS DOS lenguajes contra el mismo `esperado`:",
+    "  backend/tests/test_criticidad_paridad.py   (Python, compute_per_transaction_verdicts)",
+    "  frontend/src/utils/criticidad.paridad.ts   (TypeScript, veredictoTransaccion)",
+    "Si la regla cambia en un solo sitio, este archivo lo caza.",
+    "`criterios` vacio = se usan los valores por defecto del backend (2000 ms, 99%)."
+  ],
+  "casos": [
+    {
+      "nombre": "holgado por los dos lados",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "APTO"
+    },
+    {
+      "nombre": "p90 por encima del limite",
+      "metricas": {"promedio": 900, "p90": 2001, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "p90 exactamente en el limite: NO falla (es >)",
+      "metricas": {"promedio": 900, "p90": 2000, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "APTO CON RESERVAS"
+    },
+    {
+      "nombre": "p90 justo en el 80% del limite: NO avisa (es >)",
+      "metricas": {"promedio": 900, "p90": 1600, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "APTO"
+    },
+    {
+      "nombre": "p90 un milisegundo por encima del 80%: avisa",
+      "metricas": {"promedio": 900, "p90": 1601, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "APTO CON RESERVAS"
+    },
+    {
+      "nombre": "error por encima de 100-disponibilidad",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 41.26},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "error exactamente en el limite: NO falla (es >)",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.5},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "APTO"
+    },
+    {
+      "nombre": "error un pelo por encima del limite",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.51},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "el error manda sobre el aviso de tiempo",
+      "metricas": {"promedio": 900, "p90": 1700, "max": 3000, "tasa_error": 5.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "criterios propios mas exigentes que los globales",
+      "metricas": {"promedio": 400, "p90": 462, "max": 1013, "tasa_error": 0.0},
+      "criterios": {"response_time": 500, "availability": 99.5},
+      "esperado": "APTO CON RESERVAS"
+    },
+    {
+      "nombre": "criterios propios muy exigentes: no cumple",
+      "metricas": {"promedio": 400, "p90": 462, "max": 1013, "tasa_error": 0.0},
+      "criterios": {"response_time": 300, "availability": 99.5},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "sin criterios: valores por defecto del backend (2000 ms, 99%)",
+      "metricas": {"promedio": 900, "p90": 1900, "max": 3000, "tasa_error": 0.9},
+      "criterios": {},
+      "esperado": "APTO CON RESERVAS"
+    },
+    {
+      "nombre": "sin criterios y con 1,1% de error: por encima del 1% por defecto",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 1.1},
+      "criterios": {},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "disponibilidad 100%: cualquier error falla",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.01},
+      "criterios": {"response_time": 2000, "availability": 100},
+      "esperado": "NO APTO"
+    },
+    {
+      "nombre": "disponibilidad 100% y cero errores: cumple",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 100},
+      "esperado": "APTO"
+    },
+    {
+      "nombre": "criterios como texto, tal como llegan del formulario",
+      "metricas": {"promedio": 900, "p90": 2001, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": "2000", "availability": "99.5"},
+      "esperado": "NO APTO"
+    }
+  ],
+  "senales": [
+    {
+      "nombre": "pico relativo justo en 10 veces: marca",
+      "metricas": {"promedio": 100, "p90": 120, "max": 1000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": true
+    },
+    {
+      "nombre": "pico relativo por debajo de 10 veces: no marca",
+      "metricas": {"promedio": 100, "p90": 120, "max": 999, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": false
+    },
+    {
+      "nombre": "pico absoluto de 10 s: marca aunque el promedio sea alto",
+      "metricas": {"promedio": 5000, "p90": 1500, "max": 10000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": true
+    },
+    {
+      "nombre": "todo holgado: no marca",
+      "metricas": {"promedio": 108, "p90": 123, "max": 438, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": false
+    },
+    {
+      "nombre": "promedio cero: el pico relativo no se evalua",
+      "metricas": {"promedio": 0, "p90": 0, "max": 500, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": false
+    },
+    {
+      "nombre": "marca solo por el veredicto, sin picos",
+      "metricas": {"promedio": 900, "p90": 2001, "max": 3000, "tasa_error": 0.0},
+      "criterios": {"response_time": 2000, "availability": 99.5},
+      "esperado_critica": true
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { Fragment, useState, useCallback, useEffect } from 'react';
 import {
   Upload,
   FileText,
@@ -10,11 +10,14 @@ import {
   AlertTriangle,
   CheckCircle,
   File as FileIcon,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { testAPI, clientsAPI } from '../../services/api';
 import type { TransactionMetrics } from '../../services/api';   // N3.3
 import type { ClientInfo } from '../../types';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { evaluarCriticidad } from '../../utils/criticidad';   // ETAPA 5 (D42)
 
 interface UploadJTLProps {
   onUploadSuccess: (id: string) => void;
@@ -64,7 +67,6 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
 
   // HF2: Criterios por transaccion (labels detectados del JTL)
   const [transactionCriteria, setTransactionCriteria] = useState<Record<string, Record<string, string>>>({});
-  const [detectedLabels, setDetectedLabels] = useState<string[]>([]);
   const [extractingLabels, setExtractingLabels] = useState(false);
 
   // N3.3: metricas por transaccion + seleccion para analisis individual.
@@ -73,6 +75,8 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   // criticidad (porque cambiaron los criterios) no se pierde lo que ya marco.
   const [transactions, setTransactions] = useState<TransactionMetrics[]>([]);
   const [manualSel, setManualSel] = useState<Record<string, boolean>>({});
+  // ETAPA 5 (D40): que filas estan desplegadas. Varias a la vez.
+  const [filasAbiertas, setFilasAbiertas] = useState<Record<string, boolean>>({});
 
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -106,18 +110,14 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
       setExtractingLabels(true);
       const data = await testAPI.extractJTLTransactions(file, rt, av);
       setTransactions(data.transactions || []);
-      setDetectedLabels((data.transactions || []).map(t => t.label));
     } catch (err) {
-      console.error('extract-jtl-transactions fallo, se usa el endpoint anterior:', err);
-      try {
-        const response = await testAPI.extractJTLLabels(file);
-        setTransactions([]);
-        setDetectedLabels(response.labels || []);
-      } catch (err2) {
-        console.error('Error extracting labels:', err2);
-        setTransactions([]);
-        setDetectedLabels([]);
-      }
+      // ETAPA 5 (D40/D43): los criterios por transaccion viven DENTRO de la fila
+      // de cada transaccion, y una fila necesita sus metricas. Si este endpoint
+      // falla no hay metricas, asi que no hay panel: quedan los criterios
+      // generales, que se aplican a todo. Antes el respaldo pintaba la lista de
+      // nombres para el bloque desplegable, que ya no existe.
+      console.error('extract-jtl-transactions fallo; el panel queda sin transacciones:', err);
+      setTransactions([]);
     } finally {
       setExtractingLabels(false);
     }
@@ -152,28 +152,46 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
     });
   }, [extractLabelsFromFile, responseTime, availability]);
 
-  // N3.3: los criterios globales pueden cambiar DESPUES de cargar el archivo.
-  // Se re-consulta al backend con debounce en vez de recalcular en el cliente:
-  // asi el umbral de criticidad tiene una sola fuente de verdad (el endpoint) y
-  // no se duplica aqui la logica de veredictos. Cuesta ~0.35s por llamada.
-  // Solo aplica si el endpoint nuevo respondio (en fallback no hay metricas).
-  useEffect(() => {
-    if (files.length === 0 || transactions.length === 0) return;
-    const t = setTimeout(() => {
-      extractLabelsFromFile(files[0], responseTime, availability);
-    }, 800);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [responseTime, availability]);
+  // ETAPA 5 (D42): aqui vivia un `useEffect` con 800 ms de debounce que RESUBIA
+  // el JTL entero cada vez que cambiaba un criterio global, para que el backend
+  // recalculara la criticidad. Con criterios por fila (D40) eso seria una
+  // resubida por tecla. La regla se recalcula ahora en el cliente con
+  // `criticidad.ts`, que es el puerto literal de la del backend y tiene pruebas
+  // de paridad sobre los mismos casos. Las metricas siguen viniendo del
+  // endpoint: lo unico que se movio es la decision de "critica o no".
 
-  // Seleccion efectiva = sugerencia del backend + lo que Fredy haya tocado.
-  const isSelected = (t: TransactionMetrics) => manualSel[t.label] ?? t.is_critical_suggested;
+  // ETAPA 5 (D42): la criticidad se recalcula AQUI, al instante, con el puerto
+  // en TS de la misma regla del backend (`criticidad.ts`, con pruebas de
+  // paridad). Antes venia solo del backend y editar un criterio obligaba a
+  // resubir el JTL entero.
+  const criteriosEfectivos = useCallback((label: string) => {
+    const propios = transactionCriteria[label] || {};
+    return {
+      response_time: propios.response_time || responseTime,
+      availability: propios.availability || availability,
+    };
+  }, [transactionCriteria, responseTime, availability]);
+
+  // D41: una fila "tiene criterios propios" si escribio alguno de los tres.
+  const tieneCriteriosPropios = useCallback((label: string) => {
+    const c = transactionCriteria[label] || {};
+    return Boolean(c.concurrency || c.response_time || c.availability);
+  }, [transactionCriteria]);
+
+  const criticidadDe = useCallback(
+    (t: TransactionMetrics) => evaluarCriticidad(t, criteriosEfectivos(t.label)),
+    [criteriosEfectivos],
+  );
+
+  // Seleccion efectiva = sugerencia (ahora recalculada aqui) + lo que Fredy toque.
+  const isSelected = (t: TransactionMetrics) => manualSel[t.label] ?? criticidadDe(t).esCritica;
   const selectedLabels = transactions.filter(isSelected).map(t => t.label);
   const setAll = (value: boolean | null) => {
     if (value === null) { setManualSel({}); return; }   // volver a la sugerencia
     setManualSel(Object.fromEntries(transactions.map(t => [t.label, value])));
   };
   const fmt = (n: number) => Math.round(n).toLocaleString('es-CO');
+  const fmt2 = (n: number) => n.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -199,7 +217,7 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
     setFiles((prev) => {
       const updated = prev.filter((_, i) => i !== index);
       if (updated.length === 0) {
-        setDetectedLabels([]);
+        setFilasAbiertas({});
         setTransactionCriteria({});
       }
       return updated;
@@ -484,7 +502,7 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
         {/* Criterios de Aceptacion */}
         <div className="p-6 bg-gray-50 rounded-2xl border border-gray-200">
           <h3 className="text-xl font-semibold text-gray-700 mb-4 uppercase tracking-wider">
-            Criterios de Aceptacion
+            Criterios de aceptación
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -560,7 +578,7 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
             </div>
           </div>
 
-          {/* HF2: Criterios por Transaccion — labels detectados del JTL */}
+          {/* ETAPA 5 (D40): las transacciones del JTL, con sus criterios dentro. */}
           {extractingLabels && (
             <p className="mt-4 text-lg text-gray-400 animate-pulse">
               Detectando transacciones del archivo...
@@ -569,21 +587,21 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
 
           {/* N3.3: transacciones con metricas reales y seleccion para analisis
               individual. Solo aparece si el endpoint nuevo respondio; en
-              fallback se ve el panel de criterios de siempre. */}
+              el panel no se pinta (ver el comentario de extractLabelsFromFile). */}
           {transactions.length > 0 && (
             <div className="mt-5 bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-700">Transacciones del JTL</h3>
                   <p className="text-sm text-gray-500">
-                    {selectedLabels.length} de {transactions.length} transacciones marcadas para analisis individual
+                    {selectedLabels.length} de {transactions.length} transacciones marcadas para análisis individual
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setAll(true)}
                     className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Marcar todas</button>
                   <button type="button" onClick={() => setAll(null)}
-                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Solo criticas</button>
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Solo críticas</button>
                   <button type="button" onClick={() => setAll(false)}
                     className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Ninguna</button>
                 </div>
@@ -591,126 +609,127 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
 
               {selectedLabels.length > 10 && (
                 <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-sm text-amber-800">
-                  {selectedLabels.length} transacciones marcadas: el analisis anadira ~{selectedLabels.length} llamadas
+                  {selectedLabels.length} transacciones marcadas: el análisis añadirá ~{selectedLabels.length} llamadas
                   de IA y varios minutos al procesamiento.
                 </div>
               )}
 
               <div className="max-h-96 overflow-y-auto">
+                {/* ETAPA 5 (D39): las columnas de v1.2 §2.1 — sin p90 ni Max, con TPS. */}
                 <table className="w-full text-sm">
                   <thead className="text-xs uppercase text-gray-500 border-b border-gray-200">
                     <tr>
                       <th className="py-2 pr-2 text-left w-8"></th>
-                      <th className="py-2 pr-2 text-left">Transaccion</th>
+                      <th className="py-2 pr-1 text-left w-6"></th>
+                      <th className="py-2 pr-2 text-left">Transacción</th>
                       <th className="py-2 px-2 text-right">Muestras</th>
                       <th className="py-2 px-2 text-right">Promedio</th>
-                      <th className="py-2 px-2 text-right">p90</th>
-                      <th className="py-2 px-2 text-right">Max</th>
+                      <th className="py-2 px-2 text-right">TPS</th>
                       <th className="py-2 pl-2 text-right">Errores</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {transactions.map(t => (
-                      <tr key={t.label}
-                        className={`border-b border-gray-100 ${t.is_critical_suggested ? 'bg-amber-50/60' : ''}`}>
-                        <td className="py-2 pr-2 align-top">
-                          <input type="checkbox" checked={isSelected(t)}
-                            onChange={e => setManualSel(prev => ({ ...prev, [t.label]: e.target.checked }))}
-                            className="w-4 h-4 accent-[#f5a623] cursor-pointer" />
-                        </td>
-                        <td className="py-2 pr-2">
-                          <span className="font-medium text-gray-700">{t.label}</span>
-                          {t.is_critical_suggested && (
-                            <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-amber-200 text-amber-900">critica</span>
+                    {transactions.map(t => {
+                      const { esCritica, motivos } = criticidadDe(t);
+                      const abierta = Boolean(filasAbiertas[t.label]);
+                      const propios = transactionCriteria[t.label] || {};
+                      const conPropios = tieneCriteriosPropios(t.label);
+                      const motivo = motivos.join(' · ');
+                      return (
+                        <Fragment key={t.label}>
+                          <tr className={`border-b border-gray-100 ${esCritica ? 'bg-amber-50/60' : ''}`}>
+                            <td className="py-2 pr-2 align-top">
+                              <input type="checkbox" checked={isSelected(t)}
+                                onChange={e => setManualSel(prev => ({ ...prev, [t.label]: e.target.checked }))}
+                                className="w-4 h-4 accent-[#f5a623] cursor-pointer" />
+                            </td>
+                            {/* D40: cada fila se despliega, y pueden estar abiertas varias a la vez. */}
+                            <td className="py-2 pr-1 align-top">
+                              <button type="button" aria-label={`Criterios de ${t.label}`}
+                                aria-expanded={abierta}
+                                onClick={() => setFilasAbiertas(p => ({ ...p, [t.label]: !p[t.label] }))}
+                                className="text-gray-400 hover:text-gray-700">
+                                {abierta ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
+                            </td>
+                            <td className="py-2 pr-2">
+                              <span className="font-medium text-gray-700">{t.label}</span>
+                              {esCritica && (
+                                <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-amber-200 text-amber-900">crítica</span>
+                              )}
+                              {conPropios && (
+                                <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-indigo-100 text-indigo-800">criterios propios</span>
+                              )}
+                              {motivo && (
+                                <div className="text-xs text-gray-500 mt-0.5" title={motivo}>{motivo}</div>
+                              )}
+                            </td>
+                            <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.muestras)}</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.promedio)} ms</td>
+                            <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt2(t.tps)}</td>
+                            <td className="py-2 pl-2 text-right tabular-nums text-gray-600">
+                              {fmt(t.errores)} <span className="text-gray-400">({fmt2(t.tasa_error)}%)</span>
+                            </td>
+                          </tr>
+                          {abierta && (
+                            <tr className="border-b border-gray-100 bg-gray-50/70">
+                              <td colSpan={7} className="px-4 py-3">
+                                <div className="flex flex-wrap items-end justify-between gap-3">
+                                  <p className="text-sm text-gray-500">
+                                    Criterios de aceptación de esta transacción.{' '}
+                                    {conPropios
+                                      ? 'Se evalúa con estos valores.'
+                                      : 'Sin valores propios se evalúa con los criterios generales de arriba.'}
+                                  </p>
+                                  {/* D41: volver a los globales limpia los propios. */}
+                                  <button type="button" disabled={!conPropios}
+                                    onClick={() => setTransactionCriteria(prev => {
+                                      const copia = { ...prev };
+                                      delete copia[t.label];
+                                      return copia;
+                                    })}
+                                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">
+                                    Usar globales
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                                  {([
+                                    ['concurrency', 'Concurrencia esperada', concurrency, '1'],
+                                    ['response_time', 'Tiempo de respuesta (ms)', responseTime, '1'],
+                                    ['availability', 'Disponibilidad (%)', availability, '0.1'],
+                                  ] as const).map(([campo, etiqueta, global, paso]) => (
+                                    <div key={campo}>
+                                      <label className="text-sm text-gray-500 block mb-1">{etiqueta}</label>
+                                      <input type="number" step={paso}
+                                        value={propios[campo] || ''}
+                                        placeholder={global}
+                                        onChange={e => setTransactionCriteria(prev => ({
+                                          ...prev, [t.label]: { ...prev[t.label], [campo]: e.target.value },
+                                        }))}
+                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-2">
+                                  La marca de crítica se recalcula con el tiempo de respuesta y la
+                                  disponibilidad. La concurrencia se guarda con el informe pero no
+                                  interviene en ese cálculo.
+                                </p>
+                              </td>
+                            </tr>
                           )}
-                          {t.motivo && (
-                            <div className="text-xs text-gray-500 mt-0.5" title={t.motivo}>{t.motivo}</div>
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.muestras)}</td>
-                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.promedio)} ms</td>
-                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.p90)} ms</td>
-                        <td className="py-2 px-2 text-right tabular-nums text-gray-600">{fmt(t.max)} ms</td>
-                        <td className="py-2 pl-2 text-right tabular-nums text-gray-600">
-                          {fmt(t.errores)} <span className="text-gray-400">({t.tasa_error.toFixed(2)}%)</span>
-                        </td>
-                      </tr>
-                    ))}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {detectedLabels.length > 0 && (
-            <details className="mt-5">
-              <summary className="cursor-pointer text-lg font-medium text-gray-600 hover:text-gray-800">
-                Criterios por Transaccion ({detectedLabels.length} transacciones detectadas)
-              </summary>
-              <div className="mt-3 space-y-3 pl-4 border-l-2 border-[#f5a623] max-h-96 overflow-y-auto">
-                {detectedLabels.map(label => (
-                  <div key={label} className="bg-white rounded-xl p-3 border border-gray-200">
-                    <h4 className="text-base font-semibold text-gray-700 mb-2">{label}</h4>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-sm text-gray-500 block mb-1">Concurrencia Esperada</label>
-                        <input type="number" value={transactionCriteria[label]?.concurrency || ''} placeholder={`ej: ${concurrency}`}
-                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], concurrency: e.target.value } }))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                      </div>
-                      <div>
-                        <label className="text-sm text-gray-500 block mb-1">Response Time (ms)</label>
-                        <input type="number" value={transactionCriteria[label]?.response_time || ''} placeholder={`ej: ${responseTime}`}
-                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], response_time: e.target.value } }))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                      </div>
-                      <div>
-                        <label className="text-sm text-gray-500 block mb-1">Disponibilidad (%)</label>
-                        <input type="number" step="0.1" value={transactionCriteria[label]?.availability || ''} placeholder={`ej: ${availability}`}
-                          onChange={(e) => setTransactionCriteria(prev => ({ ...prev, [label]: { ...prev[label], availability: e.target.value } }))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Boton para aplicar mismo criterio a todas */}
-                <div className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
-                  <p className="text-sm text-gray-600 mb-2">Aplicar mismo criterio a todas las transacciones:</p>
-                  <div className="grid grid-cols-4 gap-3">
-                    <input type="number" placeholder="Concurrencia" id="bulk-conc"
-                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                    <input type="number" placeholder="RT (ms)" id="bulk-rt"
-                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                    <input type="number" step="0.1" placeholder="Disp. %" id="bulk-avail"
-                      className="border border-gray-300 rounded-lg px-3 py-2 text-base focus:border-[#f5a623]" />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const concVal = (document.getElementById('bulk-conc') as HTMLInputElement)?.value || '';
-                        const rtVal = (document.getElementById('bulk-rt') as HTMLInputElement)?.value || '';
-                        const availVal = (document.getElementById('bulk-avail') as HTMLInputElement)?.value || '';
-                        const bulk: Record<string, Record<string, string>> = {};
-                        detectedLabels.forEach(label => {
-                          bulk[label] = {
-                            ...(transactionCriteria[label] || {}),
-                            ...(concVal ? { concurrency: concVal } : {}),
-                            ...(rtVal ? { response_time: rtVal } : {}),
-                            ...(availVal ? { availability: availVal } : {}),
-                          };
-                        });
-                        setTransactionCriteria(prev => ({ ...prev, ...bulk }));
-                      }}
-                      className="px-4 py-2 rounded-lg text-white text-base font-semibold"
-                      style={{ backgroundColor: '#f5a623' }}
-                    >
-                      Aplicar a todas
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </details>
-          )}
+          {/* ETAPA 5 (D43): aqui vivia el bloque desplegable "Criterios por
+              Transaccion". Sus tres campos se mudaron dentro de la fila de cada
+              transaccion (D40), que es donde se ven junto a sus metricas. */}
         </div>
 
         {/* Error */}

@@ -36,8 +36,8 @@ from app.services.jtl.transaction_series import (                               
     DEFAULT_INTERVAL_SECONDS,
 )
 from app.services.ai.transaction_report import generate_transaction_report       # N4.6
-from app.services.ai.estilo import (                                             # ETAPA 3 (D35)
-    avisos_de_ejecucion, detectar_estilo, terminos_de)
+from app.services.ai.estilo import (                                             # ETAPA 3 (D35) + ETAPA 5 (D45)
+    avisos_de_ejecucion, detectar_estilo, ms, num, pct, terminos_de, veces)
 from app.db.models.transaction_chart_analysis import (                           # N4.6
     TransactionChartAnalysis,
     SECTIONS,
@@ -176,15 +176,29 @@ async def extract_jtl_transactions(
         for _, row in summary_df.iterrows():
             label = str(row['label'])
             avg, mx = float(row['promedio']), float(row['max'])
+            # ETAPA 5 (D45): el motivo se redacta como el resto del informe —
+            # sin jerga, con tildes y en formato espanol. Antes decia
+            # "no apto por criterios (p90 175ms, 64.79% error)".
             motivos = []
             veredicto = verdicts.get(label)
             if veredicto in ("NO APTO", "APTO CON RESERVAS"):
-                motivos.append(f"{veredicto.lower()} por criterios (p90 {row['p90']:.0f}ms, "
-                               f"{row['tasa_error']:.2f}% error)")
+                p90 = float(row['p90'])
+                umbral_rt = float((criteria or {}).get('response_time', 2000))
+                umbral_err = 100.0 - float((criteria or {}).get('availability', 99.0))
+                partes = []
+                if p90 > umbral_rt * 0.8:
+                    partes.append(f"1 de cada 10 usuarios espera más de {ms(p90)} "
+                                  f"(el límite son {ms(umbral_rt)})")
+                if float(row['tasa_error']) > umbral_err:
+                    partes.append(f"{pct(row['tasa_error'])} de errores "
+                                  f"(el límite es {pct(umbral_err)})")
+                encabezado = "no cumple: " if veredicto == "NO APTO" else "queda al límite: "
+                motivos.append(encabezado + " · ".join(partes))
             if avg > 0 and mx >= 10 * avg:
-                motivos.append(f"pico de {mx:.0f}ms, {mx / avg:.0f}x el promedio")
+                motivos.append(f"pico de {ms(mx)}, {veces(mx / avg)} su promedio")
             if mx >= 10000:
-                motivos.append(f"pico absoluto de {mx:.0f}ms (>=10s, posible timeout)")
+                motivos.append(f"pico de {num(mx / 1000, 1)} segundos, "
+                               f"que apunta a una espera agotada")
 
             transactions.append({
                 'label': label,
@@ -193,6 +207,10 @@ async def extract_jtl_transactions(
                 'p90': round(float(row['p90']), 2),
                 'p95': round(float(row['p95']), 2),
                 'max': round(mx, 2),
+                # ETAPA 5 (D39): TPS = muestras / duracion de toda la prueba. Ya
+                # venia calculado como `rendimiento` en get_summary_table_data;
+                # aqui solo se devuelve, para que el panel no lo recalcule mal.
+                'tps': round(float(row['rendimiento']), 2),
                 'errores': int(row['errores']),
                 'tasa_error': round(float(row['tasa_error']), 4),
                 'verdict': veredicto,

@@ -148,6 +148,8 @@ export interface TransactionMetrics {
   max: number;
   errores: number;
   tasa_error: number;
+  /** ETAPA 5 (D39): muestras / duracion de toda la prueba, igual que la tabla resumen. */
+  tps: number;
   verdict: string | null;
   is_critical_suggested: boolean;
   motivo: string;
