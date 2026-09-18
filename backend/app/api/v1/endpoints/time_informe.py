@@ -128,14 +128,20 @@ async def informe_pdf(
     html = documento_pdf_html(d, _elegidas(seccion, por_defecto), orientacion)
     try:
         from weasyprint import HTML as WeasyHTML
-        pdf = WeasyHTML(string=html).write_pdf()
+        # Se renderiza y luego se escribe, en dos pasos, para poder contar las
+        # páginas: la vista previa las necesita y preguntárselo al PDF ya escrito
+        # no se puede, porque WeasyPrint guarda sus objetos comprimidos.
+        doc = WeasyHTML(string=html).render()
+        paginas = len(doc.pages)
+        pdf = doc.write_pdf()
     except Exception:
         logger.exception("Informe de horas: fallo al render del PDF")
         raise HTTPException(500, "No se pudo generar el PDF del informe.")
     disp = "attachment" if descargar else "inline"
     return Response(
         content=pdf, media_type="application/pdf",
-        headers={"Content-Disposition": f'{disp}; filename="{nombre_archivo(d, "pdf")}"'},
+        headers={"Content-Disposition": f'{disp}; filename="{nombre_archivo(d, "pdf")}"',
+                 "X-Total-Paginas": str(paginas)},
     )
 
 

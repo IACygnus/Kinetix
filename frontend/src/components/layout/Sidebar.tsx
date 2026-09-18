@@ -34,6 +34,7 @@ import {
   FolderKanban,
   ListChecks,
   Upload,
+  FileBarChart2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -180,6 +181,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Importar',
           path: '/horas/importar',
           icon: <Upload className="w-6 h-6" />,
+        },
+        {
+          label: 'Informes',
+          path: '/horas/informes',
+          icon: <FileBarChart2 className="w-6 h-6" />,
         },
       ],
     },

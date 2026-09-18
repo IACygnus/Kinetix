@@ -13,6 +13,12 @@ import api from '../services/api';
  *  un 422 que no dice nada útil. */
 const MULTIPART = { headers: { 'Content-Type': 'multipart/form-data' } };
 
+/** Axios manda las listas como `seccion[]=a&seccion[]=b`, y FastAPI espera
+ *  `seccion=a&seccion=b`: con los corchetes **no ve el parámetro y se queda con
+ *  el valor por defecto**, sin dar ningún error. Es lo que hacía que quitar una
+ *  sección del informe no quitara nada. */
+const LISTAS = { paramsSerializer: { indexes: null as null } };
+
 /** El mensaje de un error de la API, **siempre como texto**.
  *
  *  Un 422 de FastAPI trae `detail` como una lista de objetos, no como una
@@ -137,6 +143,124 @@ export interface Semana {
   total_expected: string | number;
   total_ordinary: string | number;
   total_overtime: string | number;
+}
+
+// ===================== EL INFORME (ETAPA H5, §7) =====================
+
+/** Las diez secciones de §7.2, en su orden y con su nombre. */
+export const SECCIONES_INFORME: { clave: string; titulo: string }[] = [
+  { clave: 'resumen', titulo: 'Resumen' },
+  { clave: 'personas', titulo: 'Ocupación por persona' },
+  { clave: 'facturacion', titulo: 'Facturable frente a no facturable' },
+  { clave: 'clientes', titulo: 'Cobertura por cliente' },
+  { clave: 'actividades', titulo: 'En qué se fue el tiempo' },
+  { clave: 'proyectos', titulo: 'Consumido frente a estimado' },
+  { clave: 'mapa', titulo: 'Mapa del mes' },
+  { clave: 'pendientes', titulo: 'Días sin registrar' },
+  { clave: 'diarias', titulo: 'Horas día a día' },
+  { clave: 'detalle', titulo: 'Detalle de registros' },
+];
+
+export type Orientacion = 'mixta' | 'vertical' | 'horizontal';
+
+export interface FiltrosInforme {
+  desde: string;
+  hasta: string;
+  user_id?: string[];
+  client_id?: string;
+  project_id?: string;
+  solo_facturables?: boolean;
+}
+
+export interface InformeResumen {
+  total_hours: string | number;
+  ordinary_hours: string | number;
+  overtime_hours: string | number;
+  billable_hours: string | number;
+  billable_pct: string | number;
+  pending_days: number;
+  expected_hours: string | number;
+  people_count: number;
+  projects_count: number;
+  entries_count: number;
+}
+
+export interface InformePersona {
+  user_id: string;
+  user_name: string;
+  expected_hours: string | number;
+  total_hours: string | number;
+  ordinary_hours: string | number;
+  overtime_hours: string | number;
+  billable_hours: string | number;
+  occupancy_pct: string | number;
+  pending_days: number;
+}
+
+export interface InformeFacturacion {
+  client_name: string;
+  billable_hours: string | number;
+  non_billable_hours: string | number;
+  total_hours: string | number;
+  billable_pct: string | number;
+}
+
+export interface InformeReparto {
+  name: string;
+  hours: string | number;
+  pct: string | number;
+}
+
+export interface InformeMapaPersona {
+  user_id: string;
+  user_name: string;
+  por_dia: (string | number)[];
+  estados: string[];
+  total_hours: string | number;
+}
+
+export interface InformePendiente {
+  user_name: string;
+  date: string;
+  expected_hours: string | number;
+  ordinary_hours: string | number;
+  missing_hours: string | number;
+}
+
+export interface InformeFilaDiaria {
+  client_name: string;
+  project_name: string;
+  activity_name: string;
+  por_dia: (string | number)[];
+  total_hours: string | number;
+}
+
+export interface Informe {
+  filtros: {
+    desde: string; hasta: string; periodo: string; personas: string[];
+    alcance: string; client_name: string; project_name: string;
+    solo_facturables: boolean;
+  };
+  dias: string[];
+  resumen: InformeResumen;
+  personas: InformePersona[];
+  facturacion: InformeFacturacion[];
+  por_cliente: InformeReparto[];
+  por_actividad: InformeReparto[];
+  proyectos: ConsultaProyecto[];
+  mapa: InformeMapaPersona[];
+  pendientes: InformePendiente[];
+  diarias: InformeFilaDiaria[];
+  detalle: Registro[];
+  detalle_total: number;
+  generado: string;
+}
+
+/** Lo que devuelve una descarga: el archivo, su nombre y, en PDF, sus páginas. */
+export interface Descarga {
+  blob: Blob;
+  nombre: string;
+  paginas?: number;
 }
 
 // ===================== IMPORTACIÓN (ETAPA H3, §6) =====================
@@ -318,6 +442,31 @@ export interface RegistroNuevo {
 
 export const horasApi = {
   // ---------- Registro (H2) ----------
+  // ---------- El informe (H5, §7) ----------
+  informe: async (f: FiltrosInforme): Promise<Informe> =>
+    (await api.get('/time/informe', { params: f, ...LISTAS })).data,
+
+  /** El documento, como archivo. Se pide con axios y no con un `<iframe src>`
+   *  para que viaje la cookie de sesión sin depender de cómo el navegador trate
+   *  un marco de otro origen; después se enseña o se descarga desde un blob. */
+  documentoInforme: async (
+    formato: 'html' | 'pdf' | 'csv',
+    f: FiltrosInforme,
+    extra: { seccion?: string[]; orientacion?: Orientacion; descargar?: boolean } = {},
+  ): Promise<Descarga> => {
+    const r = await api.get(`/time/informe/${formato}`, {
+      params: { ...f, ...extra }, responseType: 'blob', ...LISTAS,
+    });
+    const cd: string = r.headers['content-disposition'] || '';
+    const m = /filename="([^"]+)"/.exec(cd);
+    const paginas = r.headers['x-total-paginas'];
+    return {
+      blob: r.data,
+      nombre: m ? m[1] : `informe-horas.${formato}`,
+      paginas: paginas ? Number(paginas) : undefined,
+    };
+  },
+
   // ---------- Importación (H3, §6) ----------
   /** Analiza el archivo y devuelve qué pasaría. **No escribe nada** (§6.2.5). */
   vistaPreviaImportacion: async (archivo: File, userId?: string): Promise<VistaPrevia> => {

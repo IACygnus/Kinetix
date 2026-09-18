@@ -60,7 +60,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-CSRF-Token", "Content-Disposition", "X-Filename", "X-Has-CSVs"],
+    expose_headers=["X-CSRF-Token", "Content-Disposition", "X-Filename", "X-Has-CSVs",
+                    # ETAPA H5: el conteo de paginas del informe en PDF, para la
+                    # vista previa. Sin exponerla, el navegador no deja leerla.
+                    "X-Total-Paginas"],
 )
 
 # CSRF middleware — validate double-submit cookie on mutating requests
