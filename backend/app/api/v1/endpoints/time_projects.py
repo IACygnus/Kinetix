@@ -98,6 +98,13 @@ async def _detalle(db: AsyncSession, proyecto: Project) -> ProjectDetailResponse
         created_at=proyecto.created_at,
         total_estimated_hours=total_est, total_consumed_hours=total_con,
         activities_count=len(actividades), activities=actividades,
+        # ETAPA H2b (§5.1): el estado del proyecto entero, el mismo que enseña el
+        # listado. Sin esto el detalle diría «En rango» de un proyecto que el
+        # listado acaba de marcar como desfasado, que es peor que no decir nada.
+        consumed_pct=porcentaje_consumido(total_con, total_est),
+        overrun_status=estado_desfase(total_con, total_est),
+        overrun_hours=horas_de_desfase(total_con, total_est),
+        overrun_label=etiqueta_desfase(total_con, total_est),
     )
 
 

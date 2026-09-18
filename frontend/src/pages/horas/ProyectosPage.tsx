@@ -21,6 +21,7 @@ import {
   Actividad, CambioDeEstimacion, Proyecto, ProyectoDetalle,
   esPasoValido, horas, horasApi,
 } from '../../api/horasApi';
+import AvisoDesfase, { PorcentajeConsumido } from '../../components/horas/AvisoDesfase';
 import { clientsAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -279,6 +280,14 @@ export default function ProyectosPage() {
           <div>
             <h1 className="text-4xl font-bold text-gray-800" data-testid="nombre-proyecto">{detalle.name}</h1>
             <p className="text-lg text-gray-500 mt-1">{detalle.client_name}</p>
+            {/* §5.1: cómo va de horas, junto al nombre. */}
+            <div className="flex items-center gap-3 mt-3">
+              <PorcentajeConsumido dato={detalle} />
+              <span className="text-base text-gray-500">
+                {horas(detalle.total_consumed_hours)} de {horas(detalle.total_estimated_hours)} h
+              </span>
+              <AvisoDesfase dato={detalle} siempre />
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <span data-testid="estado-proyecto"
@@ -306,6 +315,8 @@ export default function ProyectosPage() {
                 <th className="py-3 px-4 text-right w-40">Estimadas</th>
                 <th className="py-3 px-4 text-right w-40">Consumidas</th>
                 <th className="py-3 px-4 text-right w-40">Restantes</th>
+                {/* §5.1: cuál es la actividad que tira del proyecto. */}
+                <th className="py-3 px-4 text-right w-48">Consumo</th>
                 <th className="py-3 px-4 text-right w-20"></th>
               </tr>
             </thead>
@@ -332,6 +343,12 @@ export default function ProyectosPage() {
                     a.over_estimate ? 'text-red-600' : 'text-gray-700'}`}>
                     {horas(a.remaining_hours)}
                   </td>
+                  <td className="py-3 px-4 text-right" data-actividad-desfase={a.overrun_status}>
+                    <div className="flex items-center justify-end gap-2 flex-wrap">
+                      <PorcentajeConsumido dato={a} />
+                      <AvisoDesfase dato={a} />
+                    </div>
+                  </td>
                   <td className="py-3 px-4 text-right">
                     <button onClick={() => quitar(a.activity_id, a.activity_name)}
                       disabled={cerrado} data-testid="quitar-actividad"
@@ -350,7 +367,7 @@ export default function ProyectosPage() {
                   {horas(detalle.total_estimated_hours)}
                 </td>
                 <td className="py-3 px-4 text-right tabular-nums">{horas(detalle.total_consumed_hours)}</td>
-                <td colSpan={2}></td>
+                <td colSpan={3}></td>
               </tr>
             </tfoot>
           </table>
@@ -457,6 +474,8 @@ export default function ProyectosPage() {
                 <th className="py-3 px-4 text-center w-32">Estado</th>
                 <th className="py-3 px-4 text-right w-36">Estimadas</th>
                 <th className="py-3 px-4 text-right w-36">Consumidas</th>
+                {/* §5.1: el desfase se ve desde el listado, sin entrar. */}
+                <th className="py-3 px-4 text-right w-56">Consumo</th>
               </tr>
             </thead>
             <tbody data-testid="tabla-proyectos">
@@ -482,10 +501,16 @@ export default function ProyectosPage() {
                   <td className="py-3 px-4 text-right text-lg tabular-nums text-gray-600">
                     {horas(p.total_consumed_hours)}
                   </td>
+                  <td className="py-3 px-4 text-right" data-proyecto-desfase={p.overrun_status}>
+                    <div className="flex items-center justify-end gap-2 flex-wrap">
+                      <PorcentajeConsumido dato={p} />
+                      <AvisoDesfase dato={p} />
+                    </div>
+                  </td>
                 </tr>
               ))}
               {proyectos.length === 0 && (
-                <tr><td colSpan={5} className="py-10 text-center text-gray-400 text-lg">
+                <tr><td colSpan={6} className="py-10 text-center text-gray-400 text-lg">
                   No hay proyectos que coincidan.
                 </td></tr>
               )}

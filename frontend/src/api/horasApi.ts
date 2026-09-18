@@ -18,7 +18,17 @@ export interface Actividad {
   has_entries: boolean;
 }
 
-export interface ActividadDeProyecto {
+/** ETAPA H2b (§5.1). Se dice «desfase», no «exceso» (H-D27). */
+export type EstadoDesfase = 'en_rango' | 'por_agotarse' | 'desfasado';
+
+export interface Desfase {
+  consumed_pct: string | number;
+  overrun_status: EstadoDesfase;
+  overrun_hours: string | number;
+  overrun_label: string;
+}
+
+export interface ActividadDeProyecto extends Desfase {
   activity_id: string;
   activity_name: string;
   estimated_hours: string | number;
@@ -27,7 +37,7 @@ export interface ActividadDeProyecto {
   over_estimate: boolean;
 }
 
-export interface Proyecto {
+export interface Proyecto extends Desfase {
   id: string;
   client_id: string;
   client_name: string;
@@ -105,6 +115,37 @@ export interface Semana {
   total_overtime: string | number;
 }
 
+/** Una casilla del calendario (ETAPA H2b, §4.1). Viene resuelta del backend. */
+export interface DiaDelMes {
+  date: string;
+  expected_hours: string | number;
+  ordinary_hours: string | number;
+  overtime_hours: string | number;
+  total_hours: string | number;
+  is_holiday: boolean;
+  is_absence: boolean;
+  non_working_reason: string;
+  incomplete: boolean;
+  missing_hours: string | number;
+  entries_count: number;
+  /** Alguno de sus registros toca una actividad desfasada (H-D27). */
+  has_over_estimate: boolean;
+}
+
+export interface Mes {
+  user_id: string;
+  user_name: string;
+  year: number;
+  month: number;
+  first_day: string;
+  last_day: string;
+  days: DiaDelMes[];
+  total_expected: string | number;
+  total_ordinary: string | number;
+  total_overtime: string | number;
+  pending_days: number;
+}
+
 export interface DiaPendiente {
   date: string;
   expected_hours: string | number;
@@ -136,6 +177,12 @@ export interface RegistroNuevo {
 
 export const horasApi = {
   // ---------- Registro (H2) ----------
+  /** El mes entero para el calendario (ETAPA H2b). */
+  mes: async (anio: number, mes: number, userId?: string): Promise<Mes> =>
+    (await api.get('/time/month', { params: { anio, mes, user_id: userId } })).data,
+
+  /** La semana de esa fecha. El calendario la usa para el detalle del día:
+   *  es el único sitio donde vienen los registros con todos sus campos. */
   semana: async (fecha: string, userId?: string): Promise<Semana> =>
     (await api.get('/time/week', { params: { fecha, user_id: userId } })).data,
 
@@ -247,6 +294,26 @@ export const sumarDias = (iso: string, dias: number): string => {
 export const hoyISO = (): string => {
   const f = new Date();
   return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+};
+
+/** `2026-09-14` -> `14`. El número del día, para la casilla del calendario. */
+export const diaDelMes = (iso: string): number => Number(iso.split('-')[2]);
+
+/** La columna de esa fecha en el calendario: 0 = lunes … 6 = domingo, el mismo
+ *  criterio con el que el backend sembró la jornada. */
+export const columnaLunesPrimero = (iso: string): number => {
+  const [a, m, d] = iso.split('-').map(Number);
+  return (new Date(a, m - 1, d).getDay() + 6) % 7;
+};
+
+/** `2026, 9` -> `septiembre de 2026`. */
+export const nombreDelMes = (anio: number, mes: number): string =>
+  new Date(anio, mes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+
+/** Mueve el par (año, mes) n meses, sin pasar por fechas. */
+export const moverMes = (anio: number, mes: number, n: number): { anio: number; mes: number } => {
+  const total = anio * 12 + (mes - 1) + n;
+  return { anio: Math.floor(total / 12), mes: (total % 12) + 1 };
 };
 
 /** El lunes de la semana que contiene esa fecha (mismo criterio que el backend). */
