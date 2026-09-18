@@ -17,7 +17,8 @@ from decimal import Decimal as D
 import pytest
 
 from app.services.horas.desfase import (
-    DESFASADO, EN_RANGO, POR_AGOTARSE, estado, etiqueta, horas_de_desfase, porcentaje,
+    CERRADO, DESFASADO, EN_RANGO, POR_AGOTARSE, TERMINADO,
+    estado, etiqueta, horas_de_desfase, porcentaje,
 )
 
 
@@ -62,11 +63,34 @@ def test_entre_noventa_y_cien_esta_por_agotarse(consumido):
     assert estado(D(consumido), D("40")) == POR_AGOTARSE
 
 
-def test_exactamente_el_cien_no_es_desfase():
-    """Consumir justo lo estimado es cumplir, no pasarse."""
+def test_exactamente_el_cien_es_TERMINADO():
+    """ETAPA H6 (H-D66): consumir justo lo estimado no es «por agotarse» ni
+    desfase — es haber terminado. Es el caso que Fredy echaba de menos."""
     assert porcentaje(D("40"), D("40")) == D("100")
-    assert estado(D("40"), D("40")) == POR_AGOTARSE
+    assert estado(D("40"), D("40")) == TERMINADO
+    assert etiqueta(D("40"), D("40")) == "Terminado"
     assert horas_de_desfase(D("40"), D("40")) == D("0")
+
+
+def test_un_pelo_por_debajo_del_cien_sigue_por_agotarse():
+    assert estado(D("39.96"), D("40")) == POR_AGOTARSE
+
+
+def test_un_pelo_por_encima_del_cien_ya_es_desfase():
+    assert estado(D("40.04"), D("40")) == DESFASADO
+
+
+# ==================== EL PROYECTO CERRADO (H-D66) ====================
+
+def test_un_proyecto_cerrado_dice_cerrado_pase_lo_que_pase():
+    """Manda sobre cualquier estado de consumo: ya no está «en ejecución»."""
+    for con, est in [("0", "40"), ("38", "40"), ("40", "40"), ("49", "40"), ("5", "0")]:
+        assert estado(D(con), D(est), cerrado=True) == CERRADO
+        assert etiqueta(D(con), D(est), cerrado=True) == "Cerrado"
+
+
+def test_sin_cerrar_el_estado_es_el_de_siempre():
+    assert estado(D("49"), D("40"), cerrado=False) == DESFASADO
 
 
 @pytest.mark.parametrize("consumido", ["40.25", "41", "49", "80"])
@@ -110,12 +134,21 @@ def test_la_etiqueta_no_arrastra_ceros():
     assert etiqueta(D("49.00"), D("40")) == "Desfasado +9 h"
 
 
-def test_las_otras_dos_etiquetas():
+def test_las_otras_etiquetas():
+    """H-D66: «En rango» no decía nada; «En ejecución» sí."""
     assert etiqueta(D("38"), D("40")) == "Por agotarse"
-    assert etiqueta(D("10"), D("40")) == "En rango"
+    assert etiqueta(D("10"), D("40")) == "En ejecución"
+    assert etiqueta(D("40"), D("40")) == "Terminado"
 
 
 def test_la_palabra_exceso_no_aparece_en_ninguna_etiqueta():
     """H-D27: en todo el producto se dice «desfase»."""
-    for con, est in [("0", "40"), ("38", "40"), ("49", "40"), ("5", "0")]:
+    for con, est in [("0", "40"), ("38", "40"), ("40", "40"), ("49", "40"), ("5", "0")]:
         assert "exceso" not in etiqueta(D(con), D(est)).lower()
+        assert "exceso" not in etiqueta(D(con), D(est), cerrado=True).lower()
+
+
+def test_la_palabra_en_rango_ya_no_se_lee_en_ninguna_etiqueta():
+    """H-D66: se retiró del producto."""
+    for con, est in [("0", "40"), ("38", "40"), ("40", "40"), ("49", "40"), ("5", "0")]:
+        assert "en rango" not in etiqueta(D(con), D(est)).lower()

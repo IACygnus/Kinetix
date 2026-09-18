@@ -37,6 +37,7 @@ import {
   FileBarChart2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { nombreRol } from '../../config/roles';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -393,7 +394,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 <p className="text-xl font-medium text-slate-200 truncate">
                   {user?.full_name || 'Usuario'}
                 </p>
-                <p className="text-lg text-slate-500 capitalize">{user?.role || 'viewer'}</p>
+                <p className="text-lg text-slate-500">{nombreRol(user?.role)}</p>
               </div>
             </NavLink>
             <button

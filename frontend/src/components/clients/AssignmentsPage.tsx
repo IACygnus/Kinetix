@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { clientsAPI } from '../../services/api';
 import type { ClientInfo, UserWithClients } from '../../types';
+import { nombreRol } from '../../config/roles';
 
 export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState<UserWithClients[]>([]);
@@ -140,7 +141,7 @@ export default function AssignmentsPage() {
                       @{user.username} &middot;{' '}
                       <span className={`capitalize font-medium ${
                         user.role === 'admin' ? 'text-purple-600' : 'text-blue-600'
-                      }`}>{user.role}</span>
+                      }`}>{nombreRol(user.role)}</span>
                     </p>
                   </div>
                 </div>

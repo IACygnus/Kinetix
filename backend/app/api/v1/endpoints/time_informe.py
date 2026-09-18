@@ -113,19 +113,18 @@ async def informe_pdf(
     project_id: Optional[uuid.UUID] = Query(None),
     solo_facturables: bool = Query(False),
     seccion: Optional[List[str]] = Query(None),
-    orientacion: str = Query("mixta", pattern="^(mixta|vertical|horizontal)$"),
     descargar: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """El mismo documento, en PDF (H-D56).
+    """El mismo documento, en PDF, **todo en vertical** (H-D69).
 
     Por defecto **sin el detalle de registros** (H-D58): trescientas filas en
     papel no se leen. Su casilla lo permite cuando hace falta.
     """
     d = await _datos(db, desde, hasta, user_id, client_id, project_id, solo_facturables)
     por_defecto = [c for c in CLAVES if c != "detalle"]
-    html = documento_pdf_html(d, _elegidas(seccion, por_defecto), orientacion)
+    html = documento_pdf_html(d, _elegidas(seccion, por_defecto))
     try:
         from weasyprint import HTML as WeasyHTML
         # Se renderiza y luego se escribe, en dos pasos, para poder contar las

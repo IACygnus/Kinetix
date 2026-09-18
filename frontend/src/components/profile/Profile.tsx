@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Save, AlertCircle, CheckCircle, UserCircle, Lock } from 'lucide-react';
 import { profileAPI } from '../../services/api';
+import { nombreRol } from '../../config/roles';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Profile() {
@@ -83,12 +84,6 @@ export default function Profile() {
     }
   };
 
-  const ROLE_LABELS: Record<string, string> = {
-    admin: 'Administrador',
-    analyst: 'Analista',
-    viewer: 'Visor',
-  };
-
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
@@ -108,7 +103,7 @@ export default function Profile() {
             <p className="text-2xl font-semibold text-white">{user?.full_name}</p>
             <p className="text-lg text-gray-400">@{user?.username}</p>
             <span className="inline-flex mt-1 px-3 py-1 text-lg font-medium rounded bg-[#f5a623]/20 text-[#f5a623] border border-[#f5a623]/30">
-              {ROLE_LABELS[user?.role || 'viewer']}
+              {nombreRol(user?.role)}
             </span>
           </div>
         </div>

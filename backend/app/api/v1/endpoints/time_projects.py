@@ -126,9 +126,10 @@ async def _detalle(db: AsyncSession, proyecto: Project) -> ProjectDetailResponse
         # listado. Sin esto el detalle diría «En rango» de un proyecto que el
         # listado acaba de marcar como desfasado, que es peor que no decir nada.
         consumed_pct=porcentaje_consumido(total_con, total_est),
-        overrun_status=estado_desfase(total_con, total_est),
+        # H-D66: un proyecto cerrado a mano manda sobre cualquier estado de consumo.
+        overrun_status=estado_desfase(total_con, total_est, proyecto.status == "cerrado"),
         overrun_hours=horas_de_desfase(total_con, total_est),
-        overrun_label=etiqueta_desfase(total_con, total_est),
+        overrun_label=etiqueta_desfase(total_con, total_est, proyecto.status == "cerrado"),
     )
 
 
@@ -196,9 +197,9 @@ async def listar_proyectos(
             # ETAPA H2b (§5.1): campos AÑADIDOS. Lo que ya consumía esta
             # respuesta sigue igual.
             consumed_pct=porcentaje_consumido(con, est),
-            overrun_status=estado_desfase(con, est),
+            overrun_status=estado_desfase(con, est, p.status == "cerrado"),
             overrun_hours=horas_de_desfase(con, est),
-            overrun_label=etiqueta_desfase(con, est),
+            overrun_label=etiqueta_desfase(con, est, p.status == "cerrado"),
         ))
     return salida
 

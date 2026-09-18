@@ -66,6 +66,7 @@ async def consultar(
     project_id: Optional[uuid.UUID] = Query(None),
     user_id: Optional[uuid.UUID] = Query(None),
     solo_desfasados: bool = Query(False, description="§5.1: ver solo los que se pasaron"),
+    incluir_cerrados: bool = Query(False, description="H-D72: por defecto, solo los activos"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -99,6 +100,10 @@ async def consultar(
         q = q.where(TimeEntry.project_id == project_id)
     if user_id:
         q = q.where(TimeEntry.user_id == user_id)
+    # H-D72: lo que se mira todos los días es lo que está en marcha. Los cerrados
+    # siguen consultándose, pero hay que pedirlos.
+    if not incluir_cerrados:
+        q = q.where(Project.status == "activo")
 
     filas = (await db.execute(q)).all()
     if not filas:
@@ -156,9 +161,9 @@ async def consultar(
                 status=p.status,
                 estimated_hours=est, consumed_hours=con, remaining_hours=est - con,
                 consumed_pct=porcentaje_consumido(con, est),
-                overrun_status=estado_desfase(con, est),
+                overrun_status=estado_desfase(con, est, p.status == "cerrado"),
                 overrun_hours=horas_de_desfase(con, est),
-                overrun_label=etiqueta_desfase(con, est),
+                overrun_label=etiqueta_desfase(con, est, p.status == "cerrado"),
             )
         bloque = por_proyecto[pid]
         u = usuarios.get(uid)

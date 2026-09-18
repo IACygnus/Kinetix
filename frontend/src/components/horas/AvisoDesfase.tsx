@@ -10,10 +10,14 @@
 import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { Desfase, horas } from '../../api/horasApi';
 
+// Los cinco estados de §5.1 (v1.3). «En ejecución» y «Terminado» no son avisos:
+// van en gris y en verde, sin gritar. Los que piden mirar son los otros dos.
 const COLOR = {
   en_rango: 'bg-gray-100 text-gray-600',
   por_agotarse: 'bg-amber-100 text-amber-900 border border-amber-300',
+  terminado: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
   desfasado: 'bg-red-100 text-red-800 border border-red-300',
+  cerrado: 'bg-slate-200 text-slate-700 border border-slate-300',
 } as const;
 
 interface Props {
@@ -41,7 +45,8 @@ export default function AvisoDesfase({ dato, siempre = false }: Props) {
 export function PorcentajeConsumido({ dato }: { dato: Desfase }) {
   const pct = parseFloat(String(dato.consumed_pct));
   const color = dato.overrun_status === 'desfasado' ? 'text-red-700'
-    : dato.overrun_status === 'por_agotarse' ? 'text-amber-700' : 'text-gray-600';
+    : dato.overrun_status === 'por_agotarse' ? 'text-amber-700'
+    : dato.overrun_status === 'terminado' ? 'text-emerald-700' : 'text-gray-600';
   return (
     <span className={`tabular-nums font-semibold ${color}`} data-testid="porcentaje-consumido">
       {horas(pct)} %
@@ -58,7 +63,9 @@ export function PorcentajeConsumido({ dato }: { dato: Desfase }) {
 export function BarraConsumo({ dato }: { dato: Desfase }) {
   const pct = parseFloat(String(dato.consumed_pct)) || 0;
   const relleno = dato.overrun_status === 'desfasado' ? 'bg-red-500'
-    : dato.overrun_status === 'por_agotarse' ? 'bg-amber-500' : 'bg-emerald-500';
+    : dato.overrun_status === 'por_agotarse' ? 'bg-amber-500'
+    : dato.overrun_status === 'cerrado' ? 'bg-slate-400'
+    : dato.overrun_status === 'terminado' ? 'bg-emerald-600' : 'bg-emerald-500';
   return (
     <div className="flex items-center gap-2" data-testid="barra-consumo" data-pct={pct.toFixed(2)}>
       <div className="flex-1 min-w-[60px] h-2.5 bg-gray-200 rounded-full overflow-hidden">

@@ -1,6 +1,6 @@
 # Especificación funcional — Módulo de Horas y Proyectos (Kinetix)
 
-**Versión 1.2 · Aprobada por Fredy Bonilla**
+**Versión 1.3 · Aprobada por Fredy Bonilla**
 
 Referencia única del módulo. Todo prompt de desarrollo se valida contra este documento,
 no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
@@ -81,7 +81,11 @@ Cada uno es una pantalla independiente. No se mezclan.
   con su autor, su fecha y los valores anterior y nuevo.
 - Las actividades del proyecto salen del catálogo; se pueden añadir o quitar mientras no
   tengan horas registradas.
+- **El nombre del proyecto se puede cambiar** después de crearlo, desde su detalle, con las
+  mismas reglas del alta: único por cliente, comparando sin tildes ni mayúsculas.
 - **Un proyecto cerrado** no admite registros nuevos, pero se sigue consultando.
+- **El listado enseña solo los proyectos activos.** Una casilla «Incluir cerrados» los trae
+  cuando hacen falta: lo que se mira todos los días es lo que está en marcha.
 
 ---
 
@@ -154,7 +158,8 @@ del día frente a su jornada, con las horas extra aparte.
   estimado por actividad, las horas restantes y una marca cuando hay desfase.
 - **Al ampliar la consulta**, la tabla cambia y muestra **los días** en que se registraron
   esas horas, con su detalle.
-- Filtros por cliente, proyecto, usuario y rango de fechas.
+- Filtros por cliente, proyecto, usuario y rango de fechas, y una casilla
+  **«Incluir proyectos cerrados»**, que por defecto está sin marcar.
 
 ### 5.1 Alertas de desfase
 
@@ -163,9 +168,15 @@ lo consumido frente a lo estimado y su estado:
 
 | Estado | Cuándo |
 |---|---|
-| **En rango** | por debajo del 90 % de lo estimado |
-| **Por agotarse** | entre el 90 % y el 100 % |
+| **En ejecución** | por debajo del 90 % de lo estimado |
+| **Por agotarse** | del 90 % al 99,9 % |
+| **Terminado** | justo el 100 %: se consumió lo estimado, ni una hora más |
 | **Desfasado +X h** | por encima del 100 %, con las horas de más |
+| **Cerrado** | el proyecto se cerró a mano; manda sobre cualquier estado de consumo |
+
+El consumo se mide contra **todo lo registrado desde que existe el proyecto**, no contra el
+periodo que se esté mirando. Un proyecto que lleva dos meses suma los dos: si no, consultar
+una semana tranquila lo dejaría «En ejecución» estando desfasado.
 
 Las filas desfasadas quedan resaltadas. Arriba, un aviso dice **cuántos proyectos están
 desfasados** y ofrece un filtro para ver solo esos.
@@ -226,7 +237,7 @@ informe: es el detalle de registros para llevárselo a Excel.
 - Filtros de **cliente**, **proyecto** y **solo facturables**.
 - Y una **casilla por sección** para elegir qué entra en el documento.
 
-### 7.2 Las diez secciones, en este orden
+### 7.2 Las ocho secciones, en este orden
 
 | # | Sección | Qué muestra |
 |---|---|---|
@@ -237,9 +248,11 @@ informe: es el detalle de registros para llevárselo a Excel.
 | 5 | **En qué se fue el tiempo** | Reparto por actividad |
 | 6 | **Consumido frente a estimado** | Por proyecto, con horas restantes y el estado de §5.1 |
 | 7 | **Mapa del mes** | Una fila por persona, una casilla por día: quién trabajó cuándo, de un vistazo |
-| 8 | **Días sin registrar** | Por persona, con las horas que faltan en cada día |
-| 9 | **Horas día a día** | Qué proyecto y qué actividad, día por día |
-| 10 | **Detalle de registros** | La tabla completa del periodo |
+| 8 | **Detalle de registros** | La tabla completa del periodo |
+
+**«Días sin registrar» y «Horas día a día» salieron del informe.** Sus datos siguen
+calculándose y se siguen viendo donde sirven —el calendario y la pantalla de consulta—, pero
+en un informe para leer no aportaban lo que ocupaban.
 
 ### 7.3 El HTML
 
@@ -256,12 +269,12 @@ Lleva dentro, funcionando sin servidor:
 
 ### 7.4 El PDF
 
-**Orientación mixta**: el informe va en vertical y **solo las páginas de la
-sección 9 en horizontal**, para que el mes entero quepa de corrido. Un selector
-permite forzar todo vertical o todo horizontal.
+**Todo en vertical.** La única sección que obligaba a girar la hoja era «Horas día
+a día», y ya no está: sin ella no hay nada que girar, así que tampoco hay selector
+de orientación.
 
-**El detalle de registros (sección 10) no entra por defecto**: trescientas filas
-en papel no se leen. Su casilla lo permite cuando hace falta.
+**El detalle de registros (sección 8) no entra por defecto**: trescientas filas en
+papel no se leen. Su casilla lo permite cuando hace falta.
 
 Se respetan las reglas de impresión del resto del producto: solo tablas, medidas
 en milímetros y puntos, nada de disposiciones flexibles ni de rejilla.
@@ -276,6 +289,9 @@ aparte, acabaría mintiendo en cuanto una de las dos cambiara.
 ### 7.6 Formato y archivos
 
 - Cifras en formato español: `8.600` · `0,27%` · `1,1 h`. Fechas en español.
+- **La cabecera** lleva el logo a un tamaño que se lea, y debajo el título y el
+  periodo, en ese orden de importancia. Usa los colores del propio logo —el azul
+  marino y el naranja—; **el resto del informe no cambia de colores**.
 - El **logo** va embebido en el documento, no enlazado. Si falta, el informe sale
   con el nombre en texto y sigue funcionando.
 - El **CSV** trae solo el detalle de registros del filtro aplicado, con
@@ -332,3 +348,4 @@ Quedan anotadas por si se quieren en una versión posterior.
 | 1.0 | Versión inicial del módulo |
 | 1.1 | §4.1 pasa a **calendario mensual** con detalle del día y popup de registro; la vista semanal se retira · §4.2.4 dice **«desfase»** en vez de «exceso» · §5.1 añade las **alertas de desfase** en el listado de proyectos |
 | 1.2 | §7 reescrito: **un solo informe** en HTML y PDF con diez secciones · filtros y casillas por sección · HTML autocontenido e interactivo · **PDF con orientación mixta** (la sección 9 en horizontal) · la vista previa enseña el documento real · CSV del detalle · nombres de archivo y tiempos máximos |
+| 1.3 | §5.1 renombra los estados: **En ejecución · Por agotarse · Terminado · Desfasado · Cerrado**, y deja dicho que el consumo suma desde siempre · §3 añade el cambio de nombre del proyecto y el listado **solo de activos** con su casilla · §5 añade la casilla de proyectos cerrados · §7 pasa a **ocho secciones** —salen «Días sin registrar» y «Horas día a día»—, el **PDF queda todo vertical** sin selector de orientación, y se rediseña la cabecera |

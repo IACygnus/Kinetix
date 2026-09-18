@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Plus, Trash2, History, Loader2, AlertTriangle, Lock, Unlock, ChevronLeft,
+  Plus, Trash2, History, Loader2, AlertTriangle, Lock, Unlock, ChevronLeft, Pencil,
 } from 'lucide-react';
 import {
   Actividad, CambioDeEstimacion, Proyecto, ProyectoDetalle,
@@ -39,7 +39,7 @@ export default function ProyectosPage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [filtroCliente, setFiltroCliente] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState('');
+  const [filtroEstado, setFiltroEstado] = useState('activo');   // H-D72: solo activos
   const [texto, setTexto] = useState('');
   // §5.1: ver solo los que se pasaron. Se filtra aquí y no en el backend porque
   // el listado ya viene entero y el estado viaja en cada fila.
@@ -50,6 +50,9 @@ export default function ProyectosPage() {
   const [detalle, setDetalle] = useState<ProyectoDetalle | null>(null);
   const [cambios, setCambios] = useState<CambioDeEstimacion[]>([]);
   const [verHistorial, setVerHistorial] = useState(false);
+  // H-D63: el nombre se puede cambiar después de crear el proyecto.
+  const [editandoNombre, setEditandoNombre] = useState(false);
+  const [nombreEditado, setNombreEditado] = useState('');
 
   // Formulario de alta
   const [nuevoCliente, setNuevoCliente] = useState('');
@@ -151,6 +154,22 @@ export default function ProyectosPage() {
       await refrescarDetalle(await horasApi.quitarActividadDeProyecto(detalle.id, activityId));
       setError('');
     } catch (e) { fallo(e, 'No se pudo quitar la actividad.'); }
+  };
+
+  // ---------- H-D63: renombrar el proyecto ----------
+  const guardarNombre = async () => {
+    if (!detalle) return;
+    const limpio = nombreEditado.trim();
+    if (!limpio || limpio === detalle.name) { setEditandoNombre(false); return; }
+    try {
+      await refrescarDetalle(await horasApi.editarProyecto(detalle.id, { name: limpio }));
+      setEditandoNombre(false);
+      setError('');
+    } catch (e) {
+      // El backend ya comprueba que el nombre sea único por cliente, comparado
+      // normalizado: aquí solo se enseña lo que responde.
+      fallo(e, 'No se pudo cambiar el nombre del proyecto.');
+    }
   };
 
   const alternarEstado = async () => {
@@ -283,7 +302,31 @@ export default function ProyectosPage() {
 
         <div className="flex items-start justify-between mb-6 gap-4">
           <div>
-            <h1 className="text-4xl font-bold text-gray-800" data-testid="nombre-proyecto">{detalle.name}</h1>
+            {editandoNombre ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={nombreEditado} onChange={(e) => setNombreEditado(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') guardarNombre(); }}
+                  data-testid="editar-nombre-proyecto" autoFocus
+                  className="px-4 py-3 border-2 border-[#f5a623] rounded-xl text-3xl font-bold text-gray-800 min-w-[320px]" />
+                <button onClick={guardarNombre} data-testid="guardar-nombre-proyecto"
+                  className="px-5 py-3 bg-[#f5a623] text-[#0a1628] text-lg font-bold rounded-xl hover:bg-[#f7b84a]">
+                  Guardar
+                </button>
+                <button onClick={() => setEditandoNombre(false)}
+                  className="px-5 py-3 text-lg font-semibold rounded-xl border border-gray-300 text-gray-600 hover:bg-gray-50">
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-4xl font-bold text-gray-800" data-testid="nombre-proyecto">{detalle.name}</h1>
+                <button data-testid="renombrar-proyecto"
+                  onClick={() => { setNombreEditado(detalle.name); setEditandoNombre(true); }}
+                  className="flex items-center gap-2 px-4 py-3 text-base font-semibold rounded-xl border-2 border-gray-300 text-gray-600 hover:bg-gray-50">
+                  <Pencil className="w-5 h-5" /> Renombrar
+                </button>
+              </div>
+            )}
             <p className="text-lg text-gray-500 mt-1">{detalle.client_name}</p>
             {/* §5.1: cómo va de horas, junto al nombre. */}
             <div className="flex items-center gap-3 mt-3">
@@ -467,12 +510,14 @@ export default function ProyectosPage() {
           <option value="">Todos los clientes</option>
           {clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}
-          className="px-4 py-2.5 border-2 border-gray-300 rounded-xl text-lg">
-          <option value="">Activos y cerrados</option>
-          <option value="activo">Solo activos</option>
-          <option value="cerrado">Solo cerrados</option>
-        </select>
+        {/* H-D72: por defecto solo los activos. La casilla trae los cerrados,
+            que se siguen consultando pero no estorban el día a día. */}
+        <label className="flex items-center gap-2 px-4 py-2.5">
+          <input type="checkbox" checked={filtroEstado === ''} data-testid="incluir-cerrados"
+            onChange={(e) => setFiltroEstado(e.target.checked ? '' : 'activo')}
+            className="w-5 h-5 accent-[#f5a623]" />
+          <span className="text-lg text-gray-700">Incluir cerrados</span>
+        </label>
         <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Buscar por nombre…"
           className="flex-1 min-w-[200px] px-4 py-2.5 border-2 border-gray-300 rounded-xl text-lg" />
       </div>

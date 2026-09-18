@@ -43,6 +43,8 @@ export default function ConsultaPage() {
   const [fProyecto, setFProyecto] = useState('');
   const [fUsuario, setFUsuario] = useState('');
   const [soloDesfasados, setSoloDesfasados] = useState(false);
+  // H-D72: por defecto, solo los proyectos en marcha.
+  const [incluirCerrados, setIncluirCerrados] = useState(false);
 
   const [clientes, setClientes] = useState<Simple[]>([]);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
@@ -65,6 +67,7 @@ export default function ConsultaPage() {
         project_id: fProyecto || undefined,
         user_id: fUsuario || undefined,
         solo_desfasados: soloDesfasados || undefined,
+        incluir_cerrados: incluirCerrados || undefined,
       }));
       setError('');
     } catch (e: any) {
@@ -72,7 +75,7 @@ export default function ConsultaPage() {
       setDatos(null);
     }
     setCargando(false);
-  }, [desde, hasta, fCliente, fProyecto, fUsuario, soloDesfasados]);
+  }, [desde, hasta, fCliente, fProyecto, fUsuario, soloDesfasados, incluirCerrados]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -168,6 +171,13 @@ export default function ConsultaPage() {
               <option value="">Todas</option>
               {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
             </select>
+          </label>
+          {/* H-D72: los cerrados se siguen consultando, pero hay que pedirlos. */}
+          <label className="flex items-center gap-2 py-3">
+            <input type="checkbox" checked={incluirCerrados} data-testid="incluir-cerrados"
+              onChange={(e) => setIncluirCerrados(e.target.checked)}
+              className="w-5 h-5 accent-[#f5a623]" />
+            <span className="text-lg text-gray-700">Incluir proyectos cerrados</span>
           </label>
         </div>
       </div>

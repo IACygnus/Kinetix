@@ -18,7 +18,7 @@ import {
   AlertTriangle, FileSpreadsheet, FileText, Loader2, Printer, RefreshCw,
 } from 'lucide-react';
 import {
-  Descarga, FiltrosInforme, Informe, Orientacion, SECCIONES_INFORME,
+  Descarga, FiltrosInforme, Informe, SECCIONES_INFORME,
   fechaLarga, horas, horasApi, hoyISO, mensajeDeError,
 } from '../../api/horasApi';
 import AvisoDesfase from '../../components/horas/AvisoDesfase';
@@ -53,7 +53,6 @@ export default function InformesPage() {
   const [soloFacturables, setSoloFacturables] = useState(false);
   const [secciones, setSecciones] = useState<string[]>(
     SECCIONES_INFORME.map((s) => s.clave));
-  const [orientacion, setOrientacion] = useState<Orientacion>('mixta');
 
   const [clientes, setClientes] = useState<Simple[]>([]);
   const [usuarios, setUsuarios] = useState<{ id: string; nombre: string }[]>([]);
@@ -116,9 +115,7 @@ export default function InformesPage() {
     if (pestana !== 'previa') return;
     setGenerando(true); setError('');
     try {
-      const d = await horasApi.documentoInforme(modo, filtros, {
-        seccion: secciones, orientacion,
-      });
+      const d = await horasApi.documentoInforme(modo, filtros, { seccion: secciones });
       if (urlAnterior.current) URL.revokeObjectURL(urlAnterior.current);
       const url = URL.createObjectURL(d.blob);
       urlAnterior.current = url;
@@ -129,7 +126,7 @@ export default function InformesPage() {
       setPrevia(null);
     }
     setGenerando(false);
-  }, [pestana, modo, filtros, secciones, orientacion]);
+  }, [pestana, modo, filtros, secciones]);
 
   useEffect(() => { generarPrevia(); }, [generarPrevia]);
   useEffect(() => () => {
@@ -141,7 +138,6 @@ export default function InformesPage() {
     try {
       const d: Descarga = await horasApi.documentoInforme(formato, filtros, {
         seccion: formato === 'csv' ? undefined : secciones,
-        orientacion: formato === 'pdf' ? orientacion : undefined,
         descargar: true,
       });
       const url = URL.createObjectURL(d.blob);
@@ -267,15 +263,8 @@ export default function InformesPage() {
       {/* ---------- Descargas ---------- */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 mb-5
                       flex flex-wrap gap-4 items-end">
-        <label className="block">
-          <span className={rotulo}>Orientación del PDF</span>
-          <select value={orientacion} data-testid="inf-orientacion" className={campo}
-            onChange={(e) => setOrientacion(e.target.value as Orientacion)}>
-            <option value="mixta">Mixta — «Horas día a día» en horizontal</option>
-            <option value="vertical">Todo vertical</option>
-            <option value="horizontal">Todo horizontal</option>
-          </select>
-        </label>
+        {/* H-D69: ya no hay selector de orientación. La única sección que
+            giraba la hoja salió del informe, así que el PDF va todo vertical. */}
         <div className="flex flex-wrap gap-3">
           {([
             ['html', 'HTML', <FileText key="h" className="w-5 h-5" />],

@@ -1,7 +1,7 @@
 """El documento del informe de horas (ETAPA H5.3 y H5.4, especificación v1.2 §7).
 
 **Un solo informe** (H-D50): el HTML y el PDF son este mismo módulo con dos ramas.
-Las diez secciones se arman una sola vez, en `_secciones()`; lo que cambia entre
+Las ocho secciones se arman una sola vez, en `_secciones()`; lo que cambia entre
 una rama y otra es la envoltura —los estilos y, en el HTML, los controles—, nunca
 el contenido. Si cada salida montara sus tablas por su cuenta, en tres semanas
 dirían cosas distintas: es exactamente lo que le pasó al informe de análisis y lo
@@ -14,7 +14,8 @@ CLAUDE.md §13 y §15 y valen para cualquier PDF de este producto:
   - en la rama de impresión, **solo tablas**: ni `flex` ni `grid`, que WeasyPrint
     procesa mal;
   - medidas en `mm` y `pt`, **nunca `rem`**, que infla el PDF entre un 35 y un 42 %;
-  - `@page` con nombre para la orientación mixta de H-D56, comprobada en H5.1.
+  - el PDF va **todo en vertical** desde H-D69: la única sección que giraba la
+    hoja salió del informe.
 
 **La plantilla no calcula nada.** Todo llega resuelto de `informe_datos.py`. La
 única aritmética que hay aquí vive en el JavaScript del HTML, y solo para rehacer
@@ -35,7 +36,7 @@ from app.schemas.time_tracking import InformeDatos
 # H-D54: el logo va embebido, no enlazado, para que el documento funcione sin red.
 RUTA_LOGO = Path(__file__).resolve().parents[2] / "assets" / "logo-sqa.png"
 
-# Las diez secciones de §7.2, en su orden. La clave es la que viaja en el filtro.
+# Las ocho secciones de §7.2 (v1.3), en su orden. La clave viaja en el filtro.
 SECCIONES = (
     ("resumen", "Resumen"),
     ("personas", "Ocupación por persona"),
@@ -44,8 +45,10 @@ SECCIONES = (
     ("actividades", "En qué se fue el tiempo"),
     ("proyectos", "Consumido frente a estimado"),
     ("mapa", "Mapa del mes"),
-    ("pendientes", "Días sin registrar"),
-    ("diarias", "Horas día a día"),
+    # ETAPA H6 (H-D68): «Días sin registrar» y «Horas día a día» salieron del
+    # informe. Sus datos se siguen calculando y se siguen viendo donde sirven —el
+    # calendario y la consulta—, pero en un informe para leer no aportaban lo que
+    # ocupaban. El backend los sigue devolviendo: lo que se retira es la sección.
     ("detalle", "Detalle de registros"),
 )
 CLAVES = tuple(k for k, _ in SECCIONES)
@@ -147,7 +150,7 @@ def _indicador(etiqueta: str, valor: str, clave: str = "") -> str:
             f'<span class="ind-val"{ident}>{valor}</span></td>')
 
 
-# ===================== LAS DIEZ SECCIONES =====================
+# ===================== LAS SECCIONES =====================
 
 def _sec_resumen(d: InformeDatos, para_pdf: bool = False) -> str:
     r = d.resumen
@@ -336,8 +339,6 @@ _CONSTRUCTORES = {
     "actividades": lambda d, p=False: _sec_reparto(d.por_actividad, "Actividad"),
     "proyectos": _sec_proyectos,
     "mapa": _sec_mapa,
-    "pendientes": _sec_pendientes,
-    "diarias": _sec_diarias,
     "detalle": _sec_detalle,
 }
 
@@ -348,8 +349,9 @@ def _secciones(d: InformeDatos, elegidas: Sequence[str], para_pdf: bool) -> str:
     for i, (clave, titulo) in enumerate(SECCIONES, start=1):
         if clave not in elegidas:
             continue
-        # H-D56: solo la sección 9 gira la hoja, y solo en el PDF.
-        clases = "seccion" + (" apaisada" if (para_pdf and clave == "diarias") else "")
+        # H-D69: el PDF va todo en vertical. La única sección que obligaba a
+        # girar la hoja era «Horas día a día», y ya no está.
+        clases = "seccion"
         partes.append(
             f'<section class="{clases}" id="sec-{clave}">'
             f'<h2><span class="numsec">{i}</span>{esc(titulo)}</h2>'
@@ -358,8 +360,14 @@ def _secciones(d: InformeDatos, elegidas: Sequence[str], para_pdf: bool) -> str:
 
 
 def _encabezado(d: InformeDatos) -> str:
+    """La cabecera (H-D70): el logo a un tamaño que se lea, y debajo el título y
+    el periodo, en ese orden de importancia.
+
+    Usa los dos colores del propio logo —el azul marino y el naranja— y **no toca
+    los del resto del informe**, que Fredy ya aprobó.
+    """
     logo = _logo()
-    marca = (f'<img class="logo" src="data:image/png;base64,{logo}" alt="SQA">'
+    marca = (f'<img class="logo" src="data:image/png;base64,{logo}" alt="SQA Kinetix">'
              if logo else '<span class="marca">SQA<b>Kinetix</b></span>')
     filtros = []
     if d.filtros.client_name:
@@ -369,13 +377,15 @@ def _encabezado(d: InformeDatos) -> str:
     if d.filtros.solo_facturables:
         filtros.append("Solo horas facturables")
     extra = f'<p class="filtros">{" · ".join(filtros)}</p>' if filtros else ""
-    return (f'<header><table class="cab"><tr>'
+    return (f'<header class="cabecera"><table class="cab"><tr>'
             f'<td class="cab-izq">{marca}</td>'
             f'<td class="cab-der">Generado el {fecha_larga(d.generado.date())}</td>'
             f"</tr></table>"
+            f'<div class="titulo">'
             f"<h1>Informe de horas</h1>"
-            f'<p class="sub">{esc(d.filtros.alcance)} · {esc(d.filtros.periodo)}</p>'
-            f"{extra}</header>")
+            f'<p class="sub">{esc(d.filtros.periodo)}</p>'
+            f'<p class="alcance">{esc(d.filtros.alcance)}</p>'
+            f"{extra}</div></header>")
 
 
 # ===================== LOS ESTILOS =====================
@@ -391,11 +401,16 @@ h2{font-size:13pt;color:#0a1628;margin:0 0 3mm;border-bottom:2px solid #f5a623;
         font-size:10pt}
 .sub{font-size:13pt;color:#4b5563;margin:0 0 1mm}
 .filtros{font-size:10pt;color:#6b7280;margin:0}
-.cab{width:100%;margin-bottom:4mm}
-.cab-der{text-align:right;font-size:9pt;color:#6b7280}
-.logo{height:14mm}
-.marca{font-size:16pt;color:#0a1628;letter-spacing:.5pt}
+/* ===== La cabecera (H-D70). Los colores del logo: azul marino y naranja. ===== */
+.cabecera{border-bottom:3pt solid #f5a623;padding-bottom:4mm;margin-bottom:6mm}
+.cab{width:100%;margin-bottom:3mm}
+.cab-der{text-align:right;font-size:9pt;color:#6b7280;vertical-align:bottom}
+.logo{height:22mm}                 /* que se lea: 14 mm se quedaba corto */
+.marca{font-size:22pt;color:#0a1628;letter-spacing:.5pt;font-weight:700}
 .marca b{color:#f5a623}
+.titulo h1{font-size:24pt;color:#0a1628;margin:0}
+.titulo .sub{font-size:15pt;color:#f5a623;font-weight:600;margin:1mm 0 0}
+.titulo .alcance{font-size:12pt;color:#4b5563;margin:.5mm 0 0}
 table{border-collapse:collapse;width:100%}
 th{background:#f3f4f6;color:#374151;font-size:8.5pt;text-transform:uppercase;
    text-align:left;padding:2mm;border-bottom:1.5pt solid #d1d5db}
@@ -440,10 +455,6 @@ _PDF_CSS = """
 @page{size:A4 portrait;margin:14mm 12mm 16mm;
       @bottom-right{content:"Página " counter(page) " de " counter(pages);
                     font-size:8pt;color:#9ca3af}}
-@page apaisada{size:A4 landscape;margin:12mm 10mm 14mm;
-      @bottom-right{content:"Página " counter(page) " de " counter(pages);
-                    font-size:8pt;color:#9ca3af}}
-.apaisada{page:apaisada}
 body{font-size:9.5pt}
 .seccion{margin-bottom:7mm}
 /* Que ninguna tabla se corte a media fila. */
@@ -674,20 +685,18 @@ def documento_html(d: InformeDatos, secciones: Optional[Sequence[str]] = None) -
         "</body></html>")
 
 
-def documento_pdf_html(d: InformeDatos, secciones: Optional[Sequence[str]] = None,
-                       orientacion: str = "mixta") -> str:
-    """El HTML de impresión. `orientacion`: `mixta` | `vertical` | `horizontal`.
+def documento_pdf_html(d: InformeDatos, secciones: Optional[Sequence[str]] = None) -> str:
+    """El HTML de impresión, **todo en vertical** (H-D69).
+
+    Ya no hay selector de orientación: la única sección que giraba la hoja era
+    «Horas día a día», y salió del informe en H-D68. Sin ella no hay nada que
+    girar, así que la `@page` con nombre también se retiró.
 
     H-D58: el detalle **no entra por defecto**; si viene en `secciones`, entra.
     """
     elegidas = list(secciones) if secciones is not None else [c for c in CLAVES
                                                              if c != "detalle"]
     css = _PDF_CSS
-    if orientacion == "vertical":
-        # Se anula el giro: la sección 9 se queda en la hoja vertical.
-        css += "\n.apaisada{page:auto}"
-    elif orientacion == "horizontal":
-        css += "\n@page{size:A4 landscape}\n.apaisada{page:auto}"
     return (
         "<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"utf-8\">"
         f"<style>{_BASE_CSS}{css}</style></head><body>"

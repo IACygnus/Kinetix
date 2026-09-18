@@ -296,12 +296,18 @@ export default function ClientsPage() {
                 </td>
                 <td className="px-5 py-3">
                   <div className="flex items-center justify-end gap-1">
+                    {/* ETAPA H6 (H-D64): cambiar el nombre de un cliente ya
+                        funcionaba —endpoint, validación de duplicados y todo—,
+                        pero el único acceso era este lápiz gris sin rótulo y
+                        nadie lo encontraba. Ahora dice lo que hace. */}
                     <button
                       onClick={() => openEdit(client)}
-                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                      title="Editar"
+                      data-testid="editar-cliente"
+                      className="flex items-center gap-1.5 px-3 py-2.5 text-sm font-semibold text-gray-600 border border-gray-300 hover:text-blue-700 hover:border-blue-400 hover:bg-blue-50 rounded-lg transition-colors"
+                      title="Editar cliente"
                     >
                       <Pencil className="w-5 h-5" />
+                      Editar
                     </button>
                     <button
                       onClick={() => setDeleteConfirm(client.id)}

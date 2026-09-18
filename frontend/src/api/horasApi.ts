@@ -49,7 +49,8 @@ export interface Actividad {
 }
 
 /** ETAPA H2b (§5.1). Se dice «desfase», no «exceso» (H-D27). */
-export type EstadoDesfase = 'en_rango' | 'por_agotarse' | 'desfasado';
+export type EstadoDesfase =
+  | 'en_rango' | 'por_agotarse' | 'terminado' | 'desfasado' | 'cerrado';
 
 export interface Desfase {
   consumed_pct: string | number;
@@ -147,7 +148,7 @@ export interface Semana {
 
 // ===================== EL INFORME (ETAPA H5, §7) =====================
 
-/** Las diez secciones de §7.2, en su orden y con su nombre. */
+/** Las ocho secciones de §7.2 (v1.3), en su orden y con su nombre. */
 export const SECCIONES_INFORME: { clave: string; titulo: string }[] = [
   { clave: 'resumen', titulo: 'Resumen' },
   { clave: 'personas', titulo: 'Ocupación por persona' },
@@ -156,12 +157,11 @@ export const SECCIONES_INFORME: { clave: string; titulo: string }[] = [
   { clave: 'actividades', titulo: 'En qué se fue el tiempo' },
   { clave: 'proyectos', titulo: 'Consumido frente a estimado' },
   { clave: 'mapa', titulo: 'Mapa del mes' },
-  { clave: 'pendientes', titulo: 'Días sin registrar' },
-  { clave: 'diarias', titulo: 'Horas día a día' },
+  // H-D68: «Días sin registrar» y «Horas día a día» salieron del informe.
   { clave: 'detalle', titulo: 'Detalle de registros' },
 ];
 
-export type Orientacion = 'mixta' | 'vertical' | 'horizontal';
+
 
 export interface FiltrosInforme {
   desde: string;
@@ -378,6 +378,8 @@ export interface FiltrosConsulta {
   project_id?: string;
   user_id?: string;
   solo_desfasados?: boolean;
+  /** H-D72: por defecto solo los activos. */
+  incluir_cerrados?: boolean;
 }
 
 /** Una casilla del calendario (ETAPA H2b, §4.1). Viene resuelta del backend. */
@@ -452,7 +454,7 @@ export const horasApi = {
   documentoInforme: async (
     formato: 'html' | 'pdf' | 'csv',
     f: FiltrosInforme,
-    extra: { seccion?: string[]; orientacion?: Orientacion; descargar?: boolean } = {},
+    extra: { seccion?: string[]; descargar?: boolean } = {},
   ): Promise<Descarga> => {
     const r = await api.get(`/time/informe/${formato}`, {
       params: { ...f, ...extra }, responseType: 'blob', ...LISTAS,

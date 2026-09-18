@@ -270,9 +270,9 @@ async def construir_informe(
                 client_id=p.client_id, client_name=c.name, status=p.status,
                 estimated_hours=est, consumed_hours=con, remaining_hours=est - con,
                 consumed_pct=porcentaje_consumido(con, est),
-                overrun_status=estado_desfase(con, est),
+                overrun_status=estado_desfase(con, est, p.status == "cerrado"),
                 overrun_hours=horas_de_desfase(con, est),
-                overrun_label=etiqueta_desfase(con, est),
+                overrun_label=etiqueta_desfase(con, est, p.status == "cerrado"),
                 hours_in_range=acc["h"], overtime_in_range=acc["extra"],
                 entries_in_range=int(acc["n"]), people=[],
             ))
