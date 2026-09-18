@@ -161,6 +161,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <CalendarClock className="w-6 h-6" />,
         },
         {
+          label: 'Consulta',
+          path: '/horas/consulta',
+          icon: <Search className="w-6 h-6" />,
+        },
+        {
           label: 'Proyectos',
           path: '/horas/proyectos',
           icon: <FolderKanban className="w-6 h-6" />,

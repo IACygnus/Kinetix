@@ -48,3 +48,54 @@ export function PorcentajeConsumido({ dato }: { dato: Desfase }) {
     </span>
   );
 }
+
+/** La barra de consumido frente a estimado (§5.1).
+ *
+ *  §5.1 pide «una barra con lo consumido frente a lo estimado»; el porcentaje en
+ *  texto lo dice, pero no se ve de un vistazo en una lista larga. Va con su cifra
+ *  al lado: la barra sola no se puede leer con precisión.
+ */
+export function BarraConsumo({ dato }: { dato: Desfase }) {
+  const pct = parseFloat(String(dato.consumed_pct)) || 0;
+  const relleno = dato.overrun_status === 'desfasado' ? 'bg-red-500'
+    : dato.overrun_status === 'por_agotarse' ? 'bg-amber-500' : 'bg-emerald-500';
+  return (
+    <div className="flex items-center gap-2" data-testid="barra-consumo" data-pct={pct.toFixed(2)}>
+      <div className="flex-1 min-w-[60px] h-2.5 bg-gray-200 rounded-full overflow-hidden">
+        {/* Por encima del 100 % la barra se queda llena: lo que sobra lo dice la
+            etiqueta con su cifra, no un rectángulo que se salga de la caja. */}
+        <div className={`h-full ${relleno} rounded-full`}
+          style={{ width: `${Math.min(pct, 100)}%` }} />
+      </div>
+      <PorcentajeConsumido dato={dato} />
+    </div>
+  );
+}
+
+/** El aviso de arriba: cuántos proyectos están desfasados, con su filtro (§5.1). */
+export function AvisoDesfasados({ cuantos, activo, onAlternar }: {
+  cuantos: number;
+  activo: boolean;
+  onAlternar: () => void;
+}) {
+  if (!cuantos && !activo) return null;
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-red-50 border border-red-200"
+      data-testid="aviso-desfasados">
+      <div className="flex items-center gap-2 text-red-800">
+        <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+        <span className="text-lg">
+          {cuantos === 0 ? 'Ningún proyecto desfasado con estos filtros.'
+            : cuantos === 1 ? <><strong>1 proyecto</strong> se pasó de lo estimado.</>
+            : <><strong>{cuantos} proyectos</strong> se pasaron de lo estimado.</>}
+        </span>
+      </div>
+      <button onClick={onAlternar} data-testid="filtro-desfasados"
+        className={`px-4 py-2.5 text-base font-semibold rounded-xl border-2 ${
+          activo ? 'bg-red-600 text-white border-red-600'
+            : 'bg-white text-red-700 border-red-300 hover:bg-red-100'}`}>
+        {activo ? 'Ver todos' : 'Ver solo los desfasados'}
+      </button>
+    </div>
+  );
+}

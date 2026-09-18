@@ -306,6 +306,61 @@ class ActivityAvailabilityResponse(BaseModel):
     over_estimate: bool
 
 
+# ===================== CONSULTA (ETAPA H3, §5) =====================
+
+class ConsultaPersona(BaseModel):
+    """Quién registró y cuántas horas, dentro del rango consultado (H-D32)."""
+    user_id: UUID
+    user_name: str = ""
+    hours: Decimal = Decimal("0")
+    billable_hours: Decimal = Decimal("0")
+    overtime_hours: Decimal = Decimal("0")
+    entries_count: int = 0
+
+
+class ConsultaProyecto(BaseModel):
+    """Un proyecto en la consulta.
+
+    Ojo a las dos cifras de horas, que **no son la misma** y por eso van con
+    nombres distintos:
+
+    - `hours_in_range` es lo registrado **dentro del rango consultado**;
+    - `consumed_hours` es todo lo que lleva el proyecto **desde siempre**, que es
+      contra lo que se mide el desfase.
+
+    Mezclarlas daría un proyecto «en rango» solo por haber consultado una semana
+    tranquila, y contradiría a la pantalla de Proyectos.
+    """
+    project_id: UUID
+    project_name: str = ""
+    client_id: UUID
+    client_name: str = ""
+    status: str = "activo"
+    estimated_hours: Decimal = Decimal("0")
+    consumed_hours: Decimal = Decimal("0")
+    remaining_hours: Decimal = Decimal("0")
+    consumed_pct: Decimal = Decimal("0")
+    overrun_status: str = "en_rango"
+    overrun_hours: Decimal = Decimal("0")
+    overrun_label: str = "En rango"
+    hours_in_range: Decimal = Decimal("0")
+    overtime_in_range: Decimal = Decimal("0")
+    entries_in_range: int = 0
+    people: List[ConsultaPersona] = []
+
+
+class ConsultaResponse(BaseModel):
+    desde: DateOnly
+    hasta: DateOnly
+    projects: List[ConsultaProyecto] = []
+    total_hours: Decimal = Decimal("0")
+    total_overtime: Decimal = Decimal("0")
+    projects_count: int = 0
+    people_count: int = 0
+    # §5.1: cuántos proyectos están desfasados, para el aviso de arriba.
+    overrun_count: int = 0
+
+
 class ProjectActivityChangeResponse(BaseModel):
     id: UUID
     activity_id: UUID

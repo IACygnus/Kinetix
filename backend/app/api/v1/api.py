@@ -7,6 +7,7 @@ from app.api.v1.endpoints import auth
 # MODULO DE HORAS (ETAPA H1, H-D9): router propio bajo /time, separado del
 # modulo de analisis.
 from app.api.v1.endpoints import time_activities
+from app.api.v1.endpoints import time_consulta
 from app.api.v1.endpoints import time_entries
 from app.api.v1.endpoints import time_projects
 from app.api.v1.endpoints import upload
@@ -106,6 +107,7 @@ api_router.include_router(
 # los routers del modulo de analisis y del motor.
 api_router.include_router(time_activities.router, prefix="/time/activities", tags=["Horas — Actividades"])
 api_router.include_router(time_projects.router, prefix="/time/projects", tags=["Horas — Proyectos"])
+api_router.include_router(time_consulta.router, prefix="/time/consulta", tags=["Horas — Consulta"])
 # ETAPA H2: el registro cuelga de /time directamente porque sus rutas son
 # varias (/entries, /week, /pending-days, /projects/{id}/disponibilidad).
 api_router.include_router(time_entries.router, prefix="/time", tags=["Horas — Registro"])

@@ -21,7 +21,9 @@ import {
   Actividad, CambioDeEstimacion, Proyecto, ProyectoDetalle,
   esPasoValido, horas, horasApi,
 } from '../../api/horasApi';
-import AvisoDesfase, { PorcentajeConsumido } from '../../components/horas/AvisoDesfase';
+import AvisoDesfase, {
+  AvisoDesfasados, BarraConsumo, PorcentajeConsumido,
+} from '../../components/horas/AvisoDesfase';
 import { clientsAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -39,6 +41,9 @@ export default function ProyectosPage() {
   const [filtroCliente, setFiltroCliente] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('');
   const [texto, setTexto] = useState('');
+  // §5.1: ver solo los que se pasaron. Se filtra aquí y no en el backend porque
+  // el listado ya viene entero y el estado viaja en cada fila.
+  const [soloDesfasados, setSoloDesfasados] = useState(false);
 
   // null = listado · 'nuevo' = formulario de alta · id = detalle
   const [vista, setVista] = useState<string | null>(null);
@@ -429,6 +434,12 @@ export default function ProyectosPage() {
   }
 
   // ==================== LISTADO ====================
+  // §5.1: el aviso de arriba y la tabla miran la misma lista.
+  const desfasados = proyectos.filter((p) => p.overrun_status === 'desfasado').length;
+  const visibles = soloDesfasados
+    ? proyectos.filter((p) => p.overrun_status === 'desfasado')
+    : proyectos;
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-start justify-between mb-6 gap-4">
@@ -445,6 +456,10 @@ export default function ProyectosPage() {
       </div>
 
       {bloqueError}
+
+      {/* §5.1: «Arriba, un aviso dice cuántos proyectos están desfasados». */}
+      <AvisoDesfasados cuantos={desfasados} activo={soloDesfasados}
+        onAlternar={() => setSoloDesfasados((v) => !v)} />
 
       <div className="flex flex-wrap gap-3 mb-5">
         <select value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)}
@@ -479,7 +494,7 @@ export default function ProyectosPage() {
               </tr>
             </thead>
             <tbody data-testid="tabla-proyectos">
-              {proyectos.map((p) => (
+ {visibles.map((p) => (
                 <tr key={p.id} onClick={() => abrir(p.id)} data-proyecto={p.name}
                   className="border-b border-gray-100 last:border-0 hover:bg-amber-50/50 cursor-pointer">
                   <td className="py-3 px-4 text-lg text-gray-600">{p.client_name}</td>
@@ -502,14 +517,15 @@ export default function ProyectosPage() {
                     {horas(p.total_consumed_hours)}
                   </td>
                   <td className="py-3 px-4 text-right" data-proyecto-desfase={p.overrun_status}>
-                    <div className="flex items-center justify-end gap-2 flex-wrap">
-                      <PorcentajeConsumido dato={p} />
+                    {/* §5.1: la barra de consumido frente a estimado. */}
+                    <BarraConsumo dato={p} />
+                    <div className="flex items-center justify-end gap-2 flex-wrap mt-1">
                       <AvisoDesfase dato={p} />
                     </div>
                   </td>
                 </tr>
               ))}
-              {proyectos.length === 0 && (
+ {visibles.length === 0 && (
                 <tr><td colSpan={6} className="py-10 text-center text-gray-400 text-lg">
                   No hay proyectos que coincidan.
                 </td></tr>

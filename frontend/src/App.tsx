@@ -30,6 +30,7 @@ import EvidencePage from './pages/EvidencePage';
 import IntegratedReportPage from './pages/IntegratedReportPage';
 // MODULO DE HORAS (ETAPA H1, H-D9): todo cuelga de /horas.
 import ActividadesPage from './pages/horas/ActividadesPage';
+import ConsultaPage from './pages/horas/ConsultaPage';
 import ProyectosPage from './pages/horas/ProyectosPage';
 import RegistroPage from './pages/horas/RegistroPage';
 import IntegratedReportsHistory from './pages/IntegratedReportsHistory';
@@ -82,6 +83,7 @@ function App() {
             {/* MODULO DE HORAS (ETAPA H1). Sin `roles`: en horas todos ven todo
                 (§8); lo que restringe el rol son las operaciones, y eso lo
                 comprueba el backend, no la pantalla. */}
+            <Route path="/horas/consulta" element={<ConsultaPage />} />
             <Route path="/horas/proyectos" element={<ProyectosPage />} />
             <Route path="/horas/actividades" element={<ActividadesPage />} />
             <Route path="/horas/registro" element={<RegistroPage />} />

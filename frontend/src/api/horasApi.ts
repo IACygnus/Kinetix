@@ -115,6 +115,57 @@ export interface Semana {
   total_overtime: string | number;
 }
 
+// ===================== CONSULTA (ETAPA H3, §5) =====================
+
+export interface ConsultaPersona {
+  user_id: string;
+  user_name: string;
+  hours: string | number;
+  billable_hours: string | number;
+  overtime_hours: string | number;
+  entries_count: number;
+}
+
+/** Un proyecto en la consulta.
+ *
+ *  `hours_in_range` es lo del rango consultado; `consumed_hours` es todo lo que
+ *  lleva el proyecto **desde siempre**, que es contra lo que se mide el desfase.
+ *  No son la misma cifra y no se pintan en la misma columna. */
+export interface ConsultaProyecto extends Desfase {
+  project_id: string;
+  project_name: string;
+  client_id: string;
+  client_name: string;
+  status: string;
+  estimated_hours: string | number;
+  consumed_hours: string | number;
+  remaining_hours: string | number;
+  hours_in_range: string | number;
+  overtime_in_range: string | number;
+  entries_in_range: number;
+  people: ConsultaPersona[];
+}
+
+export interface Consulta {
+  desde: string;
+  hasta: string;
+  projects: ConsultaProyecto[];
+  total_hours: string | number;
+  total_overtime: string | number;
+  projects_count: number;
+  people_count: number;
+  overrun_count: number;
+}
+
+export interface FiltrosConsulta {
+  desde: string;
+  hasta: string;
+  client_id?: string;
+  project_id?: string;
+  user_id?: string;
+  solo_desfasados?: boolean;
+}
+
 /** Una casilla del calendario (ETAPA H2b, §4.1). Viene resuelta del backend. */
 export interface DiaDelMes {
   date: string;
@@ -177,6 +228,18 @@ export interface RegistroNuevo {
 
 export const horasApi = {
   // ---------- Registro (H2) ----------
+  // ---------- Consulta (H3) ----------
+  consulta: async (f: FiltrosConsulta): Promise<Consulta> =>
+    (await api.get('/time/consulta', { params: f })).data,
+
+  /** Los días que se despliegan al ampliar una fila (H-D33). */
+  diasDeConsulta: async (
+    projectId: string, desde: string, hasta: string, userId?: string,
+  ): Promise<Registro[]> =>
+    (await api.get('/time/consulta/dias', {
+      params: { project_id: projectId, desde, hasta, user_id: userId },
+    })).data,
+
   /** El mes entero para el calendario (ETAPA H2b). */
   mes: async (anio: number, mes: number, userId?: string): Promise<Mes> =>
     (await api.get('/time/month', { params: { anio, mes, user_id: userId } })).data,
