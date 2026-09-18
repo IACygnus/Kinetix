@@ -202,9 +202,10 @@ Arreglarlo se sale de esta etapa; queda anotado.
 
 **El fallo de `pytest`** es `test_analysis_pipeline.py::test_pipeline_parsea_jtl_…`
 (`AttributeError: module 'app.services.ai.analysis_pipeline' has no attribute
-'time'`). **No viene de esta etapa**: falla igual con todos los cambios de H2b.3
-a H2b.5 guardados aparte, y es del módulo de análisis, que el módulo de horas no
-toca. Queda anotado para tratarlo donde corresponde.
+'time'`): **el mismo que ya venía de antes del plan**, anotado en el reporte 66 y
+otra vez en el 71. No viene de esta etapa —falla igual con todos los cambios de
+H2b.3 a H2b.5 guardados aparte— y es del módulo de análisis, que el de horas no
+toca.
 
 **`h24_pantalla.py` ya no aplica** a propósito: conducía la vista semanal, que es
 justo lo que esta etapa retira. Lo sustituye `h2b5_pantalla.py`, que cubre lo
