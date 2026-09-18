@@ -10,11 +10,18 @@ contradecirse.
 **La pantalla no recalcula nada**: recibe por día lo esperado, lo ordinario, lo
 extra, si es festivo o ausencia, si está incompleto y por cuánto.
 
-Las tres reglas viven aquí, juntas:
+Las reglas viven aquí, juntas:
 
   1. un día por debajo de su jornada está incompleto, y falta la diferencia;
   2. un día con horas extra **nunca** se marca incompleto (H-D17);
-  3. festivos y ausencias **no se reclaman** (§4.2.7).
+  3. festivos y ausencias **no se reclaman** (§4.2.7);
+  4. un día que todavía no ha llegado tampoco se reclama (ETAPA H2b).
+
+La cuarta la tenía `dias_pendientes` para su lista, pero no la tenía el día en sí.
+Con la vista semanal casi no se notaba; con el calendario del mes se nota mucho,
+porque pintaría en rojo todo lo que queda de mes. La regla sube al día, que es
+donde estaban las otras tres, y así el calendario, la semana y la lista de
+pendientes no pueden discrepar.
 """
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -35,6 +42,9 @@ class DiaDelCalendario:
     es_festivo: bool = False
     es_ausencia: bool = False
     motivo_no_laborable: str = ""
+    # Hasta dónde ha llegado el tiempo. `None` = no se recorta el futuro, que es
+    # como se comportaba H2; los endpoints pasan el día de hoy.
+    hoy: Optional[date] = None
 
     @property
     def total(self) -> Decimal:
@@ -46,13 +56,33 @@ class DiaDelCalendario:
         return self.esperadas <= 0 or self.es_festivo or self.es_ausencia
 
     @property
-    def incompleto(self) -> bool:
-        """Regla 1 + reglas 2 y 3, en el orden en que se aplican.
+    def futuro(self) -> bool:
+        """Un día que todavía no ha llegado. Hoy NO lo es: la jornada de hoy se
+        registra hoy, y el panel de pendientes ya lo contaba así."""
+        return self.hoy is not None and self.fecha > self.hoy
 
-        El orden importa: primero se descarta lo que no se reclama, después las
-        extras, y solo entonces se compara contra la jornada.
+    @property
+    def se_reclaman(self) -> Decimal:
+        """Las horas que de verdad se esperan ese día.
+
+        Un festivo, una ausencia o un fin de semana no esperan ninguna (§4.2.7):
+        `esperadas` guarda la jornada del calendario laboral —que sigue siendo
+        útil para saber qué jornada le tocaba—, pero lo que se suma y lo que se
+        enseña es esto.
+        """
+        return CERO if self.no_laborable else self.esperadas
+
+    @property
+    def incompleto(self) -> bool:
+        """Las cuatro reglas, en el orden en que se aplican.
+
+        El orden importa: primero se descarta lo que no se reclama —ni por
+        festivo ni por no haber llegado todavía—, después las extras, y solo
+        entonces se compara contra la jornada.
         """
         if self.no_laborable:
+            return False
+        if self.futuro:
             return False
         if self.extra > 0:          # H-D17
             return False
@@ -85,12 +115,15 @@ def construir_dias(
     calendario: Dict[int, Decimal],
     horas_por_dia: Dict[date, Dict[str, Decimal]],
     no_laborables: Dict[date, tuple],
+    hoy: Optional[date] = None,
 ) -> List[DiaDelCalendario]:
     """Resuelve cada día del rango.
 
     `horas_por_dia`  : {fecha: {"ordinarias": …, "extra": …}}, lo que hay registrado.
     `no_laborables`  : {fecha: (nombre, es_ausencia)}, festivos y ausencias juntos —
                        H1 los puso en la misma tabla porque aquí se usan igual.
+    `hoy`            : recorta el futuro. Sin él nada se recorta, que es lo que
+                       quieren los tests de las otras tres reglas.
     """
     salida = []
     for f in dias_del_rango(desde, hasta):
@@ -104,6 +137,7 @@ def construir_dias(
             es_festivo=bool(nombre) and not es_ausencia,
             es_ausencia=es_ausencia,
             motivo_no_laborable=nombre,
+            hoy=hoy,
         ))
     return salida
 

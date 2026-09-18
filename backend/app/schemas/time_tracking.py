@@ -101,8 +101,15 @@ class ProjectActivityResponse(BaseModel):
     # El contrato se fija YA para que H2 y H3 no tengan que cambiarlo.
     consumed_hours: Decimal = Decimal("0")
     remaining_hours: Decimal = Decimal("0")
-    # §4.2.4: marca de exceso, para pintarla en color sin recalcular en la pantalla.
+    # §4.2.4: marca de desfase, para pintarla en color sin recalcular en la
+    # pantalla. El nombre interno se conserva (H-D27): lo que cambia es el texto.
     over_estimate: bool = False
+    # ETAPA H2b (§5.1): el mismo estado por actividad, para ver CUÁL es la que
+    # está tirando del proyecto, no solo que el proyecto va mal.
+    consumed_pct: Decimal = Decimal("0")
+    overrun_status: str = "en_rango"
+    overrun_hours: Decimal = Decimal("0")
+    overrun_label: str = "En rango"
 
 
 class ProjectResponse(BaseModel):
@@ -116,6 +123,12 @@ class ProjectResponse(BaseModel):
     total_estimated_hours: Decimal = Decimal("0")
     total_consumed_hours: Decimal = Decimal("0")
     activities_count: int = 0
+    # ETAPA H2b (§5.1). Campos AÑADIDOS: el contrato que cerraron H1 y H2 no
+    # cambia, así que nada de lo que ya consumía esta respuesta se entera.
+    consumed_pct: Decimal = Decimal("0")
+    overrun_status: str = "en_rango"      # en_rango | por_agotarse | desfasado
+    overrun_hours: Decimal = Decimal("0")
+    overrun_label: str = "En rango"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -237,6 +250,40 @@ class WeekResponse(BaseModel):
     total_expected: Decimal = Decimal("0")
     total_ordinary: Decimal = Decimal("0")
     total_overtime: Decimal = Decimal("0")
+
+
+class MonthDayResponse(BaseModel):
+    """Una casilla del calendario (ETAPA H2b, §4.1).
+
+    Todo viene resuelto: la pantalla pinta, no calcula.
+    """
+    date: DateOnly
+    expected_hours: Decimal
+    ordinary_hours: Decimal
+    overtime_hours: Decimal
+    total_hours: Decimal
+    is_holiday: bool = False
+    is_absence: bool = False
+    non_working_reason: str = ""
+    incomplete: bool = False
+    missing_hours: Decimal = Decimal("0")
+    entries_count: int = 0
+    # Si alguno de sus registros cae en una actividad desfasada (H-D27).
+    has_over_estimate: bool = False
+
+
+class MonthResponse(BaseModel):
+    user_id: UUID
+    user_name: str = ""
+    year: int
+    month: int
+    first_day: DateOnly
+    last_day: DateOnly
+    days: List[MonthDayResponse] = []
+    total_expected: Decimal = Decimal("0")
+    total_ordinary: Decimal = Decimal("0")
+    total_overtime: Decimal = Decimal("0")
+    pending_days: int = 0
 
 
 class PendingDayResponse(BaseModel):

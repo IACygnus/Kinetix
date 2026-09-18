@@ -26,6 +26,15 @@ from app.db.models.client import Client
 from app.db.models.time_tracking import (
     Activity, Project, ProjectActivity, ProjectActivityChange, TimeEntry, normalizar,
 )
+# ETAPA H2b (§5.1): el estado de desfase, en un solo sitio. Con alias porque
+# `estado` es además el nombre del filtro del listado (activo/cerrado) y se
+# taparían el uno al otro.
+from app.services.horas.desfase import (
+    estado as estado_desfase,
+    etiqueta as etiqueta_desfase,
+    horas_de_desfase,
+    porcentaje as porcentaje_consumido,
+)
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.time_tracking import (
@@ -75,6 +84,11 @@ async def _detalle(db: AsyncSession, proyecto: Project) -> ProjectDetailResponse
             estimated_hours=est, consumed_hours=con,
             remaining_hours=est - con,
             over_estimate=con > est,
+            # ETAPA H2b (§5.1): el mismo estado por actividad.
+            consumed_pct=porcentaje_consumido(con, est),
+            overrun_status=estado_desfase(con, est),
+            overrun_hours=horas_de_desfase(con, est),
+            overrun_label=etiqueta_desfase(con, est),
         ))
 
     return ProjectDetailResponse(
@@ -139,16 +153,23 @@ async def listar_proyectos(
         .group_by(TimeEntry.project_id)
     )).all())
 
-    return [
-        ProjectResponse(
+    salida = []
+    for p, c in filas:
+        est = Decimal(str(estimado.get(p.id, 0)))
+        con = Decimal(str(consumido.get(p.id, 0)))
+        salida.append(ProjectResponse(
             id=p.id, client_id=p.client_id, client_name=c.name, name=p.name,
             description=p.description, status=p.status, created_at=p.created_at,
-            total_estimated_hours=Decimal(str(estimado.get(p.id, 0))),
-            total_consumed_hours=Decimal(str(consumido.get(p.id, 0))),
+            total_estimated_hours=est, total_consumed_hours=con,
             activities_count=cuenta.get(p.id, 0),
-        )
-        for p, c in filas
-    ]
+            # ETAPA H2b (§5.1): campos AÑADIDOS. Lo que ya consumía esta
+            # respuesta sigue igual.
+            consumed_pct=porcentaje_consumido(con, est),
+            overrun_status=estado_desfase(con, est),
+            overrun_hours=horas_de_desfase(con, est),
+            overrun_label=etiqueta_desfase(con, est),
+        ))
+    return salida
 
 
 @router.post("", response_model=ProjectDetailResponse, status_code=status.HTTP_201_CREATED)

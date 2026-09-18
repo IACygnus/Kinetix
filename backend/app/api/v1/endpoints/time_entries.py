@@ -35,8 +35,9 @@ from app.db.models.time_tracking import (
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.time_tracking import (
-    ActivityAvailabilityResponse, DiaResponse, PendingDayResponse,
-    TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate, WeekResponse,
+    ActivityAvailabilityResponse, DiaResponse, MonthDayResponse, MonthResponse,
+    PendingDayResponse, TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate,
+    WeekResponse,
 )
 from app.services.horas.calendario import (
     construir_dias, dias_pendientes, semana_de,
@@ -249,14 +250,15 @@ async def ver_semana(
         por_dia.setdefault(r.date, []).append(por_id[r.id])
 
     dias = construir_dias(lunes, domingo, await _calendario(db), horas_por_dia,
-                          await _no_laborables(db, objetivo, lunes, domingo))
+                          await _no_laborables(db, objetivo, lunes, domingo),
+                          hoy=date.today())
 
     return WeekResponse(
         user_id=objetivo, user_name=(usuario.full_name or usuario.username),
         week_start=lunes, week_end=domingo,
         days=[
             DiaResponse(
-                date=d.fecha, expected_hours=d.esperadas,
+                date=d.fecha, expected_hours=d.se_reclaman,
                 ordinary_hours=d.ordinarias, overtime_hours=d.extra, total_hours=d.total,
                 is_holiday=d.es_festivo, is_absence=d.es_ausencia,
                 non_working_reason=d.motivo_no_laborable,
@@ -264,9 +266,71 @@ async def ver_semana(
                 entries=por_dia.get(d.fecha, []),
             ) for d in dias
         ],
-        total_expected=sum((d.esperadas for d in dias), CERO),
+        total_expected=sum((d.se_reclaman for d in dias), CERO),
         total_ordinary=sum((d.ordinarias for d in dias), CERO),
         total_overtime=sum((d.extra for d in dias), CERO),
+    )
+
+
+@router.get("/month", response_model=MonthResponse)
+async def ver_mes(
+    anio: Optional[int] = Query(None, ge=2000, le=2100),
+    mes: Optional[int] = Query(None, ge=1, le=12),
+    user_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """El mes entero, casilla a casilla (ETAPA H2b, §4.1).
+
+    Reutiliza `services/horas/calendario.py`, el mismo módulo que resuelve la
+    semana y los días pendientes: **la pantalla no calcula nada** y las tres
+    vistas no pueden discrepar.
+    """
+    objetivo = user_id or current_user.id
+    usuario = await db.get(User, objetivo) if user_id else current_user
+    if not usuario:
+        raise HTTPException(404, "Usuario no encontrado")
+
+    hoy = date.today()
+    a, m = anio or hoy.year, mes or hoy.month
+    primero = date(a, m, 1)
+    # El último día del mes sin `calendar`: el día 1 del siguiente, menos uno.
+    ultimo = (date(a + 1, 1, 1) if m == 12 else date(a, m + 1, 1)) - timedelta(days=1)
+
+    registros = await _registros(db, objetivo, primero, ultimo)
+    horas_por_dia: Dict[date, Dict[str, Decimal]] = {}
+    cuenta: Dict[date, int] = {}
+    for r in registros:
+        acc = horas_por_dia.setdefault(r.date, {"ordinarias": CERO, "extra": CERO})
+        acc["extra" if r.overtime else "ordinarias"] += Decimal(str(r.hours))
+        cuenta[r.date] = cuenta.get(r.date, 0) + 1
+
+    # Qué días tienen algún registro en una actividad desfasada (H-D27).
+    exceso = await _excedidas(db, {(r.project_id, r.activity_id) for r in registros})
+    con_desfase = {r.date for r in registros if (r.project_id, r.activity_id) in exceso}
+
+    dias = construir_dias(primero, ultimo, await _calendario(db), horas_por_dia,
+                          await _no_laborables(db, objetivo, primero, ultimo),
+                          hoy=hoy)
+
+    return MonthResponse(
+        user_id=objetivo, user_name=(usuario.full_name or usuario.username),
+        year=a, month=m, first_day=primero, last_day=ultimo,
+        days=[
+            MonthDayResponse(
+                date=d.fecha, expected_hours=d.se_reclaman,
+                ordinary_hours=d.ordinarias, overtime_hours=d.extra, total_hours=d.total,
+                is_holiday=d.es_festivo, is_absence=d.es_ausencia,
+                non_working_reason=d.motivo_no_laborable,
+                incomplete=d.incompleto, missing_hours=d.faltan,
+                entries_count=cuenta.get(d.fecha, 0),
+                has_over_estimate=d.fecha in con_desfase,
+            ) for d in dias
+        ],
+        total_expected=sum((d.se_reclaman for d in dias), CERO),
+        total_ordinary=sum((d.ordinarias for d in dias), CERO),
+        total_overtime=sum((d.extra for d in dias), CERO),
+        pending_days=len(dias_pendientes(dias, min(ultimo, hoy))),
     )
 
 
@@ -300,7 +364,8 @@ async def dias_por_completar(
         acc["extra" if r.overtime else "ordinarias"] += Decimal(str(r.hours))
 
     dias = construir_dias(desde, hasta, await _calendario(db), horas_por_dia,
-                          await _no_laborables(db, objetivo, desde, hasta))
+                          await _no_laborables(db, objetivo, desde, hasta),
+                          hoy=hoy)
 
     return [
         PendingDayResponse(

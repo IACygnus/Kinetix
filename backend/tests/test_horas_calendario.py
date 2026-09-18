@@ -141,6 +141,57 @@ def test_los_pendientes_saltan_festivos_y_fines_de_semana():
     assert len(fechas) == 4                          # martes a viernes
 
 
+# ========== ETAPA H2b: EL FUTURO Y LO QUE NO SE RECLAMA ==========
+#
+# El calendario del mes enseña días que todavía no han llegado. Sin estas dos
+# reglas pintaría en rojo el resto del mes y sumaría como esperadas las horas de
+# un festivo.
+
+def test_un_dia_futuro_no_esta_incompleto():
+    """La regla que `dias_pendientes` tenía para su lista, ahora en el día."""
+    dias = construir_dias(LUNES, LUNES + timedelta(days=6), JORNADA, {}, {},
+                          hoy=LUNES + timedelta(days=1))
+    #                      lun   mar    mié    jue    vie    sáb    dom
+    assert [d.incompleto for d in dias] == [True, True, False, False, False, False, False]
+
+
+def test_hoy_si_se_reclama():
+    """Hoy no es futuro: la jornada de hoy se registra hoy, y así lo contaba ya
+    el panel de pendientes."""
+    dias = construir_dias(LUNES, LUNES, JORNADA, {}, {}, hoy=LUNES)
+    assert dias[0].futuro is False
+    assert dias[0].incompleto is True
+
+
+def test_sin_hoy_no_se_recorta_nada():
+    """H2 no pasaba «hoy» y su comportamiento no cambia."""
+    dias = construir_dias(LUNES, LUNES + timedelta(days=6), JORNADA, {}, {})
+    assert [d.incompleto for d in dias] == [True, True, True, True, True, False, False]
+
+
+def test_un_festivo_no_espera_horas():
+    """§4.2.7: la jornada del viernes son 8 h, pero si es festivo no se reclama
+    ninguna — y por eso no entra en el total del mes."""
+    dias = construir_dias(LUNES, LUNES + timedelta(days=4), JORNADA, {},
+                          {LUNES + timedelta(days=4): ("Fiesta", False)})
+    viernes = dias[4]
+    assert viernes.esperadas == D("8")        # la jornada que le tocaba
+    assert viernes.se_reclaman == D("0")      # lo que de verdad se le pide
+    assert sum((d.se_reclaman for d in dias), D("0")) == D("34")   # 8,5 × 4
+
+
+def test_una_ausencia_tampoco_espera_horas():
+    dias = construir_dias(LUNES, LUNES, JORNADA, {}, {LUNES: ("Vacaciones", True)})
+    assert dias[0].es_ausencia is True
+    assert dias[0].se_reclaman == D("0")
+
+
+def test_el_fin_de_semana_ya_era_cero():
+    dias = construir_dias(LUNES + timedelta(days=5), LUNES + timedelta(days=6),
+                          JORNADA, {}, {})
+    assert [d.se_reclaman for d in dias] == [D("0"), D("0")]
+
+
 # ==================== H-D13 y §8: LOS PERMISOS ====================
 
 def test_un_analyst_no_puede_registrar_por_otro():
