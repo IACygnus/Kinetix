@@ -361,6 +361,80 @@ class ConsultaResponse(BaseModel):
     overrun_count: int = 0
 
 
+# ===================== IMPORTACIÓN (ETAPA H3, §6) =====================
+
+class FilaImportacion(BaseModel):
+    """Una fila del archivo, ya leída y decidida.
+
+    `numero` es el número de fila **del archivo**, para que quien lea un aviso
+    pueda ir a mirarla (H-D40).
+    """
+    numero: int
+    accion: str = "nueva"          # nueva | actualiza | invalida
+    motivo: str = ""               # por qué es inválida (H-D40)
+    external_id: str = ""
+    date: Optional[DateOnly] = None
+    client_name: str = ""
+    project_name: str = ""
+    activity_name: str = ""
+    hours: Optional[Decimal] = None
+    billable: bool = False
+    overtime: bool = False
+    notes: str = ""
+    # Qué se crearía por culpa de esta fila (H-D36, H-D48).
+    crea_cliente: bool = False
+    crea_proyecto: bool = False
+    crea_actividad: bool = False
+    # H-D38: cómo queda esa actividad del proyecto si entra esta fila.
+    overrun_status: str = "en_rango"
+    overrun_hours: Decimal = Decimal("0")
+    overrun_label: str = "En rango"
+    # Al actualizar, si el registro cambia de persona.
+    cambia_de_persona: bool = False
+
+
+class ProyectoAImportar(BaseModel):
+    client_name: str
+    project_name: str
+
+
+class VistaPreviaImportacion(BaseModel):
+    """Lo que se verá ANTES de escribir nada (§6.2.5). Nada de esto toca la base."""
+    sheet: str = ""
+    sheets: List[str] = []
+    user_id: UUID
+    user_name: str = ""
+    total_filas: int = 0
+    nuevas: List[FilaImportacion] = []
+    actualizadas: List[FilaImportacion] = []
+    invalidas: List[FilaImportacion] = []
+    desfasadas: List[FilaImportacion] = []
+    clientes_a_crear: List[str] = []
+    proyectos_a_crear: List[ProyectoAImportar] = []
+    actividades_a_crear: List[str] = []
+    total_horas: Decimal = Decimal("0")
+
+
+class ProyectoCreado(BaseModel):
+    """H-D37: con su id, para que el resumen ofrezca el enlace que lleva a
+    ponerle las horas estimadas."""
+    id: UUID
+    name: str
+    client_name: str = ""
+
+
+class ResumenImportacion(BaseModel):
+    creados: int = 0
+    actualizados: int = 0
+    omitidos: int = 0
+    total_horas: Decimal = Decimal("0")
+    clientes_creados: List[str] = []
+    actividades_creadas: List[str] = []
+    proyectos_creados: List[ProyectoCreado] = []
+    user_id: UUID
+    user_name: str = ""
+
+
 class ProjectActivityChangeResponse(BaseModel):
     id: UUID
     activity_id: UUID

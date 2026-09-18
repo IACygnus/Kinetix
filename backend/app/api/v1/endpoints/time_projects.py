@@ -91,6 +91,30 @@ async def _detalle(db: AsyncSession, proyecto: Project) -> ProjectDetailResponse
             overrun_label=etiqueta_desfase(con, est),
         ))
 
+    # ETAPA H3: las actividades que tienen horas registradas pero **no** están
+    # estimadas. Pasa con los proyectos que crea la importación (§6.2.4), que
+    # nacen sin estimación: sin esto, el detalle enseñaría 0 consumidas de un
+    # proyecto que sí tiene horas. Estimadas 0 ⇒ `desfase.py` las deja en rango.
+    sueltas = set(consumido) - {a.activity_id for a in actividades}
+    if sueltas:
+        nombres = {
+            a.id: a.name for a in (await db.execute(
+                select(Activity).where(Activity.id.in_(sueltas))
+            )).scalars().all()
+        }
+        for aid in sueltas:
+            con = consumido[aid]
+            total_con += con
+            actividades.append(ProjectActivityResponse(
+                activity_id=aid, activity_name=nombres.get(aid, ""),
+                estimated_hours=CERO, consumed_hours=con, remaining_hours=-con,
+                over_estimate=False,
+                consumed_pct=porcentaje_consumido(con, CERO),
+                overrun_status=estado_desfase(con, CERO),
+                overrun_hours=horas_de_desfase(con, CERO),
+                overrun_label=etiqueta_desfase(con, CERO),
+            ))
+
     return ProjectDetailResponse(
         id=proyecto.id, client_id=proyecto.client_id,
         client_name=cliente.name if cliente else "",

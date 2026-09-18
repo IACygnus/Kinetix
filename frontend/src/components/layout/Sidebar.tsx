@@ -33,6 +33,7 @@ import {
   CalendarClock,
   FolderKanban,
   ListChecks,
+  Upload,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -174,6 +175,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Actividades',
           path: '/horas/actividades',
           icon: <ListChecks className="w-6 h-6" />,
+        },
+        {
+          label: 'Importar',
+          path: '/horas/importar',
+          icon: <Upload className="w-6 h-6" />,
         },
       ],
     },

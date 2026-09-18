@@ -52,3 +52,8 @@ PyYAML==6.0.1
 
 # Dev/test (anadido en Sprint 2.2 para persistir instalacion del Sprint 2.1)
 pytest>=9.0
+
+# MODULO DE HORAS (ETAPA H3) — lector del .xlsx de la importacion (§6).
+# pandas 2.1.4 lo pide como motor de read_excel, pero aqui se usa directo:
+# el archivo se recorre fila a fila y no hace falta un DataFrame de por medio.
+openpyxl==3.1.2

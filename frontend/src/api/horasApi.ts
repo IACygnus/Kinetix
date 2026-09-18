@@ -115,6 +115,72 @@ export interface Semana {
   total_overtime: string | number;
 }
 
+// ===================== IMPORTACIÓN (ETAPA H3, §6) =====================
+
+export type AccionFila = 'nueva' | 'actualiza' | 'invalida';
+
+export interface FilaImportacion {
+  /** El número de fila **del archivo**, para poder ir a mirarla (H-D40). */
+  numero: number;
+  accion: AccionFila;
+  motivo: string;
+  external_id: string;
+  date?: string | null;
+  client_name: string;
+  project_name: string;
+  activity_name: string;
+  hours?: string | number | null;
+  billable: boolean;
+  overtime: boolean;
+  notes: string;
+  crea_cliente: boolean;
+  crea_proyecto: boolean;
+  crea_actividad: boolean;
+  overrun_status: EstadoDesfase;
+  overrun_hours: string | number;
+  overrun_label: string;
+  cambia_de_persona: boolean;
+}
+
+export interface ProyectoAImportar {
+  client_name: string;
+  project_name: string;
+}
+
+export interface VistaPrevia {
+  sheet: string;
+  sheets: string[];
+  user_id: string;
+  user_name: string;
+  total_filas: number;
+  nuevas: FilaImportacion[];
+  actualizadas: FilaImportacion[];
+  invalidas: FilaImportacion[];
+  desfasadas: FilaImportacion[];
+  clientes_a_crear: string[];
+  proyectos_a_crear: ProyectoAImportar[];
+  actividades_a_crear: string[];
+  total_horas: string | number;
+}
+
+export interface ProyectoCreado {
+  id: string;
+  name: string;
+  client_name: string;
+}
+
+export interface ResumenImportacion {
+  creados: number;
+  actualizados: number;
+  omitidos: number;
+  total_horas: string | number;
+  clientes_creados: string[];
+  actividades_creadas: string[];
+  proyectos_creados: ProyectoCreado[];
+  user_id: string;
+  user_name: string;
+}
+
 // ===================== CONSULTA (ETAPA H3, §5) =====================
 
 export interface ConsultaPersona {
@@ -228,6 +294,23 @@ export interface RegistroNuevo {
 
 export const horasApi = {
   // ---------- Registro (H2) ----------
+  // ---------- Importación (H3, §6) ----------
+  /** Analiza el archivo y devuelve qué pasaría. **No escribe nada** (§6.2.5). */
+  vistaPreviaImportacion: async (archivo: File, userId?: string): Promise<VistaPrevia> => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    if (userId) datos.append('user_id', userId);
+    return (await api.post('/time/import/preview', datos)).data;
+  },
+
+  /** Aplica la importación en una transacción (H-D41). */
+  confirmarImportacion: async (archivo: File, userId?: string): Promise<ResumenImportacion> => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    if (userId) datos.append('user_id', userId);
+    return (await api.post('/time/import/confirm', datos)).data;
+  },
+
   // ---------- Consulta (H3) ----------
   consulta: async (f: FiltrosConsulta): Promise<Consulta> =>
     (await api.get('/time/consulta', { params: f })).data,

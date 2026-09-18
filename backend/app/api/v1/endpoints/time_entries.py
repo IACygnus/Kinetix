@@ -141,8 +141,12 @@ async def _excedidas(db: AsyncSession, pares: Set[tuple]) -> Set[tuple]:
             .group_by(TimeEntry.project_id, TimeEntry.activity_id)
         )).all()
     }
+    # ETAPA H3: **sin estimación no hay desfase**, el mismo criterio que
+    # `desfase.py`. Importa porque un proyecto creado por la importación nace sin
+    # horas estimadas (§6.2.4) y, sin esta condición, cada una de sus filas
+    # saldría marcada en ámbar por haberse pasado de cero.
     return {k for k in pares
-            if consumido.get(k, CERO) > estimado.get(k, CERO)}
+            if estimado.get(k, CERO) > CERO and consumido.get(k, CERO) > estimado[k]}
 
 
 async def _responder(db: AsyncSession, registros: List[TimeEntry]) -> List[TimeEntryResponse]:
