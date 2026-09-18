@@ -1,6 +1,6 @@
 # Especificación funcional — Módulo de Horas y Proyectos (Kinetix)
 
-**Versión 1.1 · Aprobada por Fredy Bonilla**
+**Versión 1.2 · Aprobada por Fredy Bonilla**
 
 Referencia única del módulo. Todo prompt de desarrollo se valida contra este documento,
 no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
@@ -213,35 +213,82 @@ Extra Hour · Fecha · Tiempo total · Facturable`
 
 ---
 
-## 7. Reportes
+## 7. El informe de horas
 
-### 7.1 Alcance
+### 7.1 Un solo informe
 
-- Selección de **uno, dos o tres usuarios** (o todos).
-- Periodo **diario, semanal o mensual**, o un rango libre.
-- Salidas: **HTML** y **PDF**.
+**Hay un informe, no tres.** HTML y PDF son el mismo documento con las mismas
+secciones y las mismas cifras: cambia el soporte, no el contenido. El CSV no es un
+informe: es el detalle de registros para llevárselo a Excel.
 
-### 7.2 Contenido
+- Selección de **una persona, varias o todas**.
+- Periodo: un rango libre de fechas.
+- Filtros de **cliente**, **proyecto** y **solo facturables**.
+- Y una **casilla por sección** para elegir qué entra en el documento.
 
-El informe conserva la estructura del ejemplo aprobado y añade lo que el módulo aporta:
+### 7.2 Las diez secciones, en este orden
 
-| Sección | Qué muestra |
-|---|---|
-| Ocupación frente a la capacidad | Horas registradas contra la jornada del periodo, por usuario |
-| **Facturable frente a no facturable** | En total y por cliente |
-| Cobertura por cliente | Reparto de las horas |
-| En qué se fue el tiempo | Reparto por actividad |
-| Carga día a día | Con las **horas extra separadas** de las ordinarias |
-| **Consumido frente a estimado** | Por proyecto y actividad, con horas restantes y marca de desfase |
-| **Días sin registrar o incompletos** | Con las horas que faltan en cada uno |
-| Detalle de registros | La tabla completa del periodo |
+| # | Sección | Qué muestra |
+|---|---|---|
+| 1 | **Resumen** | Seis indicadores: horas registradas, ordinarias, extra, facturables, porcentaje facturable y días sin registrar |
+| 2 | **Ocupación por persona** | Horas registradas frente a la jornada que le tocaba, con su porcentaje |
+| 3 | **Facturable frente a no facturable** | En total y por cliente |
+| 4 | **Cobertura por cliente** | Reparto de las horas entre clientes |
+| 5 | **En qué se fue el tiempo** | Reparto por actividad |
+| 6 | **Consumido frente a estimado** | Por proyecto, con horas restantes y el estado de §5.1 |
+| 7 | **Mapa del mes** | Una fila por persona, una casilla por día: quién trabajó cuándo, de un vistazo |
+| 8 | **Días sin registrar** | Por persona, con las horas que faltan en cada día |
+| 9 | **Horas día a día** | Qué proyecto y qué actividad, día por día |
+| 10 | **Detalle de registros** | La tabla completa del periodo |
 
-### 7.3 Formato
+### 7.3 El HTML
 
-- Documento autocontenido, sin depender de internet, igual que el informe de análisis.
-- Cifras en formato español: `8.600` · `0,27%` · `1,1 horas`.
-- Colores del estándar visual de Kinetix.
-- El PDF con las mismas reglas del resto del producto: solo tablas, en milímetros y puntos.
+**Interactivo y autocontenido**: estilos y JavaScript embebidos, sin depender de
+internet ni de ningún CDN. Se puede guardar, enviar por correo y abrir sin red.
+
+Lleva dentro, funcionando sin servidor:
+
+- botones de **Equipo** y de **cada persona**, que filtran el documento entero;
+- filtros de **cliente** y **proyecto**, y casilla de **solo facturables**;
+- **búsqueda** en el detalle de registros;
+- **tablas ordenables** pulsando su cabecera;
+- **Descargar CSV** e **Imprimir**.
+
+### 7.4 El PDF
+
+**Orientación mixta**: el informe va en vertical y **solo las páginas de la
+sección 9 en horizontal**, para que el mes entero quepa de corrido. Un selector
+permite forzar todo vertical o todo horizontal.
+
+**El detalle de registros (sección 10) no entra por defecto**: trescientas filas
+en papel no se leen. Su casilla lo permite cuando hace falta.
+
+Se respetan las reglas de impresión del resto del producto: solo tablas, medidas
+en milímetros y puntos, nada de disposiciones flexibles ni de rejilla.
+
+### 7.5 La vista previa
+
+**Lo que se ve es lo que se descarga.** La previa no maqueta el informe por su
+cuenta: en modo HTML enseña el documento real generado por el servidor, y en modo
+PDF genera el PDF y lo abre en el visor del navegador. Si la previa se maquetara
+aparte, acabaría mintiendo en cuanto una de las dos cambiara.
+
+### 7.6 Formato y archivos
+
+- Cifras en formato español: `8.600` · `0,27%` · `1,1 h`. Fechas en español.
+- El **logo** va embebido en el documento, no enlazado. Si falta, el informe sale
+  con el nombre en texto y sigue funcionando.
+- El **CSV** trae solo el detalle de registros del filtro aplicado, con
+  encabezados, separador de coma y UTF-8 con marca de orden para que Excel en
+  español lo abra bien a la primera.
+- Los archivos se llaman `informe-horas-<periodo>-<persona o equipo>.<html|pdf|csv>`,
+  en minúsculas y sin tildes.
+
+### 7.7 Cuánto puede tardar
+
+El informe de un mes del equipo —unos 300 registros— se genera en **menos de 5
+segundos** en HTML y **menos de 15** en PDF. Pasarse de ahí es un problema que se
+mide y se reporta antes de tocar nada.
 
 ---
 
@@ -284,3 +331,4 @@ Quedan anotadas por si se quieren en una versión posterior.
 |---|---|
 | 1.0 | Versión inicial del módulo |
 | 1.1 | §4.1 pasa a **calendario mensual** con detalle del día y popup de registro; la vista semanal se retira · §4.2.4 dice **«desfase»** en vez de «exceso» · §5.1 añade las **alertas de desfase** en el listado de proyectos |
+| 1.2 | §7 reescrito: **un solo informe** en HTML y PDF con diez secciones · filtros y casillas por sección · HTML autocontenido e interactivo · **PDF con orientación mixta** (la sección 9 en horizontal) · la vista previa enseña el documento real · CSV del detalle · nombres de archivo y tiempos máximos |
