@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import {
   FilaImportacion, ResumenImportacion, VistaPrevia,
-  fechaLarga, horas, horasApi,
+  fechaLarga, horas, horasApi, mensajeDeError,
 } from '../../api/horasApi';
 import { usersAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -65,7 +65,7 @@ export default function ImportarPage() {
     try {
       setPrevia(await horasApi.vistaPreviaImportacion(archivo, paraOtro));
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'No se pudo leer el archivo.');
+      setError(mensajeDeError(e, 'No se pudo leer el archivo.'));
       setPrevia(null);
     }
     setAnalizando(false);
@@ -78,7 +78,7 @@ export default function ImportarPage() {
       setResumen(await horasApi.confirmarImportacion(archivo, paraOtro));
       setPrevia(null);
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'No se pudo completar la importación.');
+      setError(mensajeDeError(e, 'No se pudo completar la importación.'));
     }
     setConfirmando(false);
   };

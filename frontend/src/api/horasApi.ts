@@ -7,6 +7,30 @@
  */
 import api from '../services/api';
 
+/** El cliente axios de Kinetix manda `application/json` por defecto. Para subir
+ *  un archivo hay que decirlo explícitamente —como hacen todas las subidas del
+ *  módulo de análisis—, o el multipart viaja sin su frontera y FastAPI contesta
+ *  un 422 que no dice nada útil. */
+const MULTIPART = { headers: { 'Content-Type': 'multipart/form-data' } };
+
+/** El mensaje de un error de la API, **siempre como texto**.
+ *
+ *  Un 422 de FastAPI trae `detail` como una lista de objetos, no como una
+ *  cadena; metida tal cual en el JSX, React revienta la pantalla entera con
+ *  «Objects are not valid as a React child» y el usuario se queda en blanco
+ *  sin saber qué pasó. */
+export const mensajeDeError = (e: any, porDefecto: string): string => {
+  const d = e?.response?.data?.detail;
+  if (typeof d === 'string' && d) return d;
+  if (Array.isArray(d) && d.length) {
+    const partes = d
+      .map((x: any) => (typeof x === 'string' ? x : x?.msg))
+      .filter(Boolean);
+    if (partes.length) return partes.join('. ');
+  }
+  return porDefecto;
+};
+
 export interface Actividad {
   id: string;
   name: string;
@@ -300,7 +324,9 @@ export const horasApi = {
     const datos = new FormData();
     datos.append('archivo', archivo);
     if (userId) datos.append('user_id', userId);
-    return (await api.post('/time/import/preview', datos)).data;
+    // El cliente axios manda 'application/json' por defecto: sin esta cabecera
+    // el multipart llega sin su frontera y FastAPI contesta 422.
+    return (await api.post('/time/import/preview', datos, MULTIPART)).data;
   },
 
   /** Aplica la importación en una transacción (H-D41). */
@@ -308,7 +334,7 @@ export const horasApi = {
     const datos = new FormData();
     datos.append('archivo', archivo);
     if (userId) datos.append('user_id', userId);
-    return (await api.post('/time/import/confirm', datos)).data;
+    return (await api.post('/time/import/confirm', datos, MULTIPART)).data;
   },
 
   // ---------- Consulta (H3) ----------
