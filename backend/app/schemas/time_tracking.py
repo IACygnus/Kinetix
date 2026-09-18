@@ -435,6 +435,117 @@ class ResumenImportacion(BaseModel):
     user_name: str = ""
 
 
+# ===================== EL INFORME (ETAPA H5, §7) =====================
+
+class InformeFiltros(BaseModel):
+    """Los filtros aplicados, tal como hay que escribirlos en el encabezado."""
+    desde: DateOnly
+    hasta: DateOnly
+    periodo: str = ""              # «septiembre de 2026» o «del 1 al 15 de septiembre»
+    personas: List[str] = []       # nombres, para el título
+    alcance: str = "Equipo"        # «Equipo» o el nombre de la persona (H-D61)
+    client_name: str = ""
+    project_name: str = ""
+    solo_facturables: bool = False
+
+
+class InformeResumen(BaseModel):
+    """Sección 1: los seis indicadores."""
+    total_hours: Decimal = Decimal("0")
+    ordinary_hours: Decimal = Decimal("0")
+    overtime_hours: Decimal = Decimal("0")
+    billable_hours: Decimal = Decimal("0")
+    billable_pct: Decimal = Decimal("0")
+    pending_days: int = 0
+    # De apoyo, para el encabezado; no son de los seis.
+    expected_hours: Decimal = Decimal("0")
+    people_count: int = 0
+    projects_count: int = 0
+    entries_count: int = 0
+
+
+class InformePersona(BaseModel):
+    """Sección 2: ocupación de una persona frente a su jornada."""
+    user_id: UUID
+    user_name: str = ""
+    expected_hours: Decimal = Decimal("0")
+    total_hours: Decimal = Decimal("0")
+    ordinary_hours: Decimal = Decimal("0")
+    overtime_hours: Decimal = Decimal("0")
+    billable_hours: Decimal = Decimal("0")
+    occupancy_pct: Decimal = Decimal("0")
+    pending_days: int = 0
+
+
+class InformeFacturacion(BaseModel):
+    """Sección 3: facturable frente a no facturable, por cliente."""
+    client_name: str = ""
+    billable_hours: Decimal = Decimal("0")
+    non_billable_hours: Decimal = Decimal("0")
+    total_hours: Decimal = Decimal("0")
+    billable_pct: Decimal = Decimal("0")
+
+
+class InformeReparto(BaseModel):
+    """Secciones 4 y 5: el reparto de las horas, por cliente o por actividad."""
+    name: str = ""
+    hours: Decimal = Decimal("0")
+    pct: Decimal = Decimal("0")
+
+
+class InformeMapaPersona(BaseModel):
+    """Sección 7: una fila por persona; `por_dia` va alineado con `InformeDatos.dias`.
+
+    `estado` por día: trabajado | incompleto | festivo | ausencia | finde | vacio.
+    """
+    user_id: UUID
+    user_name: str = ""
+    por_dia: List[Decimal] = []
+    estados: List[str] = []
+    total_hours: Decimal = Decimal("0")
+
+
+class InformePendiente(BaseModel):
+    """Sección 8: un día sin registrar o por debajo de la jornada."""
+    user_name: str = ""
+    date: DateOnly
+    expected_hours: Decimal = Decimal("0")
+    ordinary_hours: Decimal = Decimal("0")
+    missing_hours: Decimal = Decimal("0")
+
+
+class InformeFilaDiaria(BaseModel):
+    """Sección 9: una línea de proyecto y actividad, con sus horas día a día.
+
+    `por_dia` va alineado con `InformeDatos.dias`. Es la tabla que obliga al PDF
+    a girar la hoja (H-D56): con un mes entero no cabe en vertical.
+    """
+    client_name: str = ""
+    project_name: str = ""
+    activity_name: str = ""
+    por_dia: List[Decimal] = []
+    total_hours: Decimal = Decimal("0")
+
+
+class InformeDatos(BaseModel):
+    """Las diez secciones, **ya calculadas**. La plantilla pinta, no calcula."""
+    filtros: InformeFiltros
+    dias: List[DateOnly] = []              # las columnas de las secciones 7 y 9
+    resumen: InformeResumen = InformeResumen()
+    personas: List[InformePersona] = []
+    facturacion: List[InformeFacturacion] = []
+    por_cliente: List[InformeReparto] = []
+    por_actividad: List[InformeReparto] = []
+    proyectos: List[ConsultaProyecto] = []
+    mapa: List[InformeMapaPersona] = []
+    pendientes: List[InformePendiente] = []
+    diarias: List[InformeFilaDiaria] = []
+    detalle: List[TimeEntryResponse] = []
+    # Cuántos registros hay en total, aunque el detalle venga recortado.
+    detalle_total: int = 0
+    generado: datetime
+
+
 class ProjectActivityChangeResponse(BaseModel):
     id: UUID
     activity_id: UUID
