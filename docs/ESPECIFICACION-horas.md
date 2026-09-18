@@ -1,6 +1,6 @@
 # Especificación funcional — Módulo de Horas y Proyectos (Kinetix)
 
-**Versión 1.0 · Pendiente de aprobación de Fredy Bonilla**
+**Versión 1.1 · Aprobada por Fredy Bonilla**
 
 Referencia única del módulo. Todo prompt de desarrollo se valida contra este documento,
 no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
@@ -89,8 +89,40 @@ Cada uno es una pantalla independiente. No se mezclan.
 
 ### 4.1 Qué se ve
 
-Una vista por semana, con el total de cada día frente a la jornada esperada. Cada renglón:
-cliente, proyecto, actividad, horas, facturable, extra y observaciones.
+**Un calendario mensual.** Es la única vista: la vista por semana se retira, no convive con
+ella — dos formas de hacer lo mismo confunden.
+
+**El calendario.** Una casilla por día, y cada una dice su estado de un vistazo:
+
+| Estado | Cómo se ve |
+|---|---|
+| Jornada completa | verde, con las horas registradas |
+| Incompleto | ámbar, con las horas que faltan |
+| Sin registro | ámbar, señalado como pendiente |
+| Festivo | color propio, **con el nombre del festivo** |
+| Fin de semana | apagado, no se reclama |
+| Día seleccionado | resaltado |
+
+Con navegación por mes, botón **Hoy** y una leyenda que explica los colores. Encima, el
+resumen del mes: jornada del mes, horas registradas, horas extra y días pendientes.
+
+**Debajo del calendario, el detalle del día seleccionado**: una tabla con cliente, proyecto,
+actividad, horas, si se cobra, observaciones y las acciones de editar y borrar; más el total
+del día frente a su jornada, con las horas extra aparte.
+
+**El popup de registro**, que se abre al pulsar un día o el botón de registrar:
+
+- una franja con la jornada de ese día y lo que falta por registrar;
+- **la fecha es editable dentro del popup**, por si uno se equivocó de día;
+- cliente → proyecto → actividad, encadenados, **con las horas que quedan de esa actividad a
+  la vista**;
+- las horas, en pasos de 0,25;
+- **Facturable / No facturable como dos opciones explícitas**, no un interruptor: hay que
+  elegir, no dejarlo como venga;
+- una casilla para la hora extra;
+- observaciones, opcionales;
+- y tres botones: **Guardar**, **Guardar y añadir otra** —un día suele tener varios
+  renglones— y Cancelar.
 
 ### 4.2 Reglas
 
@@ -99,9 +131,13 @@ cliente, proyecto, actividad, horas, facturable, extra y observaciones.
 2. **Todos ven los registros de todos.** Editar, solo los propios; el administrador, todos.
    **Borrar es exclusivo del administrador**, como en el resto de la plataforma.
 3. **Sin límite de fecha hacia atrás.** Si a alguien se le olvidó un día, lo registra después.
-4. **Horas por encima de lo estimado:** se avisa con las horas que quedan en esa actividad,
-   **se permite guardar** y el registro queda **marcado en color como exceso**. Ni se
-   bloquea ni se pierde el dato.
+4. **Horas por encima de lo estimado — el desfase:** se avisa con las horas que quedan en
+   esa actividad, **se permite guardar** y el registro queda **marcado en color como
+   desfase**. Ni se bloquea ni se pierde el dato.
+
+   **Se dice «desfase», no «exceso».** Un registro se marca *«Desfase +1,0 h»* y un proyecto
+   queda *«Desfasado +9,0 h»*. La palabra describe el proyecto —va por encima de lo
+   estimado—, no culpa a quien registró las horas.
 5. **Horas extra:** se marcan en el propio registro, **consumen las horas estimadas del
    proyecto** y se muestran siempre separadas de las ordinarias. Al filtrar por fecha se ve
    si ese día hubo extras.
@@ -115,10 +151,27 @@ cliente, proyecto, actividad, horas, facturable, extra y observaciones.
 ## 5. Consulta de proyectos
 
 - Por proyecto: **quién ha registrado y cuántas horas**, con el consumido frente a lo
-  estimado por actividad, las horas restantes y una marca cuando hay exceso.
+  estimado por actividad, las horas restantes y una marca cuando hay desfase.
 - **Al ampliar la consulta**, la tabla cambia y muestra **los días** en que se registraron
   esas horas, con su detalle.
 - Filtros por cliente, proyecto, usuario y rango de fechas.
+
+### 5.1 Alertas de desfase
+
+El listado de proyectos **avisa antes de que sea tarde**. Cada proyecto muestra una barra con
+lo consumido frente a lo estimado y su estado:
+
+| Estado | Cuándo |
+|---|---|
+| **En rango** | por debajo del 90 % de lo estimado |
+| **Por agotarse** | entre el 90 % y el 100 % |
+| **Desfasado +X h** | por encima del 100 %, con las horas de más |
+
+Las filas desfasadas quedan resaltadas. Arriba, un aviso dice **cuántos proyectos están
+desfasados** y ofrece un filtro para ver solo esos.
+
+Dentro del detalle de un proyecto, **el mismo estado por actividad**: así se ve cuál es la
+que se está pasando, no solo que el proyecto va mal.
 
 ---
 
@@ -179,7 +232,7 @@ El informe conserva la estructura del ejemplo aprobado y añade lo que el módul
 | Cobertura por cliente | Reparto de las horas |
 | En qué se fue el tiempo | Reparto por actividad |
 | Carga día a día | Con las **horas extra separadas** de las ordinarias |
-| **Consumido frente a estimado** | Por proyecto y actividad, con horas restantes y marca de exceso |
+| **Consumido frente a estimado** | Por proyecto y actividad, con horas restantes y marca de desfase |
 | **Días sin registrar o incompletos** | Con las horas que faltan en cada uno |
 | Detalle de registros | La tabla completa del periodo |
 
@@ -214,7 +267,7 @@ Fredy por etapa completa y probable desde la interfaz.
 
 ---
 
-## 10. Fuera de alcance de la versión 1.0
+## 10. Fuera de alcance
 
 - Tarifas y facturación en dinero.
 - Aprobación de horas por un responsable.
@@ -222,3 +275,12 @@ Fredy por etapa completa y probable desde la interfaz.
 - Notificaciones por correo.
 
 Quedan anotadas por si se quieren en una versión posterior.
+
+---
+
+## Historial de versiones
+
+| Versión | Cambio |
+|---|---|
+| 1.0 | Versión inicial del módulo |
+| 1.1 | §4.1 pasa a **calendario mensual** con detalle del día y popup de registro; la vista semanal se retira · §4.2.4 dice **«desfase»** en vez de «exceso» · §5.1 añade las **alertas de desfase** en el listado de proyectos |
