@@ -170,6 +170,8 @@ export interface FiltrosInforme {
   client_id?: string;
   project_id?: string;
   solo_facturables?: boolean;
+  /** H-D74: a quién va dirigido el informe. Vacío = el valor por defecto. */
+  dirigido_a?: string;
 }
 
 export interface InformeResumen {
@@ -235,13 +237,21 @@ export interface InformeFilaDiaria {
   total_hours: string | number;
 }
 
+export interface InformeCapacidad {
+  working_days: number;
+  hours_per_analyst: string | number;
+  people_count: number;
+  total_hours: string | number;
+}
+
 export interface Informe {
   filtros: {
     desde: string; hasta: string; periodo: string; personas: string[];
     alcance: string; client_name: string; project_name: string;
-    solo_facturables: boolean;
+    solo_facturables: boolean; dirigido_a: string;
   };
   dias: string[];
+  capacidad: InformeCapacidad;
   resumen: InformeResumen;
   personas: InformePersona[];
   facturacion: InformeFacturacion[];

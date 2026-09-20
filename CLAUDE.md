@@ -15,8 +15,9 @@
   scripts, ejecución (motor propio), parseo de JTL, dashboards, reportes
   HTML/PDF integrados, monitoreo Grafana/InfluxDB y configuración dinámica de
   IA.
-- **Repositorio:** Git local. Último tag publicado: **v3.1.0** — las Etapas 1 a 7
-  del plan de corrección **no están etiquetadas**.
+- **Repositorio:** Git local. Último tag publicado: **v4.1.0** — cierra el módulo
+  de horas. El **v4.0.0** etiquetó el final del plan de corrección del informe
+  (Etapas 1 a 7).
 - **Ruta local de trabajo:** `C:\proyectos\Kinetix` (el proyecto se migró de PC;
   cualquier ruta anterior que aparezca en documentos viejos está obsoleta).
 - **Estado del informe:** el plan de corrección contra
@@ -26,6 +27,10 @@
   `PROJECT_STATUS.md`; deuda de despliegue en
   `docs/reporte_claude_code/53_checklist_despliegue.md` y su **versión corregida**
   en `docs/reporte_claude_code/59_handoff_despliegue_analisis.md` §4.
+- **Estado del módulo de horas:** **completo**, etapas H1 a H7, contra
+  `docs/ESPECIFICACION-horas.md` **v1.4**. H1, H2, H2b y H3 validadas por Fredy;
+  **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
+  análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 
 ### 1.1 REMOTOS GIT
 
@@ -83,6 +88,7 @@
 | **weasyprint** | **61.2** | **PDF render** |
 | **pydyf** | **0.10.0** | **PIN — WeasyPrint 61.2 incompatible con 0.12.x** |
 | PyYAML | 6.0.1 | Importer OpenAPI YAML |
+| **openpyxl** | **3.1.2** | **Lector del `.xlsx` de la importación de horas (H3)** |
 
 ### Frontend — React 18 / TypeScript / Vite
 
@@ -444,6 +450,41 @@ CRUD completo + `PATCH /{id}/toggle` (activar/desactivar) +
 - `GET /reports/integrated-reports` — listar
 - `GET/PATCH/DELETE /reports/integrated-reports/{id}`
 
+### MÓDULO DE HORAS (`/time`) — H1 a H7
+
+Todo cuelga de `/time` (H-D9) para que se distinga de un vistazo del módulo de
+análisis. **§8: todos ven los registros de todos**; los filtros de persona son del
+usuario, no del permiso.
+
+| Verbo | Path | Función |
+|---|---|---|
+| CRUD | `/time/activities` | Catálogo de actividades |
+| CRUD | `/time/projects` | Proyectos; `PUT` renombra (H-D63) y `POST /{id}/cerrar\|reabrir` es **solo admin** |
+| PUT/DELETE | `/time/projects/{id}/actividades` | Estimaciones, con su historial |
+| GET | `/time/projects/{id}/historial` | Los cambios de estimación |
+| CRUD | `/time/entries` | El registro de horas |
+| GET | `/time/week` · `/time/month` | La semana y el mes ya resueltos |
+| GET | `/time/pending-days` | Días sin registrar |
+| GET | `/time/projects/{id}/disponibilidad` | Lo que queda por actividad |
+| GET | `/time/consulta` · `/time/consulta/dias` | §5: por proyecto, quién y cuánto |
+| POST | `/time/import/preview` · `/time/import/confirm` | §6: la previa **no escribe nada**; confirmar es **una transacción** |
+| GET | `/time/informe` | Las ocho secciones, ya calculadas |
+| GET | `/time/informe/html` · `/pdf` · `/csv` | El mismo documento, tres soportes |
+
+**Las tres definiciones que no se repiten en ningún sitio**, y que sostienen que
+todas las pantallas digan la misma cifra:
+
+| Módulo | Qué decide |
+|---|---|
+| `services/horas/calendario.py` | La jornada y cuándo un día está **incompleto**. Cuatro reglas en orden: no laborable → futuro → extras → jornada |
+| `services/horas/desfase.py` | El estado de consumo: **En ejecución · Por agotarse · Terminado** (el 100 % exacto) **· Desfasado +X h · Cerrado** |
+| `services/horas/informe_datos.py` | Las ocho secciones del informe, en **una sola pasada** por la base |
+
+Y dos más del informe: `services/horas/informe.py` arma el documento (una sola
+vez, dos ramas: pantalla e impresión) y `services/horas/importacion.py` lee el
+`.xlsx` —con las reglas puras separadas de `openpyxl`, para poder probarlas sin
+fabricar un archivo—.
+
 ### AI Script Designer (`/script-designer/ai`)
 - `POST /script-designer/ai/generate` — desde prompt
 - `POST /script-designer/ai/generate-from-file` — multipart (Postman / Swagger / texto)
@@ -477,6 +518,25 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 | **`transaction_analyses`** | id, execution_id, label, is_critical, marked_by (ai/user), metrics_json, ai_analysis, ai_analysis_updated_at, sort_order, created_at — transacciones marcadas como críticas. **Legacy de solo lectura desde N3.4**: `ai_analysis` ya no se pinta en ninguna salida |
 | **`client_logos`** | logo del cliente para la portada |
 | **`ai_script_designs`** · **`ai_design_data_files`** | AI Script Designer |
+
+### 5.1 Las siete tablas del MÓDULO DE HORAS (H1)
+
+Todas en `backend/app/db/models/time_tracking.py`. **Las crea
+`Base.metadata.create_all` al arrancar: no hay ni un SQL manual que ejecutar.**
+
+| Tabla | Contenido y lo que hay que saber |
+|---|---|
+| **`activities`** | Catálogo global. `name_normalized` lleva el UNIQUE: «Planeación» y «planeacion» son la misma. Con horas registradas no se borra, se desactiva |
+| **`projects`** | Cliente, nombre, estado (`activo`/`cerrado`). Nombre único **por cliente**, comparado normalizado (`uq_project_cliente_nombre`) |
+| **`project_activities`** | Horas estimadas por actividad. `Numeric(8,2)` y `CHECK estimated_hours > 0`: **no se puede crear con 0** |
+| **`project_activity_changes`** | Historial de estimaciones: valor anterior, nuevo, quién y cuándo |
+| **`time_entries`** | El registro. `external_id` único y nullable (idempotencia de la importación), `source` = `manual`/`import`, `created_by` distinto de `user_id` cuando registra un admin por otro, y dos `CHECK`: horas > 0 y **múltiplo de 0,25** |
+| **`work_calendar`** | Jornada por día de la semana: L-J 8,5 · V 8,0 · fin de semana 0 |
+| **`holidays`** | Festivos nacionales (`user_id` NULL) y ausencias por persona, en la misma tabla porque se usan igual. Índice parcial `ux_festivo_nacional` para que no se duplique un nacional |
+
+El seed (`db/seed_time_tracking.py`) es idempotente y siembra 5 actividades, la
+jornada y 40 festivos colombianos de 2026-2027 **de una lista literal** —un
+algoritmo de Ley Emiliani se equivoca en silencio y una lista se revisa—.
 
 **Columna añadida sin Alembic:** `ai_config.reasoning_effort VARCHAR(20)`
 (`docs/sql/etapa2_reasoning_effort.sql`, idempotente). Aplicada en desarrollo,
@@ -1104,6 +1164,24 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     del navegador de Fredy (`172.18.0.1`), y los `COMMIT` del WAL llevan hora—.
     **Ante la duda, se declara la duda.**
 
+34. **Las suites automáticas corren contra `jmeter_analyzer_test`, nunca contra
+    la base de Fredy** (H-D76). Se prepara desde cero con
+    `scripts/preparar_base_de_pruebas.sh`, que crea la base y levanta un
+    **segundo backend en el puerto 8002** contra ella; el 8001 sigue intacto.
+    Las suites se apuntan con cuatro variables:
+
+    | Variable | Valor de pruebas |
+    |---|---|
+    | `KX_API` | `http://localhost:8002/api/v1` |
+    | `KX_DB` | `jmeter_analyzer_test` |
+    | `KX_SESION` | `/tmp/e2e_sesion_test.json` |
+    | `KX_API_PUERTO` | `8002` — el navegador reescribe a este puerto |
+
+    Las de navegador no necesitan tocar el frontend: `page.route()` desvía al
+    8002 las llamadas que la pantalla hace al 8001. Y cada `limpiar()` empieza
+    comprobando que el nombre de la base lleva `test`; si no, **se para sin
+    borrar nada**.
+
 ---
 
 ## 14. DEPLOY A PRODUCCIÓN
@@ -1148,6 +1226,17 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
 3. `up -d --build`: las Etapas 2, 3, 5 y 6 cambian backend **y** frontend.
 4. HF-3 (reporte 37) si el despliegue es multiusuario: hoy **cinco entradas en
    quince minutos dejan a toda la plataforma sin acceso**.
+
+#### Lo que añade el módulo de horas (H-D78)
+
+| Qué | Estado |
+|---|---|
+| **`openpyxl==3.1.2`** en `requirements.txt` | **Obliga a reconstruir el backend.** Sin él la importación devuelve un 400 que lo dice, y el resto del módulo funciona igual |
+| **El logo**, `backend/app/assets/logo-sqa.png` | Va en el repositorio. Si faltara, el informe sale con el nombre en texto y **no se rompe** |
+| **Las siete tablas de horas** | Las crea `Base.metadata.create_all` al arrancar. **Nada que ejecutar a mano** |
+| **El seed de horas** | Idempotente: 5 actividades, la jornada y 40 festivos. Se ejecuta solo, en cada arranque, y no duplica |
+| **SQL manual** | **Ninguno.** A diferencia de la Etapa 2, el módulo de horas no necesita ni un `ALTER`: H1 definió las tablas enteras desde el principio |
+| **Variables de entorno nuevas** | Ninguna |
 
 ### Credenciales
 

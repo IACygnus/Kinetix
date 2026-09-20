@@ -447,6 +447,25 @@ class InformeFiltros(BaseModel):
     client_name: str = ""
     project_name: str = ""
     solo_facturables: bool = False
+    # H-D74: a quién va dirigido el informe. Se puede cambiar antes de generarlo.
+    dirigido_a: str = ""
+
+
+class InformeCapacidad(BaseModel):
+    """La capacidad base del periodo (H-D75), para la portada.
+
+    **Es del periodo entero**, no «hasta hoy»: responde a «cuánto cabe en estas
+    fechas», que es otra pregunta que «cuánto se ha devengado ya». La segunda la
+    contesta `InformeResumen.expected_hours`, y son cifras distintas a propósito.
+
+    Se calcula con el calendario laboral y los festivos nacionales; las ausencias
+    de cada persona no entran, porque la capacidad base es la del calendario, no
+    la de quien se fue de vacaciones.
+    """
+    working_days: int = 0
+    hours_per_analyst: Decimal = Decimal("0")
+    people_count: int = 0
+    total_hours: Decimal = Decimal("0")
 
 
 class InformeResumen(BaseModel):
@@ -528,9 +547,10 @@ class InformeFilaDiaria(BaseModel):
 
 
 class InformeDatos(BaseModel):
-    """Las diez secciones, **ya calculadas**. La plantilla pinta, no calcula."""
+    """Las ocho secciones, **ya calculadas**. La plantilla pinta, no calcula."""
     filtros: InformeFiltros
-    dias: List[DateOnly] = []              # las columnas de las secciones 7 y 9
+    dias: List[DateOnly] = []              # las columnas de la sección 7
+    capacidad: InformeCapacidad = InformeCapacidad()   # H-D75, para la portada
     resumen: InformeResumen = InformeResumen()
     personas: List[InformePersona] = []
     facturacion: List[InformeFacturacion] = []

@@ -32,9 +32,9 @@ from app.db.models.time_tracking import (
 )
 from app.db.models.user import User
 from app.schemas.time_tracking import (
-    ConsultaProyecto, InformeDatos, InformeFacturacion, InformeFilaDiaria,
-    InformeFiltros, InformeMapaPersona, InformePendiente, InformePersona,
-    InformeReparto, InformeResumen,
+    ConsultaProyecto, InformeCapacidad, InformeDatos, InformeFacturacion,
+    InformeFilaDiaria, InformeFiltros, InformeMapaPersona, InformePendiente,
+    InformePersona, InformeReparto, InformeResumen,
 )
 from app.services.horas.calendario import construir_dias, dias_del_rango
 from app.services.horas.desfase import (
@@ -83,6 +83,7 @@ async def construir_informe(
     client_id: Optional[uuid.UUID] = None,
     project_id: Optional[uuid.UUID] = None,
     solo_facturables: bool = False,
+    dirigido_a: str = "",
     tope_detalle: int = 5000,
 ) -> InformeDatos:
     """Las diez secciones de §7.2, en una sola pasada."""
@@ -132,6 +133,15 @@ async def construir_informe(
         select(Holiday).where(Holiday.date >= desde, Holiday.date <= hasta)
     )).scalars().all()
     hoy = date.today()
+
+    # ---------- 3b. La capacidad base del periodo (H-D75) ----------
+    # Solo festivos NACIONALES: la capacidad base es la que ofrece el calendario,
+    # no la que queda despues de las vacaciones de cada cual. Y es del periodo
+    # ENTERO, no «hasta hoy»: responde a cuanto cabe en estas fechas.
+    nacionales = {f.date: (f.name, False) for f in festivos if f.user_id is None}
+    dias_base = construir_dias(desde, hasta, calendario, {}, nacionales)
+    habiles = [d for d in dias_base if d.se_reclaman > 0]
+    horas_analista = sum((d.se_reclaman for d in habiles), CERO)
 
     # ---------- 4. Acumuladores ----------
     por_persona: Dict[uuid.UUID, Dict[str, Decimal]] = {}
@@ -314,8 +324,15 @@ async def construir_informe(
             personas=[p.user_name for p in personas],
             alcance=(personas[0].user_name if len(personas) == 1 else "Equipo"),
             solo_facturables=solo_facturables,
+            dirigido_a=dirigido_a,
         ),
         dias=dias,
+        capacidad=InformeCapacidad(
+            working_days=len(habiles),
+            hours_per_analyst=horas_analista,
+            people_count=len(personas),
+            total_hours=horas_analista * len(personas),
+        ),
         resumen=InformeResumen(
             total_hours=total, ordinary_hours=ordinarias, overtime_hours=extra,
             billable_hours=facturables, billable_pct=_pct(facturables, total),

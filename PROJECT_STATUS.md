@@ -5,12 +5,12 @@
 
 ---
 
-## ESTADO ACTUAL (2026-09-17)
+## ESTADO ACTUAL (2026-09-20)
 
 - **Branch activa:** `backup-trabajo-local`. **Todo el producto vive ahí.** `main`
   sigue en su commit `Initial commit` y no contiene nada.
-- **Último tag publicado:** `v3.1.0` (*high cardinality chart optimization*).
-  Los cambios de las Etapas 1-7 **no están etiquetados todavía**.
+- **Último tag publicado:** `v4.1.0` — cierra el **módulo de horas** (H1 a H7).
+  El `v4.0.0` cerró el plan de corrección del informe (Etapas 1 a 7).
 - **Remoto de push:** `github` (`IACygnus/Kinetix`), el único. `azure` tiene el
   push bloqueado a propósito.
 - **Árbol de trabajo:** limpio. Todo lo de las siete etapas está commiteado.
@@ -38,6 +38,37 @@ informe se valida contra ese documento.
 | 7 | **Informe integrado completo**: sus bloques por transacción en pantalla y overrides propios en los exportados | implementada, **pendiente validación** |
 
 No hay Etapa 4: el plan saltó de la 3 a la 5.
+
+### Módulo de horas — Etapas H1 a H7
+
+Referencia única: **`docs/ESPECIFICACION-horas.md` v1.4**. Es un módulo aparte del
+de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
+**Cero llamadas a la IA en todo el módulo.**
+
+| Etapa | Qué cubrió | Estado |
+|---|---|---|
+| H1 | Modelo de datos (7 tablas), Actividades y Proyectos | **validada por Fredy** |
+| H2 | Registro de horas: jornada, extras, días incompletos, permisos | **validada por Fredy** |
+| H2b | El registro pasa a **calendario mensual**; la vista semanal se retira; alertas de desfase en Proyectos | **validada por Fredy** |
+| H3 | Consulta de proyectos (§5) e **importación del Excel** (§6), con vista previa e idempotencia por `Id` | **validada por Fredy** |
+| H5 | **El informe**: ocho secciones, HTML autocontenido e interactivo, PDF y CSV | implementada, **pendiente validación** |
+| H6 | Ajustes del veredicto: estados nuevos, renombrar, filtros de cerrados, informe a ocho secciones | implementada, **pendiente validación** |
+| H7 | Portada aprobada, **base de pruebas separada**, documentación y cierre | implementada, **pendiente validación** |
+
+No hay Etapa H4: el plan saltó de H3 a H5.
+
+### El incidente del 18 de septiembre de 2026
+
+Borré con `psql` las horas que Fredy acababa de importar y las estimaciones que
+había tecleado, creyendo que eran residuo de mis pruebas. **No lo eran.**
+Diagnóstico en el reporte **92**, recuperación en el **93**, y las seis reglas que
+salieron de ahí en **CLAUDE.md §13.1 (28 a 33)**. La **34** es la que las hace
+cumplibles: las suites corren contra la base de pruebas, no contra la suya.
+
+Lo que queda de aquello, ya cerrado en H7.2: **las suites automáticas ya no corren
+contra la base de Fredy.** Hay una base aparte, `jmeter_analyzer_test`, con su
+propio backend en el puerto 8002; se prepara desde cero con
+`scripts/preparar_base_de_pruebas.sh`.
 
 Reportes de las siete etapas: `docs/reporte_claude_code/01…59`, numerados de
 forma consecutiva, con hash de commit y fecha en la primera línea.

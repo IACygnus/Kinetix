@@ -34,10 +34,16 @@ logger = logging.getLogger(__name__)
 # y un informe de varios años no lo lee nadie.
 MAX_DIAS = 400
 
+# H-D74: a quién va dirigido el informe por defecto. Está aquí, en una sola
+# línea, para que cambiarlo sea cambiar una línea; y la pantalla lo puede
+# sobrescribir antes de generar, sin tocar código.
+DIRIGIDO_A = "José Javier Rodríguez Santos · Delivery Manager"
+
 
 async def _datos(
     db: AsyncSession, desde: date, hasta: date,
     user_id: Optional[List[uuid.UUID]], client_id, project_id, solo_facturables: bool,
+    dirigido_a: Optional[str] = None,
 ) -> InformeDatos:
     if hasta < desde:
         raise HTTPException(400, "El rango está al revés: «hasta» es anterior a «desde»")
@@ -46,6 +52,7 @@ async def _datos(
     return await construir_informe(
         db, desde, hasta, user_ids=user_id or None, client_id=client_id,
         project_id=project_id, solo_facturables=solo_facturables,
+        dirigido_a=(dirigido_a or "").strip() or DIRIGIDO_A,
     )
 
 
@@ -57,11 +64,13 @@ async def informe(
     client_id: Optional[uuid.UUID] = Query(None),
     project_id: Optional[uuid.UUID] = Query(None),
     solo_facturables: bool = Query(False),
+    dirigido_a: Optional[str] = Query(None, description="H-D74: a quién va dirigido"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Las diez secciones, ya calculadas (H-D52). La plantilla no calcula nada."""
-    return await _datos(db, desde, hasta, user_id, client_id, project_id, solo_facturables)
+    """Las ocho secciones, ya calculadas (H-D52). La plantilla no calcula nada."""
+    return await _datos(db, desde, hasta, user_id, client_id, project_id,
+                        solo_facturables, dirigido_a)
 
 
 def _elegidas(secciones: Optional[List[str]], por_defecto: List[str]) -> List[str]:
@@ -85,6 +94,7 @@ async def informe_html(
     project_id: Optional[uuid.UUID] = Query(None),
     solo_facturables: bool = Query(False),
     seccion: Optional[List[str]] = Query(None, description="Qué secciones entran (H-D53)"),
+    dirigido_a: Optional[str] = Query(None),
     descargar: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -95,7 +105,8 @@ async def informe_html(
     previa (H-D57): lo que se ve ahí es **este mismo documento**, no una maqueta
     aparte que acabaría mintiendo.
     """
-    d = await _datos(db, desde, hasta, user_id, client_id, project_id, solo_facturables)
+    d = await _datos(db, desde, hasta, user_id, client_id, project_id,
+                     solo_facturables, dirigido_a)
     html = documento_html(d, _elegidas(seccion, list(CLAVES)))
     disp = "attachment" if descargar else "inline"
     return Response(
@@ -113,6 +124,7 @@ async def informe_pdf(
     project_id: Optional[uuid.UUID] = Query(None),
     solo_facturables: bool = Query(False),
     seccion: Optional[List[str]] = Query(None),
+    dirigido_a: Optional[str] = Query(None),
     descargar: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -122,7 +134,8 @@ async def informe_pdf(
     Por defecto **sin el detalle de registros** (H-D58): trescientas filas en
     papel no se leen. Su casilla lo permite cuando hace falta.
     """
-    d = await _datos(db, desde, hasta, user_id, client_id, project_id, solo_facturables)
+    d = await _datos(db, desde, hasta, user_id, client_id, project_id,
+                     solo_facturables, dirigido_a)
     por_defecto = [c for c in CLAVES if c != "detalle"]
     html = documento_pdf_html(d, _elegidas(seccion, por_defecto))
     try:

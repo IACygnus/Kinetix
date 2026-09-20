@@ -1,6 +1,6 @@
 # Especificación funcional — Módulo de Horas y Proyectos (Kinetix)
 
-**Versión 1.3 · Aprobada por Fredy Bonilla**
+**Versión 1.4 · Aprobada por Fredy Bonilla**
 
 Referencia única del módulo. Todo prompt de desarrollo se valida contra este documento,
 no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
@@ -254,7 +254,28 @@ informe: es el detalle de registros para llevárselo a Excel.
 calculándose y se siguen viendo donde sirven —el calendario y la pantalla de consulta—, pero
 en un informe para leer no aportaban lo que ocupaban.
 
-### 7.3 El HTML
+### 7.3 La portada
+
+De arriba abajo:
+
+- el **logo** con su naranja, arriba a la izquierda, y al lado
+  **«Centro de Excelencia · Performance»**; a la derecha, la fecha de generación;
+- una **banda azul marino y naranja** que separa la cabecera;
+- el **título** grande, con el **periodo en naranja** debajo;
+- y una fila con **Dirigido a**, **Período** y **Equipo** —con los nombres
+  completos—, más la **Capacidad base** del periodo.
+
+**Dirigido a** tiene un valor por defecto —*José Javier Rodríguez Santos ·
+Delivery Manager*— que vive en una sola línea de configuración, y **se puede
+cambiar desde la pantalla** antes de generar el informe.
+
+**Capacidad base** son los **días hábiles del periodo** y las **horas por
+analista**, según el calendario laboral y los festivos nacionales. Es del periodo
+entero, no «hasta hoy»: responde a *cuánto cabe en estas fechas*, que es otra
+pregunta distinta de *cuánto se ha devengado ya*. Las ausencias de cada persona no
+la reducen: la capacidad base es la del calendario.
+
+### 7.4 El HTML
 
 **Interactivo y autocontenido**: estilos y JavaScript embebidos, sin depender de
 internet ni de ningún CDN. Se puede guardar, enviar por correo y abrir sin red.
@@ -267,7 +288,7 @@ Lleva dentro, funcionando sin servidor:
 - **tablas ordenables** pulsando su cabecera;
 - **Descargar CSV** e **Imprimir**.
 
-### 7.4 El PDF
+### 7.5 El PDF
 
 **Todo en vertical.** La única sección que obligaba a girar la hoja era «Horas día
 a día», y ya no está: sin ella no hay nada que girar, así que tampoco hay selector
@@ -279,14 +300,14 @@ papel no se leen. Su casilla lo permite cuando hace falta.
 Se respetan las reglas de impresión del resto del producto: solo tablas, medidas
 en milímetros y puntos, nada de disposiciones flexibles ni de rejilla.
 
-### 7.5 La vista previa
+### 7.6 La vista previa
 
 **Lo que se ve es lo que se descarga.** La previa no maqueta el informe por su
 cuenta: en modo HTML enseña el documento real generado por el servidor, y en modo
 PDF genera el PDF y lo abre en el visor del navegador. Si la previa se maquetara
 aparte, acabaría mintiendo en cuanto una de las dos cambiara.
 
-### 7.6 Formato y archivos
+### 7.7 Formato y archivos
 
 - Cifras en formato español: `8.600` · `0,27%` · `1,1 h`. Fechas en español.
 - **La cabecera** lleva el logo a un tamaño que se lea, y debajo el título y el
@@ -300,7 +321,7 @@ aparte, acabaría mintiendo en cuanto una de las dos cambiara.
 - Los archivos se llaman `informe-horas-<periodo>-<persona o equipo>.<html|pdf|csv>`,
   en minúsculas y sin tildes.
 
-### 7.7 Cuánto puede tardar
+### 7.8 Cuánto puede tardar
 
 El informe de un mes del equipo —unos 300 registros— se genera en **menos de 5
 segundos** en HTML y **menos de 15** en PDF. Pasarse de ahí es un problema que se
@@ -349,3 +370,4 @@ Quedan anotadas por si se quieren en una versión posterior.
 | 1.1 | §4.1 pasa a **calendario mensual** con detalle del día y popup de registro; la vista semanal se retira · §4.2.4 dice **«desfase»** en vez de «exceso» · §5.1 añade las **alertas de desfase** en el listado de proyectos |
 | 1.2 | §7 reescrito: **un solo informe** en HTML y PDF con diez secciones · filtros y casillas por sección · HTML autocontenido e interactivo · **PDF con orientación mixta** (la sección 9 en horizontal) · la vista previa enseña el documento real · CSV del detalle · nombres de archivo y tiempos máximos |
 | 1.3 | §5.1 renombra los estados: **En ejecución · Por agotarse · Terminado · Desfasado · Cerrado**, y deja dicho que el consumo suma desde siempre · §3 añade el cambio de nombre del proyecto y el listado **solo de activos** con su casilla · §5 añade la casilla de proyectos cerrados · §7 pasa a **ocho secciones** —salen «Días sin registrar» y «Horas día a día»—, el **PDF queda todo vertical** sin selector de orientación, y se rediseña la cabecera |
+| 1.4 | §7.3 añade **la portada**: logo con «Centro de Excelencia · Performance», banda azul y naranja, título con el periodo, y la fila de **Dirigido a · Período · Equipo** con la **capacidad base** del periodo (días hábiles y horas por analista). El destinatario por defecto es configurable y se puede cambiar antes de generar |

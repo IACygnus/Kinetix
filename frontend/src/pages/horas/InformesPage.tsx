@@ -51,6 +51,8 @@ export default function InformesPage() {
   const [fCliente, setFCliente] = useState('');
   const [fProyecto, setFProyecto] = useState('');
   const [soloFacturables, setSoloFacturables] = useState(false);
+  // H-D74: a quien va dirigido. Vacio = el que trae el backend por defecto.
+  const [dirigidoA, setDirigidoA] = useState('');
   const [secciones, setSecciones] = useState<string[]>(
     SECCIONES_INFORME.map((s) => s.clave));
 
@@ -76,7 +78,9 @@ export default function InformesPage() {
     client_id: fCliente || undefined,
     project_id: fProyecto || undefined,
     solo_facturables: soloFacturables || undefined,
-  }), [desde, hasta, personas, fCliente, fProyecto, soloFacturables]);
+    // H-D74: si se deja vacío, el backend pone el destinatario por defecto.
+    dirigido_a: dirigidoA.trim() || undefined,
+  }), [desde, hasta, personas, fCliente, fProyecto, soloFacturables, dirigidoA]);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -215,6 +219,14 @@ export default function InformesPage() {
               onChange={(e) => setSoloFacturables(e.target.checked)}
               className="w-5 h-5 accent-[#f5a623]" />
             <span className="text-lg text-gray-700">Solo facturables</span>
+          </label>
+          {/* H-D74: el destinatario de la portada. Vacío = el de siempre. */}
+          <label className="block flex-1 min-w-[280px]">
+            <span className={rotulo}>Dirigido a</span>
+            <input type="text" value={dirigidoA} data-testid="inf-dirigido-a"
+              onChange={(e) => setDirigidoA(e.target.value)}
+              placeholder={datos?.filtros.dirigido_a || 'José Javier Rodríguez Santos · Delivery Manager'}
+              className={`${campo} w-full`} />
           </label>
         </div>
 

@@ -360,15 +360,20 @@ def _secciones(d: InformeDatos, elegidas: Sequence[str], para_pdf: bool) -> str:
 
 
 def _encabezado(d: InformeDatos) -> str:
-    """La cabecera (H-D70): el logo a un tamaño que se lea, y debajo el título y
-    el periodo, en ese orden de importancia.
+    """La portada (ETAPA H7, H-D73), la que aprobó Fredy.
 
-    Usa los dos colores del propio logo —el azul marino y el naranja— y **no toca
-    los del resto del informe**, que Fredy ya aprobó.
+    De arriba abajo: el logo con «Centro de Excelencia · Performance» al lado y la
+    fecha de generación a la derecha; una banda azul y naranja; el título con el
+    periodo en naranja; y una fila con **Dirigido a**, **Período** y **Equipo**,
+    más la **capacidad base** del periodo.
+
+    Todo en tablas y en `mm`/`pt`: la misma estructura sirve para la pantalla y
+    para el PDF, y la rama de impresión no admite `flex` ni `grid` (regla 11).
     """
     logo = _logo()
     marca = (f'<img class="logo" src="data:image/png;base64,{logo}" alt="SQA Kinetix">'
              if logo else '<span class="marca">SQA<b>Kinetix</b></span>')
+
     filtros = []
     if d.filtros.client_name:
         filtros.append(f"Cliente: {esc(d.filtros.client_name)}")
@@ -377,15 +382,49 @@ def _encabezado(d: InformeDatos) -> str:
     if d.filtros.solo_facturables:
         filtros.append("Solo horas facturables")
     extra = f'<p class="filtros">{" · ".join(filtros)}</p>' if filtros else ""
-    return (f'<header class="cabecera"><table class="cab"><tr>'
-            f'<td class="cab-izq">{marca}</td>'
-            f'<td class="cab-der">Generado el {fecha_larga(d.generado.date())}</td>'
-            f"</tr></table>"
-            f'<div class="titulo">'
-            f"<h1>Informe de horas</h1>"
-            f'<p class="sub">{esc(d.filtros.periodo)}</p>'
-            f'<p class="alcance">{esc(d.filtros.alcance)}</p>'
-            f"{extra}</div></header>")
+
+    # El equipo, con los nombres completos. Si son muchos, se dice cuántos: una
+    # portada con veinte nombres deja de ser una portada.
+    nombres = d.filtros.personas
+    if not nombres:
+        equipo = "Sin personas en el periodo"
+    elif len(nombres) <= 4:
+        equipo = " · ".join(esc(n) for n in nombres)
+    else:
+        equipo = f"{esc(' · '.join(nombres[:3]))} y {len(nombres) - 3} más"
+
+    cap = d.capacidad
+    capacidad = (f"{num(cap.working_days, 0)} días hábiles · "
+                 f"{horas(cap.hours_per_analyst)} por analista")
+    if cap.people_count > 1:
+        capacidad += f" · {horas(cap.total_hours)} del equipo"
+
+    def dato(rotulo: str, valor: str) -> str:
+        return (f'<td class="dato"><span class="dato-rot">{esc(rotulo)}</span>'
+                f'<span class="dato-val">{valor}</span></td>')
+
+    return (
+        f'<header class="cabecera">'
+        f'<table class="cab"><tr>'
+        f'<td class="cab-logo">{marca}</td>'
+        f'<td class="cab-coe">Centro de Excelencia<span class="coe-sep"> · </span>'
+        f'<strong>Performance</strong></td>'
+        f'<td class="cab-der">Generado el {fecha_larga(d.generado.date())}</td>'
+        f"</tr></table>"
+        f'<div class="banda"><span class="banda-naranja"></span></div>'
+        f'<div class="titulo">'
+        f"<h1>Informe de horas</h1>"
+        f'<p class="sub">{esc(d.filtros.periodo)}</p>'
+        f"</div>"
+        f'<table class="portada"><tr>'
+        + dato("Dirigido a", esc(d.filtros.dirigido_a) or "—")
+        + dato("Período", esc(d.filtros.periodo))
+        + dato("Equipo", equipo)
+        + "</tr><tr>"
+        + f'<td class="dato" colspan="3"><span class="dato-rot">Capacidad base</span>'
+          f'<span class="dato-val">{capacidad}</span></td>'
+        + "</tr></table>"
+        f"{extra}</header>")
 
 
 # ===================== LOS ESTILOS =====================
@@ -401,16 +440,31 @@ h2{font-size:13pt;color:#0a1628;margin:0 0 3mm;border-bottom:2px solid #f5a623;
         font-size:10pt}
 .sub{font-size:13pt;color:#4b5563;margin:0 0 1mm}
 .filtros{font-size:10pt;color:#6b7280;margin:0}
-/* ===== La cabecera (H-D70). Los colores del logo: azul marino y naranja. ===== */
-.cabecera{border-bottom:3pt solid #f5a623;padding-bottom:4mm;margin-bottom:6mm}
-.cab{width:100%;margin-bottom:3mm}
-.cab-der{text-align:right;font-size:9pt;color:#6b7280;vertical-align:bottom}
+/* ===== La portada (H-D73). Los colores del logo: azul marino y naranja. ===== */
+.cabecera{margin-bottom:7mm}
+.cab{width:100%;margin-bottom:2.5mm}
+.cab-logo{width:40mm;vertical-align:middle}
+.cab-coe{font-size:11pt;color:#0a1628;vertical-align:middle;letter-spacing:.3pt}
+.cab-coe strong{color:#f5a623}
+.coe-sep{color:#f5a623;font-weight:700}
+.cab-der{text-align:right;font-size:9pt;color:#6b7280;vertical-align:middle}
 .logo{height:22mm}                 /* que se lea: 14 mm se quedaba corto */
 .marca{font-size:22pt;color:#0a1628;letter-spacing:.5pt;font-weight:700}
 .marca b{color:#f5a623}
-.titulo h1{font-size:24pt;color:#0a1628;margin:0}
-.titulo .sub{font-size:15pt;color:#f5a623;font-weight:600;margin:1mm 0 0}
-.titulo .alcance{font-size:12pt;color:#4b5563;margin:.5mm 0 0}
+/* La banda: azul de lado a lado y el naranja encima, a la izquierda. En dos
+   divs y no en un degradado, que WeasyPrint dibuja de forma desigual. */
+.banda{background:#0a1628;height:2.2mm;margin-bottom:5mm;font-size:0}
+.banda-naranja{display:inline-block;background:#f5a623;height:2.2mm;width:38%}
+.titulo h1{font-size:26pt;color:#0a1628;margin:0;letter-spacing:-.3pt}
+.titulo .sub{font-size:16pt;color:#f5a623;font-weight:700;margin:1mm 0 5mm}
+/* La fila de datos de la portada: Dirigido a · Período · Equipo, y debajo la
+   capacidad base. En tabla, que es lo único que la rama de impresión admite. */
+.portada{width:100%;border-top:.5pt solid #e5e7eb}
+.portada td.dato{width:33.33%;padding:3mm 4mm 3mm 0;vertical-align:top;
+                 border-bottom:.5pt solid #e5e7eb}
+.dato-rot{display:block;font-size:8pt;color:#6b7280;text-transform:uppercase;
+          letter-spacing:.4pt;margin-bottom:1mm}
+.dato-val{display:block;font-size:11pt;color:#0a1628;font-weight:600}
 table{border-collapse:collapse;width:100%}
 th{background:#f3f4f6;color:#374151;font-size:8.5pt;text-transform:uppercase;
    text-align:left;padding:2mm;border-bottom:1.5pt solid #d1d5db}
