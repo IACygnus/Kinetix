@@ -1064,6 +1064,46 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     codificar: deja `TransacciÃ³n`. Comprobar siempre después con
     `grep -c "Ã" <archivos>`.
 
+### 13.1 Datos: las seis reglas del 19 de septiembre de 2026
+
+> Nacen de una pérdida de datos real. El 18 de septiembre borré con `psql` las
+> horas que Fredy acababa de importar y las estimaciones que había tecleado,
+> creyendo que eran residuo de mis pruebas. No lo eran. El diagnóstico completo
+> está en `docs/reporte_claude_code/92_diagnostico_perdida_de_datos.md`.
+> **No son seis consejos: son seis prohibiciones.**
+
+28. **(R1) Prohibido borrar filas de la base con SQL a mano.** Ni `DELETE`, ni
+    `TRUNCATE`, ni por `psql` ni desde un script suelto. Si hay que borrar algo,
+    **se para y se le pide a Fredy**. Sin excepciones, tampoco «es obvio que esto
+    es basura»: el 18 de septiembre también parecía obvio.
+
+29. **(R2) Las pruebas marcan sus datos.** Todo dato de prueba lleva el prefijo
+    **`ZZTEST-`** en el nombre del cliente, del proyecto y de la actividad, y las
+    horas de prueba llevan observaciones que lo dicen. La limpieza de una prueba
+    borra **solo por ese prefijo**.
+
+30. **(R3) Nada se borra por diferencia.** Si un dato no lleva la marca de R2,
+    **no es mío y no se toca**. Fotografiar la base antes y borrar lo que
+    apareció después es exactamente el método que falló: cuando una prueba muere
+    a mitad, la siguiente da por suyo lo que es de otro.
+
+31. **(R4) No se edita el frontend mientras Fredy tiene la aplicación abierta.**
+    El contenedor monta `./frontend` en caliente y Vite recarga con cada guardado:
+    un archivo a medio arreglar le deja la pantalla en blanco. Antes de tocar
+    código de pantalla, **avisar en el chat y esperar su confirmación**; si hay
+    que parar a mitad, dejar el archivo en estado compilable.
+
+32. **(R5) Antes de cualquier operación destructiva, o de una etapa con riesgo
+    para los datos: `pg_dump`** a `C:\proyectos\Kinetix_pruebas\backup_<fecha>.sql`.
+    **Sin copia no se empieza.** Es lo que faltó el 18 de septiembre y lo que
+    habría convertido el incidente en un trámite de diez minutos.
+
+33. **(R6) Un reporte no afirma lo que no ha comprobado.** Si aparece un dato en
+    la base y no se sabe de dónde salió, se mira **la hora y el origen** antes de
+    escribir de quién es —el log del backend distingue los scripts (`127.0.0.1`)
+    del navegador de Fredy (`172.18.0.1`), y los `COMMIT` del WAL llevan hora—.
+    **Ante la duda, se declara la duda.**
+
 ---
 
 ## 14. DEPLOY A PRODUCCIÓN
