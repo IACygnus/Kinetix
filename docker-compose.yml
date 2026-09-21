@@ -94,7 +94,9 @@ services:
     container_name: jmeter_influxdb
     restart: unless-stopped
     ports:
-      - "${INFLUXDB_PORT:-8086}:8086"
+      # O-D1: solo en el equipo. Vaciar la lista NO cierra un puerto —Compose
+      # fusiona, no reemplaza—; hay que publicarlo en una interfaz concreta.
+      - "127.0.0.1:${INFLUXDB_PORT:-8086}:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER:-admin}
@@ -122,16 +124,25 @@ services:
     container_name: jmeter_grafana
     restart: unless-stopped
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      # O-D1: solo en el equipo, igual que InfluxDB.
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      # O-D3: anónimo de solo lectura. Basta para embeber el tablero y, tras
+      # O-D1, ya no se alcanza desde la red.
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_SECURITY_COOKIE_SAMESITE=lax
       - GF_SERVER_SERVE_FROM_SUB_PATH=false
+      # O1.2: la provisión de la fuente de datos las necesita DENTRO del
+      # contenedor. Grafana solo interpola `$VAR` y `${VAR}`: la sintaxis
+      # `${VAR:-valor}` la resuelve Compose aquí, y allí llega ya un valor.
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-performance}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-jmeter}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-jmeter-token-2024-super-secret}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards

@@ -180,3 +180,25 @@ export interface MonitoringHealth {
   influxdb_message: string;
   is_configured: boolean;
 }
+
+// ===================== ETAPA O1.6 — la configuración para JMeter =====================
+
+/** Un parámetro del `InfluxdbBackendListenerClient`, listo para copiar. */
+export interface ArgumentoJMeter {
+  nombre: string;
+  valor: string;
+  explicacion: string;
+  /** El token: se tapa hasta que se pide, para que no salga en una captura. */
+  secreto: boolean;
+}
+
+/** Lo que hay que poner en el Backend Listener de una corrida (O-D5). */
+export interface ConfiguracionJMeter {
+  /** El nombre de la corrida (O-D4). Es la etiqueta por la que filtra el tablero. */
+  application: string;
+  clase_listener: string;
+  argumentos: ArgumentoJMeter[];
+  /** El tablero de Grafana ya filtrado por esta corrida (O-D6). */
+  url_tablero: string;
+  aviso: string;
+}

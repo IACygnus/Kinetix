@@ -15,12 +15,17 @@ class MonitoringConfig(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # Grafana
+    #
+    # O1.3: los dos valores por defecto que había aquí —«jmeter-realtime» y
+    # «jmeter-org»— no existían en ninguna parte. El uid real es el del
+    # `grafana/dashboards/jmeter-dashboard.json` y la organización es la que
+    # crea `docker-compose.yml`. Una instalación nueva nacía rota por esto.
     grafana_url = Column(String(500), nullable=True, default="http://grafana:3000")
-    grafana_dashboard_uid = Column(String(100), nullable=True, default="jmeter-realtime")
+    grafana_dashboard_uid = Column(String(100), nullable=True, default="jmeter-performance")
 
     # InfluxDB
     influxdb_url = Column(String(500), nullable=True, default="http://influxdb:8086")
-    influxdb_org = Column(String(255), nullable=True, default="jmeter-org")
+    influxdb_org = Column(String(255), nullable=True, default="performance")
     influxdb_bucket = Column(String(255), nullable=True, default="jmeter")
     influxdb_token_encrypted = Column(Text, nullable=True)  # Fernet-encrypted token
 

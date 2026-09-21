@@ -2,7 +2,7 @@
  * API Service - SQA Kinetix Pro
  */
 import axios from 'axios';
-import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult } from '../types';
+import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult, ConfiguracionJMeter } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
@@ -417,6 +417,29 @@ export const monitoringAPI = {
   getHealth: async (): Promise<MonitoringHealth> => {
     const response = await api.get('/monitoring/health');
     return response.data;
+  },
+
+  // ---------- ETAPA O1.6 — la configuración para JMeter ----------
+
+  /** Los proyectos con los que ya se ha probado ese cliente (solo sugerencias). */
+  proyectosDelCliente: async (clientId: string): Promise<string[]> => {
+    const response = await api.get('/monitoring/proyectos', { params: { client_id: clientId } });
+    return response.data;
+  },
+
+  /** Los valores exactos del Backend Listener para una corrida (O-D5). */
+  configuracionJMeter: async (clientId: string, proyecto: string): Promise<ConfiguracionJMeter> => {
+    const response = await api.get('/monitoring/jmeter-config', {
+      params: { client_id: clientId, proyecto },
+    });
+    return response.data;
+  },
+
+  /** La URL de descarga del fragmento `.jmx` con el componente ya relleno. */
+  urlFragmentoJMeter: (clientId: string, proyecto: string): string => {
+    const base = api.defaults.baseURL || '';
+    const q = new URLSearchParams({ client_id: clientId, proyecto });
+    return `${base}/monitoring/jmeter-fragmento?${q.toString()}`;
   },
 };
 

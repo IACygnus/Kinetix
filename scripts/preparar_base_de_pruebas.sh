@@ -41,10 +41,13 @@ if [ -n "$(ps -o pid= -C uvicorn 2>/dev/null)" ] && nc -z localhost "$PUERTO" 2>
 else
   # `create_all` crea las siete tablas de horas y el seed siembra el catálogo,
   # la jornada, los festivos y el usuario admin. No hace falta ningún SQL a mano.
+  # `--reload`, igual que el backend de siempre: sin él, el de pruebas se
+  # quedaba con el código del arranque y una suite nueva chocaba contra
+  # endpoints que "no existen" (pasó en O1.6, con 404 en /monitoring/jmeter-*).
   DATABASE_URL="postgresql://$USUARIO:$PGPASSWORD@$PGHOST:5432/$BASE_TEST" \
   ENVIRONMENT=development \
   nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$PUERTO" \
-        --app-dir /app > /tmp/backend_test.log 2>&1 &
+        --app-dir /app --reload > /tmp/backend_test.log 2>&1 &
   echo "    arrancando…"
   i=0
   while [ $i -lt 40 ]; do

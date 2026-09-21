@@ -1,4 +1,18 @@
+# Fuente de datos de Grafana hacia InfluxDB (ETAPA O1.2).
+#
+# Ojo con la interpolación: Grafana solo entiende `$VAR` y `${VAR}`. La forma
+# `${VAR:-valor}` —que es de bash y la entiende Compose, no Grafana— dejaba la
+# organización y el cubo en blanco, y la fuente respondía «missing organization
+# in datasource configuration». El valor por defecto se resuelve ahora en
+# `docker-compose.yml`, que pasa estas tres variables al contenedor.
+#
+# `deleteDatasources` quita la versión vieja antes de crear ésta, para que un
+# arranque sobre un volumen que ya tiene la fuente mal guardada quede limpio.
 apiVersion: 1
+
+deleteDatasources:
+  - name: InfluxDB-JMeter
+    orgId: 1
 
 datasources:
   - name: InfluxDB-JMeter
@@ -7,11 +21,11 @@ datasources:
     url: http://influxdb:8086
     jsonData:
       version: Flux
-      organization: ${INFLUXDB_ORG:-performance}
-      defaultBucket: ${INFLUXDB_BUCKET:-jmeter}
+      organization: ${INFLUXDB_ORG}
+      defaultBucket: ${INFLUXDB_BUCKET}
       tlsSkipVerify: true
     secureJsonData:
-      token: ${INFLUXDB_TOKEN:-jmeter-token-2024-super-secret}
+      token: ${INFLUXDB_TOKEN}
     uid: influxdb-jmeter
     isDefault: true
     editable: true

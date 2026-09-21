@@ -57,6 +57,18 @@ de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 
 No hay Etapa H4: el plan saltó de H3 a H5.
 
+### Observabilidad — Etapa O1
+
+| Etapa | Qué cubrió | Estado |
+|---|---|---|
+| O1.1 | **Diagnóstico de solo lectura**: la cadena InfluxDB → Grafana no había funcionado nunca. Reporte **96** | cerrada |
+| O1 | La fuente de datos arreglada, los puertos cerrados a la red, token de solo escritura, la corrida como filtro y la pantalla **Monitoreo en vivo** | implementada, **pendiente validación** |
+
+Lo que O1 **no** toca, y por qué: el WebSocket de métricas del motor propio
+(O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
+`backend/app/services/engine/`, **carpeta protegida**, y la segunda añade una
+dependencia. Van con **O3**, con autorización expresa.
+
 ### El incidente del 18 de septiembre de 2026
 
 Borré con `psql` las horas que Fredy acababa de importar y las estimaciones que
@@ -215,9 +227,23 @@ CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
 - [x] **Ejecución con motor propio** (Stepping Thread Group + virtual users).
 
 ### Monitoreo
+
+> Corregido en la Etapa O1. Lo que decía antes —«InfluxDB 2.7 como sink de
+> métricas live del motor propio»— **no era cierto y no lo fue nunca**: el motor
+> propio no escribe en InfluxDB, no existe el cliente ni el código que lo
+> intente, y el cubo tenía cardinalidad 0. Diagnóstico en el reporte **96**.
+
 - [x] **Grafana embebido** vía iframe (`GF_SECURITY_ALLOW_EMBEDDING=true`).
-- [x] **InfluxDB 2.7** como sink de métricas live del motor propio.
-- [x] **WebSocket** `/ws/executions/{id}/metrics`.
+- [x] **InfluxDB 2.7**, cubo `jmeter`, retención 30 días. Lo alimenta el
+      **Backend Listener de un JMeter**, no el motor propio.
+- [x] **Monitoreo en vivo** (O1.6): se elige cliente y proyecto, la pantalla da
+      los diez parámetros del `InfluxdbBackendListenerClient` para copiar —y el
+      componente `.jmx` ya relleno— y enseña el tablero **filtrado por esa
+      corrida**.
+- [x] **WebSocket** `/ws/executions/{id}/metrics`, del motor propio. Lo sirve el
+      backend (hace el `101 Switching Protocols`), pero **en desarrollo el
+      navegador no llega**: apunta a `localhost:5173` y `vite.config.ts` no tiene
+      `proxy`. Es del motor: va con **O3**, no con O1 (O-D7).
 
 ### Attachments + IA visión
 - [x] **Subida de imágenes** monitoring + evidence, con análisis IA por imagen

@@ -123,11 +123,20 @@
 | `jmeter_postgres` | postgres:15-alpine | 5432 | DB primaria |
 | `jmeter_backend` | local build `./backend` | 8001 | FastAPI |
 | `jmeter_frontend` | local build `./frontend` target `builder` | 5173 | Vite dev server |
-| `jmeter_influxdb` | influxdb:2.7-alpine | 8086 | Métricas tiempo real |
-| `jmeter_grafana` | grafana/grafana:10.2.3 | 3000 | Dashboards |
+| `jmeter_influxdb` | influxdb:2.7-alpine | **`127.0.0.1`**:8086 | Métricas tiempo real |
+| `jmeter_grafana` | grafana/grafana:10.2.3 | **`127.0.0.1`**:3000 | Dashboards |
 
 Network bridge: `jmeter_network`. Volúmenes nombrados: `postgres_data`,
 `uploads_data`, `influxdb_data`, `influxdb_config`, `grafana_data`.
+
+> **O-D1 (Etapa O1):** InfluxDB y Grafana se publican **solo en `127.0.0.1`**.
+> Antes escuchaban en `0.0.0.0` y respondían desde la red local: con Grafana en
+> anónimo, cualquiera que alcanzara el equipo veía los tableros. Para cerrar un
+> puerto hay que **publicarlo en una interfaz concreta**; vaciar la lista de
+> `ports` no cierra nada (Compose fusiona, ver el aviso de más abajo).
+> Consecuencia: **solo un JMeter de esta misma máquina puede escribir** en
+> InfluxDB. Abrirlo a una inyectora de fuera es una decisión aparte, con su
+> regla de cortafuegos y su token.
 
 ### Diferencias con producción (`docker-compose.prod.yml`)
 
@@ -403,8 +412,24 @@ CRUD completo + `PATCH /{id}/toggle` (activar/desactivar) +
 - `GET /clients/user-clients` — clientes visibles para el usuario actual
 
 ### `monitoring` (`/monitoring`)
-- GET / PUT `/monitoring/config` — config Grafana + InfluxDB
-- GET `/monitoring/health`
+- GET / PUT `/monitoring/config` — config Grafana + InfluxDB (el PUT es de admin)
+- GET `/monitoring/health` — **solo comprueba que respondan**, no que la fuente
+  de datos de Grafana funcione ni que el tablero exista
+
+**Monitoreo en vivo (ETAPA O1).** La pantalla no le pide a nadie que recuerde
+una URL ni que se invente un nombre de prueba:
+
+| Verbo | Path | Función |
+|---|---|---|
+| GET | `/monitoring/proyectos?client_id=` | Los proyectos con los que ya se probó ese cliente. Solo sugerencias |
+| GET | `/monitoring/jmeter-config?client_id=&proyecto=` | Los diez parámetros del `InfluxdbBackendListenerClient`, rellenos (O-D5) |
+| GET | `/monitoring/jmeter-fragmento?client_id=&proyecto=` | Lo mismo ya escrito en XML, para pegar en un `.jmx`. Texto armado a mano: sin bibliotecas nuevas |
+
+El **nombre de la corrida** (O-D4) lo genera `nombre_de_corrida()` en
+`monitoring.py`: `<cliente>-<proyecto>-<aaaammdd-hhmm>`, en minúsculas, sin
+tildes ni espacios. Va en la etiqueta `application` del Backend Listener **y**
+en `?var-application=` del tablero embebido: por eso lo que se copia y lo que se
+mira no pueden discrepar.
 
 ### `ai-config` (`/ai-config`)
 | Verbo | Path | Función |
@@ -1304,3 +1329,30 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
   títulos hubo que actualizar `hf4_check.py`, que los comparaba sin tilde.
 - **`perl -CSD` destroza el UTF-8** al sustituir desde la línea de órdenes: modo
   bytes, y `grep -c "Ã"` después.
+
+### Del módulo de observabilidad (Etapa O1)
+
+- **La provisión de Grafana NO entiende `${VAR:-valor}`.** Solo interpola `$VAR`
+  y `${VAR}`. La forma con valor por defecto es de bash, y Grafana la deja en
+  blanco: la fuente de datos respondía «missing organization in datasource
+  configuration» y **los paneles salían vacíos sin decir por qué**. El valor por
+  defecto se resuelve en `docker-compose.yml`, que además tiene que **pasarle
+  las variables al contenedor de Grafana** — solo le llegaban las `GF_*`.
+- **La primera escritura decide el tipo de un campo en InfluxDB, y lo hace para
+  todo el *shard*.** Un `count=1i` escrito a mano dejó el campo como entero y
+  JMeter, que lo manda flotante, empezó a recibir `422 field type conflict` y a
+  perder **todas** las filas por transacción. Borrar el punto no bastó: el tipo
+  siguió fijado hasta borrar la medida entera. **No se escribe a mano en una
+  medida que produce un programa.**
+- **Un semáforo puede decir «ok» con todo roto.** `/monitoring/health` solo
+  comprueba que Grafana e InfluxDB *respondan*. El tablero no existía, la
+  organización estaba en blanco y el token no se descifraba, y el semáforo salía
+  verde igual. Comprobar lo que importa: `/api/datasources/uid/<uid>/health`.
+- **Un `default=` de un modelo es una decisión de producto.** `jmeter-realtime` y
+  `jmeter-org` no existían en ninguna parte; la fila de `monitoring_config` nació
+  con ellos en marzo de 2026 y la pantalla apuntó desde el primer día a un
+  tablero inexistente. Si un valor por defecto tiene que coincidir con algo de
+  fuera, se comprueba contra ese algo.
+- **El segundo backend de pruebas necesita `--reload` igual que el primero.** Sin
+  él se queda con el código del arranque, y una suite nueva choca contra
+  endpoints que «no existen» (404) aunque estén escritos.

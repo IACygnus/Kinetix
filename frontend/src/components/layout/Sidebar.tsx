@@ -8,7 +8,8 @@ import {
   FlaskConical,
   FileText,
   ClipboardList,
-  // Activity, BarChart3, Settings — unused while Monitoreo section is hidden
+  Activity,
+  // BarChart3, Settings — sin usar mientras el bloque viejo de Grafana siga oculto
   Users,
   Building2,
   UserCheck,
@@ -136,6 +137,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <Monitor className="w-6 h-6" />,
         },
         {
+          // O1.6: la prueba mientras corre. Es otra cosa que «Metricas
+          // Monitoreo», que son capturas de infraestructura analizadas con IA.
+          label: 'Monitoreo en vivo',
+          path: '/monitoring/vivo',
+          icon: <Activity className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
           label: 'Evidencias',
           path: '/performance/evidence',
           icon: <Search className="w-6 h-6" />,
@@ -244,8 +253,12 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   // Auto-expand menu based on current route
   useEffect(() => {
-    const performanceActive = location.pathname.startsWith('/performance');
-    const monitoringActive = location.pathname.startsWith('/monitoring');
+    // O1.6: «Monitoreo en vivo» cuelga de Análisis aunque su ruta sea
+    // /monitoring/vivo, así que abre ese menú y no el viejo de Grafana.
+    const performanceActive = location.pathname.startsWith('/performance')
+      || location.pathname.startsWith('/monitoring/vivo');
+    const monitoringActive = location.pathname.startsWith('/monitoring')
+      && !location.pathname.startsWith('/monitoring/vivo');
     const adminActive = location.pathname.startsWith('/admin') || location.pathname.startsWith('/users');
     const designActive =
       location.pathname.startsWith('/script-designer') ||

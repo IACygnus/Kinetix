@@ -26,6 +26,7 @@ import AIScriptEditorList from './pages/AIScriptEditorList';
 import ExecutionDashboard from './pages/ExecutionDashboard';
 import ReportView from './pages/ReportView';
 import MonitoringPage from './pages/MonitoringPage';
+import MonitoreoVivoPage from './pages/MonitoreoVivoPage';
 import EvidencePage from './pages/EvidencePage';
 import IntegratedReportPage from './pages/IntegratedReportPage';
 // MODULO DE HORAS (ETAPA H1, H-D9): todo cuelga de /horas.
@@ -93,6 +94,16 @@ function App() {
             <Route path="/horas/registro" element={<RegistroPage />} />
 
             {/* Monitoring */}
+            {/* O1.6: la pantalla nueva, la que genera la configuración de JMeter
+                y enseña el tablero filtrado por esa corrida. */}
+            <Route
+              path="/monitoring/vivo"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <MonitoreoVivoPage />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/monitoring/realtime" element={<MonitoringRealtime />} />
             <Route
               path="/monitoring/settings"

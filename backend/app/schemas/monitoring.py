@@ -41,3 +41,32 @@ class MonitoringHealthStatus(BaseModel):
     influxdb_status: str = "unknown"
     influxdb_message: str = ""
     is_configured: bool = False
+
+
+# ===================== ETAPA O1.6 — la configuración para JMeter =====================
+
+
+class ArgumentoJMeter(BaseModel):
+    """Un parámetro del `InfluxdbBackendListenerClient`, listo para copiar.
+
+    `secreto` marca los que no conviene enseñar en una captura de pantalla; la
+    pantalla los tapa hasta que se piden.
+    """
+    nombre: str
+    valor: str
+    explicacion: str = ""
+    secreto: bool = False
+
+
+class ConfiguracionJMeter(BaseModel):
+    """Lo que hay que poner en el Backend Listener de una corrida (O-D5).
+
+    `application` es el nombre de la corrida de O-D4 y es la misma etiqueta con
+    la que el tablero de Grafana filtra (O-D6): por eso viaja aparte, además de
+    venir dentro de `argumentos`.
+    """
+    application: str
+    clase_listener: str
+    argumentos: list[ArgumentoJMeter]
+    url_tablero: str
+    aviso: str = ""
