@@ -64,6 +64,7 @@ No hay Etapa H4: el plan saltó de H3 a H5.
 | O1.1 | **Diagnóstico de solo lectura**: la cadena InfluxDB → Grafana no había funcionado nunca. Reporte **96** | cerrada |
 | O1 | La fuente de datos arreglada, los puertos cerrados a la red, token de solo escritura, la corrida como filtro y la pantalla **Monitoreo en vivo** | implementada, **pendiente validación** |
 | O2a | El **laboratorio** (`docker-compose.lab.yml`) y el **monitoreo de infraestructura sin agente**: Linux por SSH, PostgreSQL por conexión, cubo `infra`, tablero propio y el documento de permisos para el cliente. Reportes **99** y **100** | implementada, **pendiente validación** |
+| O2b | El **agente**: Telegraf dentro del servidor, **una lectura por segundo** en vez de una cada diez, con instalador y desinstalador de systemd, y el mismo esquema. Reportes **101** y **102** | implementada, **pendiente validación** |
 
 Las dos aceptaciones que O1 dejó colgando del reinicio de Fredy **pasan**: la
 fuente de datos responde `OK` y el 8086 y el 3000 ya no contestan por la IP de
@@ -71,10 +72,17 @@ la red. Sigue sin probarse **desde otra máquina**.
 
 De O2a, lo que hay que tener presente: las métricas sin agente se escriben con
 **los mismos nombres de campo que usaría un agente** —comprobado campo a campo,
-cero campos que tenga el nativo y no tengamos nosotros— para que **O2b** pueda
-cambiar de modo sin rehacer tableros ni alertas. Y en el laboratorio `cpu`,
-`mem` y `disk` son del anfitrión, no del contenedor, porque `/proc` no está
-separado; en un servidor de verdad no hay esa ambigüedad (reporte 99 §2.3).
+cero campos que tenga el nativo y no tengamos nosotros—. Y en el laboratorio
+`cpu`, `mem` y `disk` son del anfitrión, no del contenedor, porque `/proc` no
+está separado; en un servidor de verdad no hay esa ambigüedad (reporte 99 §2.3).
+
+De O2b: **la promesa de O-D13 se cumplió de punta a punta.** El tablero tiene un
+selector «Modo» y cambiarlo **no cambia ni una consulta**: las mismas nueve
+medidas con los mismos campos, solo que a un dato por segundo en vez de uno cada
+diez. Las cifras que se le dan a un cliente —96,3 % contra 25,9 % en un pico de
+tres segundos; 0,5 % de un núcleo y ~60 MB de coste; 183 de 183 segundos
+recuperados tras un corte de red— están todas medidas, no estimadas. **Lo único
+escrito y sin probar es el instalador de Windows** (O-D21).
 
 Lo que O1 y O2a **no** tocan, y por qué: el WebSocket de métricas del motor
 propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
@@ -346,12 +354,18 @@ el CORS.
 | `o16_pantalla.py` | Monitoreo en vivo de punta a punta (O1.6) |
 | `o2a3_config.py` · `o2a3_correlacion.py` | la prueba de correlación de O2a.3 (las lanza `scripts/lab_prueba_correlacion.sh`, desde el anfitrión) |
 | `probar_tablero.py` | que los 13 paneles del tablero de infraestructura **devuelvan datos**, no que «deberían» |
-| `cierre_o2a.sh` | la regresión completa en serie: 13 suites, 504 comprobaciones |
+| `cierre_o2a.sh` · `cierre_o2b.sh` | la regresión completa en serie: 13 suites, **507** comprobaciones |
 
-Y dos que **no** viven ahí, porque corren dentro del laboratorio:
-`lab/colector/comparar_con_nativo.py` (la paridad con el complemento nativo) y
-`scripts/lab_prueba_correlacion.sh` (el recorrido de O2a.3, que necesita `docker`
-y por eso se lanza desde el anfitrión).
+Y los que **no** viven ahí, porque necesitan `docker` y se lanzan desde el
+anfitrión, o corren dentro del laboratorio:
+
+| Script | Qué verifica |
+|---|---|
+| `scripts/lab_prueba_correlacion.sh` | el recorrido de O2a.3: la prueba se ve en el servidor |
+| `scripts/lab_comparar_modos.sh` | O2b.2: qué ve el agente que el modo de 10 s no ve, y lo que cuesta |
+| `scripts/lab_corte_de_red.sh` | O2b.3: un corte de red real, y cuántos datos se recuperan |
+| `lab/colector/comparar_con_nativo.py` | la paridad campo a campo con el complemento nativo |
+| `lab/agente/medir_coste.sh` | CPU, memoria propia y red que consume el agente |
 
 Ninguno llama a la IA: todos trabajan sobre informes ya generados.
 

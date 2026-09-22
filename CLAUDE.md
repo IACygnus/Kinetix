@@ -31,12 +31,13 @@
   `docs/ESPECIFICACION-horas.md` **v1.4**. H1, H2, H2b y H3 validadas por Fredy;
   **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
   análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
-- **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo) y
-  **O2a** (el laboratorio y el monitoreo de infraestructura sin agente)
-  implementadas, **las dos pendientes de validación de Fredy**. Reportes 96-100.
-  Queda **O2b** (el mismo monitoreo con agente instalado) y **O3** (que el motor
-  propio publique en InfluxDB y el WebSocket llegue al navegador — toca
-  `services/engine/`, protegida).
+- **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo),
+  **O2a** (el laboratorio y el monitoreo de infraestructura sin agente) y
+  **O2b** (el mismo monitoreo con agente instalado) implementadas, **las tres
+  pendientes de validación de Fredy**. Reportes 96-102. Queda **O3** (que el
+  motor propio publique en InfluxDB y el WebSocket llegue al navegador — toca
+  `services/engine/`, protegida). **El instalador de Windows del agente está
+  escrito y NO probado** (O-D21).
 
 ### 1.1 REMOTOS GIT
 
@@ -173,6 +174,33 @@ y el recolector escriba en `influxdb:8086`. **A la red no se publica nada.**
   escritura** sobre él (O-D15). El tablero es `kinetix-infraestructura`.
 - Los permisos que se le piden a un cliente están en
   **`docs/observabilidad/requisitos-sin-agente.md`**, redactado para enviárselo.
+
+### El AGENTE (`lab/agente/` — Etapa O2b)
+
+Telegraf 1.29.5 instalado **dentro** del servidor, midiendo **cada segundo**
+(O-D18) frente a los diez del modo sin agente, con el mismo esquema de O-D13 y
+`modo=agente`. Se instala como servicio de systemd con un usuario sin
+privilegios (O-D19):
+
+```
+sudo bash lab/agente/instalar_agente.sh --url ... --token-fichero /ruta/tok \
+     --org performance --cubo infra --cliente <cliente> [--paquete tg.tar.gz]
+sudo bash lab/agente/desinstalar_agente.sh          # comprueba que no deja nada
+```
+
+- **`--token-fichero`, no `--token`**: con el segundo, el token está en la línea
+  de órdenes del instalador mientras dura y lo ve cualquiera con `ps`. El
+  instalador lo comprueba al terminar y falla si el token quedó expuesto.
+- El agente lee el token del fichero de entorno **él mismo**; nunca viaja en
+  `argv`. Con systemd lo resuelve `EnvironmentFile`.
+- **Windows (`instalar_agente.ps1`) está ESCRITO Y NO PROBADO** (O-D21): solo se
+  ha validado su sintaxis. La huella del paquete está sin fijar a propósito.
+- `lab/agente/medir_coste.sh` mide lo que cuesta el agente. La cifra honesta es
+  `RssAnon` (~60 MB), no `VmRSS` (~155 MB): la diferencia son páginas del propio
+  ejecutable mapeadas de disco, que el núcleo descarta bajo presión.
+- `scripts/lab_comparar_modos.sh` (O2b.2) y `scripts/lab_corte_de_red.sh` (O2b.3).
+- El documento para el cliente:
+  **`docs/observabilidad/requisitos-con-agente.md`**.
 
 ### Diferencias con producción (`docker-compose.prod.yml`)
 
@@ -1454,3 +1482,31 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
 - **200.000 filas no bastan para que una consulta cueste.** PostgreSQL las
   recorre en paralelo en 50 ms. Con 1.500.000 la misma búsqueda tarda medio
   segundo y la prueba tiene algo que enseñar.
+
+### Del agente (Etapa O2b)
+
+- **Un secreto en la línea de órdenes lo ve todo el mundo.** `env TOKEN=... prog`
+  deja el token a la vista de cualquier `ps`. El proceso tiene que leerlo él
+  mismo de un fichero suyo (con systemd, `EnvironmentFile`). Y se **comprueba**
+  al terminar de instalar, porque es el tipo de fallo que nadie mira.
+- **`pgrep -f` busca en la línea de órdenes**, así que un envoltorio que lleve la
+  ruta del binario dentro aparece como si fuera el proceso. Para saber quién
+  corre algo de verdad, `pgrep -x`, que mira el nombre del ejecutable.
+- **`ps | grep <secreto>` se encuentra a sí mismo**: el propio `grep` lleva el
+  secreto en su línea de órdenes. La foto de `ps` se toma antes de buscar en ella.
+- **`VmRSS` no es lo que el proceso le quita a la máquina.** De los 155 MB de
+  Telegraf, 92 son páginas del ejecutable mapeadas de disco que el núcleo
+  descarta bajo presión. La cifra que se le da a un cliente es `RssAnon`.
+- **`kill $(jobs -p)` en un `sh -c` no interactivo no mata nada**: esa lista sale
+  vacía. Un proceso de carga que se apaga solo (`timeout`) no depende de que
+  nadie se acuerde de apagarlo — los que no, estuvieron ocho núcleos al 100 %
+  hasta que se vieron.
+- **`docker exec -d` se traga los errores.** Un proceso que no arranca parece un
+  proceso que arrancó. En segundo plano desde el anfitrión, con la salida a un
+  fichero, y se comprueba que sigue vivo.
+- **`jmeter_backend` no trae `ps` ni `pgrep`.** Un bucle que pregunte con ellos
+  sale a la primera vuelta con código 127, como si el trabajo ya hubiera
+  terminado.
+- **Diez segundos de media aplastan un pico de tres.** Un pico real del 96 % sale
+  como un 26 % en el modo sin agente. Los dos son correctos; la diferencia es la
+  resolución, y hay que decirlo antes de que alguien saque conclusiones.

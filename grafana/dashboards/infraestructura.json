@@ -11,7 +11,7 @@
   "editable": true,
   "graphTooltip": 1,
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": {
     "from": "now-30m",
@@ -28,6 +28,34 @@
   },
   "templating": {
     "list": [
+      {
+        "name": "modo",
+        "label": "Modo",
+        "description": "Con agente instalado en el servidor (un dato por segundo) o sin agente, por SSH (uno cada diez). Las consultas son LAS MISMAS: solo cambia de donde vienen.",
+        "type": "custom",
+        "query": "sin_agente,agente",
+        "current": {
+          "text": "sin_agente",
+          "value": "sin_agente",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "sin_agente",
+            "value": "sin_agente",
+            "selected": true
+          },
+          {
+            "text": "agente",
+            "value": "agente",
+            "selected": false
+          }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "skipUrlSync": false
+      },
       {
         "name": "corrida",
         "label": "Corrida",
@@ -54,7 +82,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "El servidor — sin agente, por SSH",
+      "title": "El servidor — modo «$modo»",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -67,7 +95,7 @@
     {
       "type": "timeseries",
       "title": "CPU del servidor",
-      "description": "Leido de /proc/stat por SSH. Mismos campos que el complemento nativo `cpu`: usage_user, usage_system, usage_iowait.",
+      "description": "Mismos campos en los dos modos: `usage_user`, `usage_system` y `usage_iowait`. Cambiar el selector «Modo» de arriba no cambia la consulta, solo de donde vienen los datos — esa es toda la promesa de O-D13.",
       "datasource": {
         "type": "influxdb",
         "uid": "influxdb-jmeter"
@@ -84,7 +112,7 @@
             "type": "influxdb",
             "uid": "influxdb-jmeter"
           },
-          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"cpu\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"usage_user\" or r[\"_field\"] == \"usage_system\" or r[\"_field\"] == \"usage_iowait\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"cpu\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"modo\"] == \"${modo}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"usage_user\" or r[\"_field\"] == \"usage_system\" or r[\"_field\"] == \"usage_iowait\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
           "refId": "A",
           "hide": false,
           "rawQuery": true,
@@ -145,7 +173,7 @@
             "type": "influxdb",
             "uid": "influxdb-jmeter"
           },
-          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"system\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"load1\" or r[\"_field\"] == \"load5\" or r[\"_field\"] == \"load15\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"system\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"modo\"] == \"${modo}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"load1\" or r[\"_field\"] == \"load5\" or r[\"_field\"] == \"load15\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
           "refId": "A",
           "hide": false,
           "rawQuery": true,
@@ -206,7 +234,7 @@
             "type": "influxdb",
             "uid": "influxdb-jmeter"
           },
-          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"mem\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"used_percent\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"mem\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"modo\"] == \"${modo}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"used_percent\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A",
           "hide": false,
           "rawQuery": true,
@@ -265,7 +293,7 @@
             "type": "influxdb",
             "uid": "influxdb-jmeter"
           },
-          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"processes\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"total\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"processes\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"modo\"] == \"${modo}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"total\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A",
           "hide": false,
           "rawQuery": true,
@@ -895,6 +923,140 @@
             ]
           }
         ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Los dos modos, lado a lado (O2b)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU del servidor: el agente (1 s) y el modo sin agente (10 s)",
+      "description": "La MISMA maquina, medida de las dos formas a la vez. Los dos modos coinciden cuando la carga es sostenida; donde se separan es en los picos cortos: diez segundos de media aplastan un pico de tres. En la etapa O2b un pico real del 96 % aparecio como un 26 % en el modo sin agente.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 16,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"cpu\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"usage_idle\")\n  |> map(fn: (r) => ({ r with _value: 100.0 - r._value }))\n  |> keep(columns: [\"_time\", \"_value\", \"modo\"])",
+          "refId": "A",
+          "hide": false,
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cuantos puntos por minuto escribe cada modo",
+      "description": "60 y 6. Es la diferencia entre O-D18 (un segundo) y los diez segundos del modo sin agente, contada en puntos.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 47,
+        "w": 8,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "from(bucket: \"infra\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"cpu\")\n  |> filter(fn: (r) => r[\"host\"] == \"lab_servidor\")\n  |> filter(fn: (r) => r[\"corrida\"] == \"${corrida}\")\n  |> filter(fn: (r) => r[\"_field\"] == \"usage_idle\")\n  |> aggregateWindow(every: 1m, fn: count, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"modo\"])",
+          "refId": "A",
+          "hide": false,
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
       },
       "options": {
         "legend": {

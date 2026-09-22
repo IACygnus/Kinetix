@@ -28,6 +28,9 @@ OBJETIVOS = [h.strip() for h in os.environ.get("KX_OBJETIVOS", "").split(",") if
 ESTADO_DIR = os.environ.get("KX_ESTADO", "/var/lib/kinetix")
 ESPERA = int(os.environ.get("KX_SSH_ESPERA", "8"))
 
+# x86_64. El complemento nativo publica las paginas de intercambio en bytes.
+TAMANO_PAGINA = int(os.environ.get("KX_TAMANO_PAGINA", "4096"))
+
 # Misma lista que el complemento `inputs.disk` ignora por defecto, menos
 # `overlay`: en el laboratorio la raiz ES overlay y sin ella no habria disco.
 # `9p` y `drvfs` se anaden porque son como Docker en Windows le ensena al
@@ -83,6 +86,8 @@ echo '##nproc';     nproc
 echo '##who';       who 2>/dev/null | wc -l
 echo '##ps';        ps -eo stat= 2>/dev/null
 echo '##snmp';      cat /proc/net/snmp
+echo '##vmstat';    cat /proc/vmstat
+echo '##entropia';  cat /proc/sys/kernel/random/entropy_avail 2>/dev/null
 echo '##hilos';     ps -eo nlwp= 2>/dev/null
 echo '##top';       ps -eo pcpu=,pmem=,comm= --sort=-pcpu 2>/dev/null | head -n 5
 echo '##fin';       true
@@ -255,6 +260,61 @@ def metricas_mem(host, lineas, cuando):
     for clave, nombre in MEMINFO_ALTA_BAJA.items():
         campos[nombre] = crudo.get(clave, 0)
     return [punto("mem", {"host": host}, campos, cuando)]
+
+
+def metricas_swap(host, bloques, cuando):
+    """Medida `swap`, la nativa: total, free, used, used_percent, in, out.
+
+    Las dos ultimas son paginas movidas desde que arranco la maquina, y salen
+    de /proc/vmstat en paginas: el complemento nativo las publica en bytes.
+    """
+    crudo = {}
+    for linea in bloques.get("meminfo", []):
+        if ":" not in linea:
+            continue
+        clave, resto = linea.split(":", 1)
+        trozos = resto.split()
+        if trozos:
+            crudo[clave] = int(trozos[0]) * (1024 if len(trozos) > 1 else 1)
+
+    vmstat = {}
+    for linea in bloques.get("vmstat", []):
+        trozos = linea.split()
+        if len(trozos) == 2 and trozos[1].isdigit():
+            vmstat[trozos[0]] = int(trozos[1])
+
+    total = crudo.get("SwapTotal", 0)
+    libre = crudo.get("SwapFree", 0)
+    usada = total - libre
+    campos = {
+        "total": total, "free": libre, "used": usada,
+        "used_percent": (100.0 * usada / total) if total else 0.0,
+        "in": vmstat.get("pswpin", 0) * TAMANO_PAGINA,
+        "out": vmstat.get("pswpout", 0) * TAMANO_PAGINA,
+    }
+    return [punto("swap", {"host": host}, campos, cuando)]
+
+
+def metricas_kernel(host, bloques, cuando):
+    """Medida `kernel`, la nativa: los contadores globales de /proc/stat."""
+    campos = {}
+    for linea in bloques.get("stat", []):
+        trozos = linea.split()
+        if len(trozos) < 2:
+            continue
+        if trozos[0] == "btime":
+            campos["boot_time"] = int(trozos[1])
+        elif trozos[0] == "ctxt":
+            campos["context_switches"] = int(trozos[1])
+        elif trozos[0] == "processes":
+            campos["processes_forked"] = int(trozos[1])
+        elif trozos[0] == "intr":
+            # La primera cifra es el total; las demas son por interrupcion.
+            campos["interrupts"] = int(trozos[1])
+    entropia = (bloques.get("entropia") or [""])[0].strip()
+    if entropia.isdigit():
+        campos["entropy_avail"] = int(entropia)
+    return [punto("kernel", {"host": host}, campos, cuando)] if campos else []
 
 
 def metricas_system(host, bloques, cuando):
@@ -459,6 +519,8 @@ def main():
         lineas += metricas_cpu(host, bloques.get("stat", []), cuando)
         lineas += metricas_mem(host, bloques.get("meminfo", []), cuando)
         lineas += metricas_system(host, bloques, cuando)
+        lineas += metricas_swap(host, bloques, cuando)
+        lineas += metricas_kernel(host, bloques, cuando)
         lineas += metricas_net(host, bloques.get("netdev", []), cuando)
         lineas += metricas_net_protocolo(host, bloques.get("snmp", []), cuando)
         lineas += metricas_diskio(host, bloques.get("diskstats", []), cuando)

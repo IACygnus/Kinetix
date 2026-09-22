@@ -30,7 +30,16 @@ CONF
 
 if docker ps --format '{{.Names}}' | grep -qx "$CONTENEDOR"; then
     docker kill -s HUP "$CONTENEDOR" >/dev/null
-    echo "corrida = $CORRIDA  (recargado en $CONTENEDOR)"
+    echo "corrida = $CORRIDA  (recargado en $CONTENEDOR, modo sin agente)"
 else
     echo "corrida = $CORRIDA  ($CONTENEDOR no esta levantado; se aplicara al arrancar)"
+fi
+
+# Y en el agente, si esta instalado (O2b). Es la MISMA cadena en los dos modos:
+# si discreparan, en el tablero saldrian como dos pruebas distintas.
+SERVIDOR="${KX_SERVIDOR:-lab_servidor}"
+if docker ps --format '{{.Names}}' | grep -qx "$SERVIDOR" \
+   && MSYS_NO_PATHCONV=1 docker exec "$SERVIDOR" test -x /usr/local/bin/kinetix-agente-corrida 2>/dev/null; then
+    MSYS_NO_PATHCONV=1 docker exec "$SERVIDOR" kinetix-agente-corrida "$CORRIDA" >/dev/null
+    echo "corrida = $CORRIDA  (recargado en $SERVIDOR, modo agente)"
 fi

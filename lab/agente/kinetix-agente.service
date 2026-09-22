@@ -1,0 +1,49 @@
+[Unit]
+Description=Agente Kinetix — metricas de rendimiento de este servidor
+Documentation=file:/etc/kinetix-agente/LEEME.txt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kinetix_agente
+Group=kinetix_agente
+EnvironmentFile=/etc/kinetix-agente/entorno
+ExecStart=/opt/kinetix-agente/bin/telegraf --config /etc/kinetix-agente/agente.conf --config-directory /etc/kinetix-agente/conf.d
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# =========================================================================
+# O-D19 — el agente no necesita nada de esto, asi que no lo tiene.
+# =========================================================================
+# No es decoracion: es lo que se le ensena al area de seguridad del cliente
+# cuando pregunta que puede hacer este proceso si alguien se lo queda.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# AF_NETLINK hace falta de verdad: enumerar las interfaces de red pasa por ahi.
+# Las otras tres son la salida a InfluxDB y la resolucion de nombres.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+# =========================================================================
+# El techo que se le promete al cliente
+# =========================================================================
+# No son estimaciones: son limites que el nucleo hace cumplir. Si el agente
+# intentara pasarse, lo frenan. Las cifras medidas estan en el reporte de O2b.
+MemoryMax=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target
