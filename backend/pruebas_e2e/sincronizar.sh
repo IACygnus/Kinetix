@@ -26,6 +26,11 @@ mkdir -p "$DESTINO"
 cp -f "$ORIGEN"/*.py "$ORIGEN"/*.sh "$DESTINO"/ 2>/dev/null || true
 chmod +x "$DESTINO"/*.sh 2>/dev/null || true
 
+# Los planes de prueba de JMeter van a /tmp a secas: es donde los buscan las
+# suites que los usan. `zztest_o14.jmx` era el otro fichero que se perdio con
+# el contenedor y no estaba en el respaldo.
+cp -f "$ORIGEN"/*.jmx /tmp/ 2>/dev/null || true
+
 echo "sincronizadas $(ls -1 "$DESTINO"/*.py "$DESTINO"/*.sh 2>/dev/null | wc -l) suites en $DESTINO"
 
 # ---------------------------------------------------------------------------

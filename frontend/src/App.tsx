@@ -27,6 +27,8 @@ import ExecutionDashboard from './pages/ExecutionDashboard';
 import ReportView from './pages/ReportView';
 import MonitoringPage from './pages/MonitoringPage';
 import MonitoreoVivoPage from './pages/MonitoreoVivoPage';
+// ETAPA O2c (O-D24): la pantalla de servidores observados.
+import ServidoresPage from './pages/ServidoresPage';
 import EvidencePage from './pages/EvidencePage';
 import IntegratedReportPage from './pages/IntegratedReportPage';
 // MODULO DE HORAS (ETAPA H1, H-D9): todo cuelga de /horas.
@@ -93,17 +95,30 @@ function App() {
             <Route path="/horas/informes" element={<InformesPage />} />
             <Route path="/horas/registro" element={<RegistroPage />} />
 
-            {/* Monitoring */}
-            {/* O1.6: la pantalla nueva, la que genera la configuración de JMeter
-                y enseña el tablero filtrado por esa corrida. */}
+            {/* ===== OBSERVABILIDAD (ETAPA O2c, O-D29 a O-D31) =====
+                Sección propia, con sus rutas colgando de /observabilidad. */}
             <Route
-              path="/monitoring/vivo"
+              path="/observabilidad/vivo"
               element={
                 <ProtectedRoute roles={['admin', 'analyst']}>
                   <MonitoreoVivoPage />
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/observabilidad/servidores"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <ServidoresPage />
+                </ProtectedRoute>
+              }
+            />
+            {/* O-D31: la ruta de O1.6 sigue funcionando. Si alguien la tiene
+                guardada en un marcador o pegada en un chat, no se encuentra un
+                404: llega a donde esperaba. */}
+            <Route path="/monitoring/vivo" element={<Navigate to="/observabilidad/vivo" replace />} />
+
+            {/* Monitoring */}
             <Route path="/monitoring/realtime" element={<MonitoringRealtime />} />
             <Route
               path="/monitoring/settings"

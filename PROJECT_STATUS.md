@@ -57,7 +57,7 @@ de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 
 No hay Etapa H4: el plan saltó de H3 a H5.
 
-### Observabilidad — Etapas O1 y O2a
+### Observabilidad — Etapas O1, O2a, O2b y O2c
 
 | Etapa | Qué cubrió | Estado |
 |---|---|---|
@@ -65,6 +65,7 @@ No hay Etapa H4: el plan saltó de H3 a H5.
 | O1 | La fuente de datos arreglada, los puertos cerrados a la red, token de solo escritura, la corrida como filtro y la pantalla **Monitoreo en vivo** | implementada, **pendiente validación** |
 | O2a | El **laboratorio** (`docker-compose.lab.yml`) y el **monitoreo de infraestructura sin agente**: Linux por SSH, PostgreSQL por conexión, cubo `infra`, tablero propio y el documento de permisos para el cliente. Reportes **99** y **100** | implementada, **pendiente validación** |
 | O2b | El **agente**: Telegraf dentro del servidor, **una lectura por segundo** en vez de una cada diez, con instalador y desinstalador de systemd, y el mismo esquema. Reportes **101** y **102** | implementada, **pendiente validación** |
+| O2c | **«Observabilidad» como sección propia del menú** y la pantalla de **Servidores**: alta, prueba de conexión que dice *qué se puede leer* y el error real cuando falla, y generador de configuración. Reportes **103** y **104** | implementada, **pendiente validación** |
 
 Las dos aceptaciones que O1 dejó colgando del reinicio de Fredy **pasan**: la
 fuente de datos responde `OK` y el 8086 y el 3000 ya no contestan por la IP de
@@ -84,10 +85,27 @@ tres segundos; 0,5 % de un núcleo y ~60 MB de coste; 183 de 183 segundos
 recuperados tras un corte de red— están todas medidas, no estimadas. **Lo único
 escrito y sin probar es el instalador de Windows** (O-D21).
 
-Lo que O1 y O2a **no** tocan, y por qué: el WebSocket de métricas del motor
-propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
+De O2c: los servidores observados se dan de alta desde la pantalla, con su
+credencial **cifrada y que no vuelve a salir** (O-D26), y la prueba de conexión
+**dice qué se puede leer** en vez de un «ok». Dos cosas que conviene tener
+presentes: **«Metricas Monitoreo» sigue en Análisis** y su nombre se presta a
+confusión con la sección nueva (reporte 103 §5), y **el punto de entrada HTTPS
+que el modo con agente necesitaría para un servidor de un cliente no existe**
+(reporte 103 §1) — el documento del cliente ya lo dice así.
+
+Lo que O1, O2a, O2b y O2c **no** tocan, y por qué: el WebSocket de métricas del
+motor propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
 `backend/app/services/engine/`, **carpeta protegida**, y la segunda añade una
 dependencia. Van con **O3**, con autorización expresa.
+
+### El `--build` del 22 de septiembre de 2026
+
+Un `docker compose up -d --build backend` que pedí yo recreó el contenedor y se
+llevó `/tmp/e2e`: cuarenta y tantas suites desde H1, los relevos de red y la
+herramienta de sesión. Se recuperaron del respaldo de
+`C:\proyectos\Kinetix_pruebas\e2e\` —**las 12 de la regresión, íntegras**— y
+ahora viven en **`backend/pruebas_e2e/`**, versionadas. De ahí sale la **regla
+36**: ninguna prueba vive solo dentro de un contenedor. Reporte **103** §0.
 
 ### El incidente del 18 de septiembre de 2026
 
@@ -335,8 +353,9 @@ CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
 
 ## HERRAMIENTAS DE VERIFICACIÓN
 
-Viven en `/tmp/e2e/` dentro de `jmeter_backend` (que es donde hay Python y
-Chromium; el host no tiene ninguno de los dos). Un relé TCP —`rele_5173.py`—
+**Viven en `backend/pruebas_e2e/`, versionadas** (regla 36), y se copian a
+`/tmp/e2e` dentro de `jmeter_backend` —que es donde hay Python y Chromium— con
+`sh /app/pruebas_e2e/sincronizar.sh`, que ademas levanta los relevos. Un relé TCP —`rele_5173.py`—
 hace que el frontend se vea como `http://localhost:5173` para que el origen pase
 el CORS.
 

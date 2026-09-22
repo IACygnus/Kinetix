@@ -32,12 +32,14 @@
   **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
   análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 - **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo),
-  **O2a** (el laboratorio y el monitoreo de infraestructura sin agente) y
-  **O2b** (el mismo monitoreo con agente instalado) implementadas, **las tres
-  pendientes de validación de Fredy**. Reportes 96-102. Queda **O3** (que el
-  motor propio publique en InfluxDB y el WebSocket llegue al navegador — toca
-  `services/engine/`, protegida). **El instalador de Windows del agente está
-  escrito y NO probado** (O-D21).
+  **O2a** (el laboratorio y el monitoreo sin agente), **O2b** (con agente) y
+  **O2c** (la sección «Observabilidad» del menú y la pantalla de **Servidores**)
+  implementadas, **las cuatro pendientes de validación de Fredy**. Reportes
+  96-104. Queda **O3** (que el motor propio publique en InfluxDB y el WebSocket
+  llegue al navegador — toca `services/engine/`, protegida). **El instalador de
+  Windows del agente está escrito y NO probado** (O-D21), y **el punto de
+  entrada HTTPS que el modo con agente necesitaría para un servidor de un
+  cliente no existe** (reporte 103 §1).
 
 ### 1.1 REMOTOS GIT
 
@@ -1542,3 +1544,65 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
 - **Diez segundos de media aplastan un pico de tres.** Un pico real del 96 % sale
   como un 26 % en el modo sin agente. Los dos son correctos; la diferencia es la
   resolución, y hay que decirlo antes de que alguien saque conclusiones.
+
+---
+
+## 16. OBSERVABILIDAD — LOS SERVIDORES OBSERVADOS (ETAPA O2c)
+
+**«Observabilidad» es una sección propia del menú** (O-D29), al mismo nivel que
+Análisis y Diseño: **Monitoreo en vivo** (que venía de Análisis) y
+**Servidores**. Las rutas cuelgan de `/observabilidad/...` y **las antiguas
+redirigen** (O-D31), para no romper un enlace guardado.
+
+> **«Metricas Monitoreo» se queda en Análisis** (O-D30): son las capturas de
+> infraestructura que analiza la IA para el informe, no monitoreo en vivo. **Su
+> nombre se presta a confusión** con la sección nueva; renombrarlo es una
+> decisión pendiente, anotada en el reporte 103 §5.
+
+### La tabla `observed_servers` (O-D23)
+
+| Columna | Qué guarda |
+|---|---|
+| `client_id` FK→`clients` | O-D27: un servidor es **siempre** de un cliente |
+| `name`, `tipo`, `modo` | `linux`/`windows`/`postgresql`/`otro` · `sin_agente`/`agente` |
+| `direccion`, `puerto`, `usuario` | Cómo se llega |
+| `credencial_cifrada` | **Fernet, y no vuelve a salir nunca** (O-D26) |
+| `activo`, `notas` | Los activos entran en la corrida del cliente |
+
+Único por `(client_id, name)`. La crea `create_all`: **sin SQL a mano**.
+
+### Los endpoints (`/observabilidad`)
+
+| Verbo | Path | Función |
+|---|---|---|
+| CRUD | `/observabilidad/servidores` | Alta, lista, detalle, edición y baja |
+| GET | `/observabilidad/servidores/de-corrida?client_id=` | O-D27: los activos de ese cliente |
+| POST | `/observabilidad/servidores/{id}/probar` | O-D24: si se llega, **qué se lee**, y el error real |
+| GET | `/observabilidad/servidores/{id}/configuracion` | O-D25: parámetros del recolector, u orden de instalación |
+| GET/PUT | `/observabilidad/token-lectura` | O-D33 (el PUT es de admin) |
+
+### Las cuatro cosas que no se pueden perder de vista
+
+1. **O-D26: la credencial no se lee.** El servidor sale por un solo camino,
+   `_a_lectura()`, construido **campo a campo**: con `from_attributes` sobre el
+   modelo, añadir una columna la publicaría sin que nadie lo decidiera. Al
+   editar, ausente = no se toca; **cadena vacía = se borra**, que es una
+   decisión explícita.
+2. **O-D28: Kinetix no ejecuta nada** en el servidor de nadie. Genera lo que hay
+   que poner; lo aplica una persona. No guarda credenciales de administrador.
+3. **`openssh-client` está en la imagen del backend** (O-D32) para que la prueba
+   valide la credencial de verdad. **Sin `-q` en el `ssh`**: esa opción silencia
+   `Permission denied (publickey)` y deja solo «código 255».
+4. **La columna `influxdb_read_token_encrypted` NO está en el modelo**, y es
+   deliberado. Se añade con `docs/sql/o2c_influxdb_read_token.sql` (regla 10) y
+   se lee/escribe con **SQL tolerante**: si se declarara en el modelo,
+   SQLAlchemy la pediría en cada consulta de `monitoring_config` y la pantalla
+   de monitoreo reventaría hasta aplicar el `ALTER` — lo mismo que pasó en la
+   Etapa 2 con `ai_config.reasoning_effort`.
+
+### El token de lectura (O-D33)
+
+Distinto del de escritura, que sigue siendo de escritura a propósito (O-D2).
+Comprobado: lee `infra` (200), **no** escribe en `infra` (403), **no** ve el
+cubo `jmeter` (404) y no lista tokens. Con él, la prueba dice **cuándo llegó la
+última métrica** de ese servidor (O-D34).

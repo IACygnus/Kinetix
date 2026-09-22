@@ -35,6 +35,8 @@ import {
   FolderKanban,
   ListChecks,
   Upload,
+  Radar,
+  Server,
   FileBarChart2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -132,17 +134,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <ClipboardList className="w-6 h-6" />,
         },
         {
+          // O-D30: se queda en Análisis, y con su nombre. Son las CAPTURAS de
+          // infraestructura que la IA analiza para el informe, no monitoreo en
+          // vivo. El nombre se presta a confusión con la sección nueva —está
+          // anotado en el reporte de O2c—, pero renombrarlo es otra decisión.
           label: 'Metricas Monitoreo',
           path: '/performance/monitoring',
           icon: <Monitor className="w-6 h-6" />,
-        },
-        {
-          // O1.6: la prueba mientras corre. Es otra cosa que «Metricas
-          // Monitoreo», que son capturas de infraestructura analizadas con IA.
-          label: 'Monitoreo en vivo',
-          path: '/monitoring/vivo',
-          icon: <Activity className="w-6 h-6" />,
-          roles: ['admin', 'analyst'],
         },
         {
           label: 'Evidencias',
@@ -158,6 +156,29 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           label: 'Historial Integrado',
           path: '/performance/integrated/history',
           icon: <ClipboardList className="w-6 h-6" />,
+        },
+      ],
+    },
+    {
+      // OBSERVABILIDAD (ETAPA O2c, O-D29). Sección propia, al mismo nivel que
+      // Análisis y Diseño: mirar la infraestructura mientras se prueba ya no es
+      // un apéndice del informe. Más adelante colgarán de aquí Tableros y
+      // Alertas.
+      label: 'Observabilidad',
+      icon: <Radar className="w-7 h-7" />,
+      children: [
+        {
+          // Venía de Análisis (O1.6). Es la prueba mientras corre.
+          label: 'Monitoreo en vivo',
+          path: '/observabilidad/vivo',
+          icon: <Activity className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
+          label: 'Servidores',
+          path: '/observabilidad/servidores',
+          icon: <Server className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
         },
       ],
     },
@@ -253,9 +274,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   // Auto-expand menu based on current route
   useEffect(() => {
-    // O1.6: «Monitoreo en vivo» cuelga de Análisis aunque su ruta sea
-    // /monitoring/vivo, así que abre ese menú y no el viejo de Grafana.
-    const performanceActive = location.pathname.startsWith('/performance')
+    // O2c (O-D29): «Monitoreo en vivo» se fue de Análisis a su propia sección,
+    // Observabilidad, y ahora cuelga de /observabilidad/... igual que
+    // Servidores. Análisis se queda con lo suyo, «Metricas Monitoreo»
+    // incluida (O-D30).
+    const performanceActive = location.pathname.startsWith('/performance');
+    const observabilidadActive = location.pathname.startsWith('/observabilidad')
+      // O-D31: las rutas antiguas siguen valiendo y redirigen. Mientras el
+      // navegador pasa por ellas, el menú correcto tiene que estar abierto.
       || location.pathname.startsWith('/monitoring/vivo');
     const monitoringActive = location.pathname.startsWith('/monitoring')
       && !location.pathname.startsWith('/monitoring/vivo');
@@ -266,6 +292,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     setExpandedMenus((prev) => ({
       ...prev,
       ...(performanceActive ? { 'Análisis': true } : {}),
+      ...(observabilidadActive ? { Observabilidad: true } : {}),
       ...(monitoringActive ? { Monitoreo: true } : {}),
       ...(adminActive ? { Administracion: true } : {}),
       ...(designActive ? { 'Diseño': true } : {}),

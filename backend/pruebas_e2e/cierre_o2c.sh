@@ -9,7 +9,7 @@ export KX_API_PUERTO=8002
 export KX_PWD=sqa2024
 export KX_PWD_ANA=zztest2026
 export KX_TOKEN_ESCRITURA="qYZd1tnpiAguyaDO1wLUDQvpo6kKY0l6a4axiHiR6lusa6p1nX01sNAz3YaGzHAkGnWABsJvenY61uLm0dHkiA=="
-export KX_CORRIDA=zztest-laboratorio-o2a-zztest-tienda-20260922-1333
+export KX_CORRIDA=zztest-o2c-20260922-173115
 export PGHOST=postgres
 export PGPASSWORD=jmeter_secure_2024
 
@@ -62,6 +62,7 @@ correr h74_pantallas               python3  /tmp/e2e/h7_pantallas_horas.py
 correr o16_monitoreo               python3  /tmp/e2e/o16_pantalla.py
 correr o2a4_tablero                python3  /tmp/e2e/probar_tablero.py
 correr o2c1_servidores             python3  /tmp/e2e/o2c1_backend.py
+correr o2c_pantalla                python3  /tmp/e2e/o2c_pantalla.py
 
 echo ""
 echo "=== LA BASE DE FREDY, DESPUES ==="

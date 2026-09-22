@@ -202,3 +202,66 @@ export interface ConfiguracionJMeter {
   url_tablero: string;
   aviso: string;
 }
+
+// ===========================================================================
+// OBSERVABILIDAD — los servidores observados (ETAPA O2c)
+// ===========================================================================
+
+export type TipoServidor = 'linux' | 'windows' | 'postgresql' | 'otro';
+export type ModoServidor = 'sin_agente' | 'agente';
+
+/**
+ * Lo que la API devuelve de un servidor.
+ *
+ * O-D26: **aquí no hay credencial, y no puede haberla.** Lo único que se sabe
+ * es si la tiene. Se escribe una vez y no vuelve a salir.
+ */
+export interface ServidorObservado {
+  id: string;
+  client_id: string;
+  cliente_nombre?: string | null;
+  name: string;
+  tipo: TipoServidor;
+  modo: ModoServidor;
+  direccion: string;
+  puerto: number;
+  usuario?: string | null;
+  activo: boolean;
+  notas?: string | null;
+  tiene_credencial: boolean;
+  creado_en?: string | null;
+  actualizado_en?: string | null;
+}
+
+export interface ComprobacionLectura {
+  que: string;
+  ok: boolean;
+  detalle: string;
+}
+
+/** O-D24: si se llega, qué se lee, y el error REAL cuando falla. */
+export interface ResultadoPrueba {
+  ok: boolean;
+  resumen: string;
+  error?: string | null;
+  lecturas: ComprobacionLectura[];
+  duracion_ms: number;
+}
+
+export interface ParametroConfiguracion {
+  nombre: string;
+  valor: string;
+  explicacion: string;
+  secreto: boolean;
+}
+
+/** O-D25: lo que hay que poner, según el modo del servidor. */
+export interface ConfiguracionServidor {
+  servidor: string;
+  modo: ModoServidor;
+  titulo: string;
+  explicacion: string;
+  parametros: ParametroConfiguracion[];
+  orden?: string | null;
+  aviso: string;
+}

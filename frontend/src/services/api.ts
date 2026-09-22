@@ -2,7 +2,7 @@
  * API Service - SQA Kinetix Pro
  */
 import axios from 'axios';
-import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult, ConfiguracionJMeter } from '../types';
+import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult, ConfiguracionJMeter, ServidorObservado, ResultadoPrueba, ConfiguracionServidor } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
@@ -974,6 +974,49 @@ export const executionAPI = {
   // Sprint 2.6a: libera el cache de listeners (al cerrar el drawer — Opción R).
   clearListenersCache: async (executionId: number) => {
     const r = await api.delete(`/performance-executions/${executionId}/listeners-state-cache`);
+    return r.data;
+  },
+};
+
+
+// ===========================================================================
+// OBSERVABILIDAD — los servidores observados (ETAPA O2c)
+// ===========================================================================
+//
+// O-D26: no hay ni un método que lea una credencial, porque no existe ese
+// endpoint. `crear` y `actualizar` la mandan; nada la devuelve.
+const RUTA = '/observabilidad/servidores';
+
+export const servidoresAPI = {
+  listar: async (clientId?: string): Promise<ServidorObservado[]> => {
+    const r = await api.get(RUTA,
+      clientId ? { params: { client_id: clientId } } : undefined);
+    return r.data;
+  },
+
+  crear: async (datos: Record<string, unknown>): Promise<ServidorObservado> => {
+    const r = await api.post(RUTA, datos);
+    return r.data;
+  },
+
+  actualizar: async (id: string, datos: Record<string, unknown>): Promise<ServidorObservado> => {
+    const r = await api.put(`${RUTA}/${id}`, datos);
+    return r.data;
+  },
+
+  borrar: async (id: string): Promise<void> => {
+    await api.delete(`${RUTA}/${id}`);
+  },
+
+  /** O-D24. Tarda lo que tarde la red: por eso el plazo es largo aquí. */
+  probar: async (id: string): Promise<ResultadoPrueba> => {
+    const r = await api.post(`${RUTA}/${id}/probar`, {}, { timeout: 90000 });
+    return r.data;
+  },
+
+  /** O-D25. */
+  configuracion: async (id: string): Promise<ConfiguracionServidor> => {
+    const r = await api.get(`${RUTA}/${id}/configuracion`);
     return r.data;
   },
 };

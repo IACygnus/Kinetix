@@ -120,15 +120,24 @@ def main():
         print("--- 1. La entrada del menú ---")
         page.goto(f"{WEB}/dashboard", wait_until="networkidle")
         page.wait_for_timeout(1200)
-        analisis = page.get_by_text("Análisis", exact=True)
-        if analisis.count():
-            analisis.first.click()
+        # ETAPA O2c (O-D29): la entrada se fue de «Análisis» a su propia
+        # sección, «Observabilidad». Esta suite comprobaba la ubicación vieja y
+        # fallaba con razón: el producto cambió, y el que estaba desfasado era
+        # el script. (Misma lección que cuando se acentuaron los títulos y hubo
+        # que actualizar `hf4_check.py`.)
+        seccion = page.get_by_text("Observabilidad", exact=True)
+        if seccion.count():
+            seccion.first.click()
             page.wait_for_timeout(700)
         enlace = page.get_by_role("link", name="Monitoreo en vivo")
-        ok(enlace.count() >= 1, "«Monitoreo en vivo» está en el menú")
+        ok(enlace.count() >= 1,
+           "«Monitoreo en vivo» está en el menú, bajo Observabilidad")
 
         # ---------- 2. Generar la configuración ----------
         print("\n--- 2. Elegir cliente y proyecto (O-D5) ---")
+        # La ruta vieja se deja A PROPOSITO: asi esta suite comprueba de paso la
+        # redireccion de O-D31, que es lo que protege a quien tenga el enlace
+        # guardado en un marcador.
         page.goto(f"{WEB}/monitoring/vivo", wait_until="networkidle")
         page.wait_for_selector("[data-testid='mon-cliente']", timeout=25000)
         ok(page.locator("[data-testid='mon-sin-corrida']").count() == 1,
