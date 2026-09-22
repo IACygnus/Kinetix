@@ -31,6 +31,12 @@
   `docs/ESPECIFICACION-horas.md` **v1.4**. H1, H2, H2b y H3 validadas por Fredy;
   **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
   análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
+- **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo) y
+  **O2a** (el laboratorio y el monitoreo de infraestructura sin agente)
+  implementadas, **las dos pendientes de validación de Fredy**. Reportes 96-100.
+  Queda **O2b** (el mismo monitoreo con agente instalado) y **O3** (que el motor
+  propio publique en InfluxDB y el WebSocket llegue al navegador — toca
+  `services/engine/`, protegida).
 
 ### 1.1 REMOTOS GIT
 
@@ -137,6 +143,36 @@ Network bridge: `jmeter_network`. Volúmenes nombrados: `postgres_data`,
 > Consecuencia: **solo un JMeter de esta misma máquina puede escribir** en
 > InfluxDB. Abrirlo a una inyectora de fuera es una decisión aparte, con su
 > regla de cortafuegos y su token.
+
+### El LABORATORIO de observabilidad (`docker-compose.lab.yml` — Etapa O2a)
+
+**Proyecto de Compose APARTE** (O-D8). No se fusiona con el de Kinetix, no
+redefine ninguno de sus servicios y no puede reiniciarlos por accidente:
+
+```
+bash scripts/lab_preparar.sh          # idempotente: llaves SSH, cubo `infra`, token
+docker compose -p kinetix_lab --env-file lab/lab.env -f docker-compose.lab.yml up -d --build
+```
+
+| Container | Imagen | Puerto host | Función |
+|---|---|---|---|
+| `lab_db` | postgres:15-alpine | — | El «servidor de base de datos». 1,5 M productos y `pg_stat_statements` |
+| `lab_servidor` | build `./lab/servidor` | **`127.0.0.1`**:8090 | El «servidor Linux»: SSH + una tienda cuya búsqueda tarda ~600 ms a propósito |
+| `lab_colector` | build `./lab/colector` | — | Telegraf 1.29, **sin agente**: SSH al Linux y conexión a PostgreSQL |
+
+Red propia `kinetix_lab`, más `kinetix_jmeter_network` **declarada externa** —se
+usa, no se toca— para que el JMeter de `jmeter_backend` alcance a `lab_servidor`
+y el recolector escriba en `influxdb:8086`. **A la red no se publica nada.**
+
+- `lab/lab.env` y `lab/llaves/` **no se versionan** (`lab/.gitignore`); los
+  genera `scripts/lab_preparar.sh`.
+- `scripts/lab_corrida.sh <corrida>` pone la etiqueta `corrida` en el recolector
+  con una señal **HUP**: sin reiniciar el contenedor (O-D14).
+- `scripts/lab_prueba_correlacion.sh` es el recorrido entero de O2a.3.
+- Cubo **`infra`** en InfluxDB, aparte de `jmeter`, con token de **solo
+  escritura** sobre él (O-D15). El tablero es `kinetix-infraestructura`.
+- Los permisos que se le piden a un cliente están en
+  **`docs/observabilidad/requisitos-sin-agente.md`**, redactado para enviárselo.
 
 ### Diferencias con producción (`docker-compose.prod.yml`)
 
@@ -1207,6 +1243,32 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     comprobando que el nombre de la base lleva `test`; si no, **se para sin
     borrar nada**.
 
+35. **Borrar en InfluxDB: tres condiciones, y las tres a la vez.** La regla 28
+    prohíbe borrar filas de Postgres a mano; InfluxDB no es una excepción
+    cómoda, es el mismo criterio escrito para otra base.
+
+    | Dónde | Qué se puede borrar |
+    |---|---|
+    | Un cubo de **laboratorio creado por la propia etapa** (`infra`) | Solo lo que la prueba marcó: `cliente=laboratorio` o una corrida `zztest-` |
+    | El cubo **`jmeter`** | **Solo** datos marcados `zztest-`. Nada más, nunca |
+    | Cualquier otro cubo | **Nada** |
+
+    Y antes de cada borrado, **la comprobación**, no la suposición: listar los
+    valores de las etiquetas que identifican al dueño (`cliente`, `corrida`,
+    `application`) y el punto más antiguo del cubo. Si aparece **un solo valor**
+    que no sea de la prueba, **se para y se le pregunta a Fredy** (regla 28).
+    Borrar por diferencia —«lo que no estaba antes es mío»— sigue prohibido
+    (regla 30): es el método que falló el 18 de septiembre.
+
+    **Cada borrado se escribe en el reporte de la etapa**: qué se borró, por qué
+    había que borrarlo, y la comprobación previa con su resultado. Un borrado sin
+    esas tres líneas es un borrado que no debió hacerse.
+
+    Ejemplos reales de los dos lados: el reporte 97 §3.2 borró la medida
+    `jmeter` entera para deshacer un conflicto de tipos, tras comprobar que el
+    cubo tenía cardinalidad 0 esa mañana y que todo llevaba `zztest-`; el 99 §7.5
+    borró dos medidas de `infra` tras comprobar `cliente=laboratorio` único.
+
 ---
 
 ## 14. DEPLOY A PRODUCCIÓN
@@ -1356,3 +1418,39 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
 - **El segundo backend de pruebas necesita `--reload` igual que el primero.** Sin
   él se queda con el código del arranque, y una suite nueva choca contra
   endpoints que «no existen» (404) aunque estén escritos.
+
+### Del laboratorio sin agente (Etapa O2a)
+
+- **`user: root` en un compose puede no significar nada.** El `entrypoint` de la
+  imagen oficial de Telegraf termina en `exec su-exec telegraf "$@"`: el proceso
+  baja de privilegios aunque el contenedor arranque como root. El síntoma era un
+  `exit status 1` sin explicación. Antes de pelearse con un «permission denied»,
+  mirar **quién corre el proceso de verdad**, no quién arranca el contenedor.
+- **Un volumen con nombre recuerda la propiedad del día que nació.** Un `chown`
+  puesto en el `Dockerfile` **no alcanza nunca** a un volumen que ya tiene
+  contenido. Si el estado no necesita sobrevivir al reinicio, no se le pone
+  volumen y el problema no existe.
+- **Una barra invertida al final de una etiqueta rompe la línea entera** en
+  protocolo de línea: se come la coma que la sigue. El montaje de Windows sale
+  en `df` como dispositivo `C:\`, y esa sola línea mala hacía que Telegraf
+  tirase el lote completo — **ni una** métrica de Linux, con el error escondido
+  detrás de un volcado que Telegraf corta por la primera línea.
+- **Un recolector sin agente fabrica zombis.** Cada conexión SSH deja un nieto
+  huérfano que el proceso 1 tiene que enterrar, y una aplicación normal no
+  entierra a nadie: 60 `sshd <defunct>` en unas horas, visibles en la propia
+  medida `processes`. `init: true` pone a `tini` de proceso 1. Es un coste real
+  del modo sin agente, no un detalle del laboratorio.
+- **Una etiqueta que viene de una columna pisa a la etiqueta global que se llame
+  igual.** La columna del tipo de bloqueo se llamaba `modo` y esas filas salían
+  con `modo=AccessShareLock` en vez de `modo=sin_agente`.
+- **`inputs.docker` convierte cada etiqueta de Docker en una etiqueta de la
+  métrica**: veinticinco por punto, incluidas las rutas absolutas del equipo. Es
+  cardinalidad inútil y es una fuga. `docker_label_exclude = ["*"]`.
+- **La paridad de nombres se comprueba, no se declara.** `/proc` no está
+  separado por contenedor, así que un Telegraf con los complementos nativos y el
+  lector por SSH miran la misma máquina y **se pueden comparar campo a campo**
+  (`lab/colector/comparar_con_nativo.py`). La primera pasada dejaba 87 campos
+  fuera; sin esa comprobación se habrían declarado como equivalentes.
+- **200.000 filas no bastan para que una consulta cueste.** PostgreSQL las
+  recorre en paralelo en 50 ms. Con 1.500.000 la misma búsqueda tarda medio
+  segundo y la prueba tiene algo que enseñar.

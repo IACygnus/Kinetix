@@ -57,15 +57,27 @@ de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 
 No hay Etapa H4: el plan saltó de H3 a H5.
 
-### Observabilidad — Etapa O1
+### Observabilidad — Etapas O1 y O2a
 
 | Etapa | Qué cubrió | Estado |
 |---|---|---|
 | O1.1 | **Diagnóstico de solo lectura**: la cadena InfluxDB → Grafana no había funcionado nunca. Reporte **96** | cerrada |
 | O1 | La fuente de datos arreglada, los puertos cerrados a la red, token de solo escritura, la corrida como filtro y la pantalla **Monitoreo en vivo** | implementada, **pendiente validación** |
+| O2a | El **laboratorio** (`docker-compose.lab.yml`) y el **monitoreo de infraestructura sin agente**: Linux por SSH, PostgreSQL por conexión, cubo `infra`, tablero propio y el documento de permisos para el cliente. Reportes **99** y **100** | implementada, **pendiente validación** |
 
-Lo que O1 **no** toca, y por qué: el WebSocket de métricas del motor propio
-(O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
+Las dos aceptaciones que O1 dejó colgando del reinicio de Fredy **pasan**: la
+fuente de datos responde `OK` y el 8086 y el 3000 ya no contestan por la IP de
+la red. Sigue sin probarse **desde otra máquina**.
+
+De O2a, lo que hay que tener presente: las métricas sin agente se escriben con
+**los mismos nombres de campo que usaría un agente** —comprobado campo a campo,
+cero campos que tenga el nativo y no tengamos nosotros— para que **O2b** pueda
+cambiar de modo sin rehacer tableros ni alertas. Y en el laboratorio `cpu`,
+`mem` y `disk` son del anfitrión, no del contenedor, porque `/proc` no está
+separado; en un servidor de verdad no hay esa ambigüedad (reporte 99 §2.3).
+
+Lo que O1 y O2a **no** tocan, y por qué: el WebSocket de métricas del motor
+propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
 `backend/app/services/engine/`, **carpeta protegida**, y la segunda añade una
 dependencia. Van con **O3**, con autorización expresa.
 
@@ -331,6 +343,15 @@ el CORS.
 | `hf4_check.py` | que el bloque retirado no vuelva por ninguna salida |
 | `panel_seleccion.py` · `e5_verdictos.py` | el panel de selección (Etapa 5) |
 | `capas_tooltip.py` · `export_alcance.py` · `dialogo_export.py` · `capas_exportadas.py` · `capas_html_render.py` | la Etapa 6 |
+| `o16_pantalla.py` | Monitoreo en vivo de punta a punta (O1.6) |
+| `o2a3_config.py` · `o2a3_correlacion.py` | la prueba de correlación de O2a.3 (las lanza `scripts/lab_prueba_correlacion.sh`, desde el anfitrión) |
+| `probar_tablero.py` | que los 13 paneles del tablero de infraestructura **devuelvan datos**, no que «deberían» |
+| `cierre_o2a.sh` | la regresión completa en serie: 13 suites, 504 comprobaciones |
+
+Y dos que **no** viven ahí, porque corren dentro del laboratorio:
+`lab/colector/comparar_con_nativo.py` (la paridad con el complemento nativo) y
+`scripts/lab_prueba_correlacion.sh` (el recorrido de O2a.3, que necesita `docker`
+y por eso se lanza desde el anfitrión).
 
 Ninguno llama a la IA: todos trabajan sobre informes ya generados.
 

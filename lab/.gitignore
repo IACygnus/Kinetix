@@ -1,0 +1,4 @@
+# Las llaves y las contrasenas del laboratorio NO se versionan.
+# Se regeneran con `bash scripts/lab_preparar.sh`, que es idempotente.
+llaves/
+lab.env

@@ -1,0 +1,165 @@
+# ===========================================================================
+# LABORATORIO DE OBSERVABILIDAD - ETAPA O2a (O-D8)
+# ===========================================================================
+#
+# Un compose APARTE. No se fusiona con el de Kinetix, no redefine ninguno de sus
+# servicios y no puede reiniciarlos por accidente. Se levanta con su propio
+# nombre de proyecto:
+#
+#   docker compose -p kinetix_lab --env-file lab/lab.env -f docker-compose.lab.yml up -d --build
+#
+# Dos servidores de mentira -uno Linux con una aplicacion, otro PostgreSQL- y un
+# recolector que los mira SIN instalarles nada.
+#
+# Redes:
+#   kinetix_lab            la del laboratorio; aqui viven los tres
+#   kinetix_jmeter_network la de Kinetix, EXTERNA: no la crea ni la modifica.
+#                          La necesitan dos:
+#                            - lab_servidor, para que el JMeter que vive en
+#                              jmeter_backend pueda pegarle (es el inyector)
+#                            - lab_colector, para escribir en influxdb:8086
+#
+# Publicado a la red: NADA. Lo unico que sale al equipo es el 8090, y solo en
+# 127.0.0.1, para poder mirar la aplicacion a mano.
+
+services:
+
+  # =========================================================================
+  # lab_db - el "servidor de base de datos" (O-D9)
+  # =========================================================================
+  lab_db:
+    image: postgres:15-alpine
+    container_name: lab_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LAB_PG_USER:-tienda}
+      POSTGRES_PASSWORD: ${LAB_PG_PASSWORD:?falta LAB_PG_PASSWORD en lab/lab.env}
+      POSTGRES_DB: ${LAB_PG_DB:-tienda}
+      LAB_PG_LECTOR_PASSWORD: ${LAB_PG_LECTOR_PASSWORD:?falta LAB_PG_LECTOR_PASSWORD en lab/lab.env}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # pg_stat_statements es lo que convierte "va lento" en "esta consulta va
+    # lenta". Hay que cargarla al arrancar: no se puede activar en caliente.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.max=5000
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+    volumes:
+      - lab_db_data:/var/lib/postgresql/data
+      - ./lab/db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LAB_PG_USER:-tienda} -d ${LAB_PG_DB:-tienda}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # =========================================================================
+  # lab_servidor - el "servidor Linux" con la aplicacion (O-D9)
+  # =========================================================================
+  lab_servidor:
+    build:
+      context: ./lab/servidor
+      dockerfile: Dockerfile
+    container_name: lab_servidor
+    hostname: lab_servidor
+    restart: unless-stopped
+    # Un recolector sin agente abre una conexion SSH cada diez segundos, y sshd
+    # deja nietos huerfanos que el proceso 1 tiene que enterrar. La tienda es
+    # Python y no entierra a nadie: en media hora habia nueve `sshd <defunct>`,
+    # visibles en la propia medida `processes`. `init` pone a tini de proceso 1,
+    # que es justo para eso.
+    init: true
+    environment:
+      LAB_APP_PUERTO: "8080"
+      LAB_APP_DSN: "host=lab_db port=5432 dbname=${LAB_PG_DB:-tienda} user=${LAB_PG_USER:-tienda} password=${LAB_PG_PASSWORD}"
+    volumes:
+      # Solo la llave PUBLICA. La privada no entra en este contenedor.
+      - ./lab/llaves/kinetix_lector.pub:/llaves/kinetix_lector.pub:ro
+    ports:
+      # Para mirar la aplicacion a mano. Solo desde el equipo.
+      - "127.0.0.1:8090:8080"
+    networks:
+      - lab
+      - kinetix
+    depends_on:
+      lab_db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/salud || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # =========================================================================
+  # lab_colector - Telegraf sin agente (O-D10 a O-D16)
+  # =========================================================================
+  lab_colector:
+    build:
+      context: ./lab/colector
+      dockerfile: Dockerfile
+    container_name: lab_colector
+    restart: unless-stopped
+    # Sin `user:`. Y no es un olvido: el `entrypoint` de la imagen oficial hace
+    # `exec su-exec telegraf`, asi que Telegraf corre como el usuario
+    # `telegraf` pase lo que pase. Poner `user: root` aqui enganaba —el
+    # contenedor arrancaba como root y el proceso bajaba igual—, y costo hora y
+    # media de «permission denied». Los dos permisos que hacen falta se
+    # resuelven en el Dockerfile, sobre ese usuario.
+    environment:
+      KX_CLIENTE: ${LAB_CLIENTE:-laboratorio}
+      KX_OBJETIVOS: lab_servidor
+      KX_SSH_USUARIO: kinetix_lector
+      KX_SSH_LLAVE: /llaves/kinetix_lector
+      KX_ESTADO: /var/lib/kinetix
+      KX_INFLUX_URL: http://influxdb:8086
+      KX_INFLUX_ORG: ${INFLUXDB_ORG:-performance}
+      KX_INFLUX_BUCKET: ${LAB_INFLUX_BUCKET:-infra}
+      KX_INFLUX_TOKEN: ${LAB_INFLUX_TOKEN:?falta LAB_INFLUX_TOKEN en lab/lab.env}
+      KX_PG_DSN: "postgres://kinetix_lector:${LAB_PG_LECTOR_PASSWORD}@lab_db:5432/${LAB_PG_DB:-tienda}?sslmode=disable"
+    volumes:
+      - ./lab/colector/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - ./lab/colector/telegraf.d:/etc/telegraf/telegraf.d
+      # El lector va montado, no horneado: asi corregirlo cuesta una senal HUP
+      # y no una reconstruccion de imagen. La copia del Dockerfile se queda
+      # como respaldo, para que la imagen funcione sola si alguien la mueve.
+      - ./lab/colector/linux_sin_agente.py:/opt/kinetix/linux_sin_agente.py:ro
+      # La llave PRIVADA del lector, de solo lectura y solo aqui.
+      - ./lab/llaves/kinetix_lector:/llaves/kinetix_lector:ro
+      # O-D16: el socket de Docker. Es la maquina entera; leelo en
+      # docs/observabilidad/requisitos-sin-agente.md antes de pedirselo a nadie.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Sin volumen con nombre para el estado, y a proposito: un volumen
+      # recuerda la propiedad que tenia el dia que nacio, asi que el `chown`
+      # del Dockerfile no lo alcanza nunca. El estado es la lectura anterior de
+      # la CPU; perderla al reiniciar cuesta un intervalo y nada mas.
+    command:
+      - telegraf
+      - --config
+      - /etc/telegraf/telegraf.conf
+      - --config-directory
+      - /etc/telegraf/telegraf.d
+    networks:
+      - lab
+      - kinetix
+    depends_on:
+      lab_servidor:
+        condition: service_healthy
+
+networks:
+  lab:
+    name: kinetix_lab
+    driver: bridge
+  kinetix:
+    name: kinetix_jmeter_network
+    external: true
+
+volumes:
+  lab_db_data:

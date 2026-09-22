@@ -1,0 +1,8 @@
+# `core.autocrlf=true` convierte a CRLF al sacar los archivos en Windows, y eso
+# ROMPE lo que va dentro de un contenedor: un `#!/bin/sh` con retorno de carro
+# hace que Linux responda «bad interpreter». Estos archivos se guardan y se
+# sacan siempre con LF.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.conf          text eol=lf
+lab/db/init/*   text eol=lf
