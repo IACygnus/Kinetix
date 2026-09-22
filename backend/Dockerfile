@@ -94,6 +94,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-spa \
     openjdk-21-jre-headless \
     libfreetype6 \
+    # ETAPA O2c (O-D32). Sin un cliente de SSH, la prueba de conexion de un
+    # servidor Linux solo podia decir «el puerto 22 responde y habla SSH»:
+    # nunca si la credencial sirve. Con esto distingue los tres casos que
+    # importan —credencial correcta, credencial rechazada, no se llega— y
+    # devuelve el error real en cada uno.
+    #
+    # Es un paquete del sistema, no una dependencia de Python: no toca
+    # `requirements.txt` ni el entorno de la aplicacion.
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Sprint 2.5a — copiar JMeter completo desde el stage anterior

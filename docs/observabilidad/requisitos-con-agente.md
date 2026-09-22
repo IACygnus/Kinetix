@@ -1,7 +1,12 @@
 # Monitoreo con agente — qué instalamos en sus servidores
 
 **SQA Kinetix Pro · Documento para el área de infraestructura del cliente**
-Versión 1.0 · 22 de septiembre de 2026
+Versión 1.1 · 22 de septiembre de 2026
+
+> **Qué cambió en la 1.1.** La versión 1.0 decía que el agente sale hacia
+> InfluxDB por el 8086. **Era incorrecto para un servidor suyo**: ese puerto está
+> cerrado a propósito y no se va a abrir. La sección 6 explica ahora la
+> situación real, y dice con todas las letras qué falta por construir.
 
 > Este documento es el hermano de `requisitos-sin-agente.md`. **Si aún no han
 > decidido entre los dos modos, lean primero aquel**: no instala nada y para
@@ -52,7 +57,7 @@ las mismas conclusiones y no hay que instalar nada.
 | Servicio | `kinetix-agente` (Linux, systemd) · `KinetixAgente` (Windows) |
 | Usuario | `kinetix_agente` — **sin shell, sin contraseña, sin `sudo`, sin ningún grupo** |
 | Frecuencia | una lectura por segundo; se envía agrupado cada cinco |
-| Destino | únicamente la dirección de InfluxDB que ustedes autoricen |
+| Destino | únicamente la dirección que se acuerde con ustedes. **Lean §6 antes de planificar con esto** |
 
 Y en **estas rutas, y nada más**:
 
@@ -180,22 +185,61 @@ prueba concreta. Nada más.
 
 ---
 
-## 6. La red
+## 6. La red — y una limitación que hay que leer antes de decidir
+
+**Hoy el modo con agente solo funciona cuando el servidor observado y la
+plataforma Kinetix están en la misma red.**
+
+No es un detalle de configuración: es el estado real del producto, y conviene
+decirlo antes de que nadie planifique con él.
+
+### 6.1 Por qué
+
+La base de métricas de Kinetix (InfluxDB) **no está publicada a ninguna red**.
+Escucha solo en la propia máquina, y eso es deliberado: antes respondía desde la
+red local y cualquiera que alcanzara el equipo veía los tableros. Se cerró a
+propósito y **no se va a reabrir** para que un agente escriba en ella.
+
+Lo que hace falta para que un agente en casa de ustedes pueda enviar sus cifras
+es un **punto de entrada HTTPS propio** —en `kinetix.sqasa.co`, por el 443, con
+su certificado— que reciba las escrituras y las pase a la base por dentro.
+
+**Ese componente todavía no está construido.** Lo decimos así, en presente, en
+vez de describir una arquitectura que aún no existe.
+
+### 6.2 Qué significa eso en la práctica
+
+| Su caso | ¿Sirve el modo con agente hoy? |
+|---|---|
+| El servidor a medir está en la misma red que Kinetix (un laboratorio nuestro, una prueba en sus instalaciones con Kinetix desplegado dentro) | **Sí.** Es lo que está probado y medido en este documento |
+| El servidor está en su infraestructura y Kinetix en la nuestra | **Todavía no.** Falta el punto de entrada de §6.1 |
+
+Para el segundo caso, el modo que sirve **hoy** es el de sin agente
+(`requisitos-sin-agente.md`): ahí las conexiones las abre nuestro recolector
+hacia sus servidores, y la base de métricas nunca tiene que estar expuesta.
+
+### 6.3 Cuando el punto de entrada exista
+
+Será así, y lo escribimos para que puedan ir preparando la solicitud de cambio
+—pero **no está hecho**, y hasta que lo esté no cuenta como un compromiso—:
 
 | Origen | Destino | Puerto | Dirección |
 |---|---|---|---|
-| El servidor con el agente | La plataforma Kinetix (InfluxDB) | 8086/TCP (o el que se acuerde) | **Saliente desde su servidor** |
+| El servidor con el agente | `kinetix.sqasa.co` | **443/TCP (HTTPS)** | **Saliente desde su servidor** |
 
-**No hay que abrir ningún puerto entrante en su servidor.** Es al revés que el
-modo sin agente: allí somos nosotros los que entramos por SSH; aquí es el
-agente el que sale. Para muchas áreas de seguridad esto es más fácil de
-autorizar, y es una razón legítima para preferir el agente.
+Con una ventaja real frente al modo sin agente, y es la razón por la que
+merece la pena construirlo: **no habría que abrir ningún puerto entrante en su
+servidor**. Allí somos nosotros los que entramos por SSH; aquí sería su servidor
+el que sale, por el mismo 443 que ya tienen abierto para todo lo demás. Para
+muchas áreas de seguridad eso es mucho más fácil de autorizar.
 
-La credencial que lleva el agente es un token que **solo puede escribir**, y
-solo en el depósito de esta plataforma. No puede leer nada, ni siquiera lo que
-él mismo escribió.
+### 6.4 La credencial
 
-### 6.1 Si se cae la red
+En los dos casos, la credencial que lleva el agente es un token que **solo puede
+escribir**, y solo en el depósito de esta plataforma. No puede leer nada, ni
+siquiera lo que él mismo escribió.
+
+### 6.5 Si se cae la red
 
 Lo medimos: **cortamos la red del servidor durante tres minutos mientras
 trabajaba, y al volver no se perdió ni un segundo de datos** — 183 de 183.
@@ -216,7 +260,7 @@ díganlo y la evaluamos.
 
 ```bash
 sudo bash instalar_agente.sh \
-     --url https://kinetix.ejemplo/influx --token-fichero /ruta/token.txt \
+     --url <la direccion acordada, lean §6> --token-fichero /ruta/token.txt \
      --org performance --cubo infra --cliente "SU EMPRESA"
 ```
 
@@ -251,19 +295,26 @@ Pueden ejecutarlo ustedes en cualquier momento, sin avisarnos.
 
 | | Sin agente | Con agente |
 |---|---|---|
+| **¿Sirve hoy para un servidor suyo, con Kinetix en nuestra infraestructura?** | **Sí** | **Todavía no** — falta el punto de entrada de §6.1 |
 | ¿Instala algo? | **No** | Sí, un servicio |
 | Frecuencia | cada 10 s | **cada 1 s** |
 | Ve picos cortos | no | **sí** |
-| Dirección de la conexión | nosotros entramos (SSH 22) | **su servidor sale** (8086) |
+| Dirección de la conexión | nosotros entramos (SSH 22) | su servidor saldría (HTTPS 443) |
 | Puerto entrante a abrir | sí, el 22 | **ninguno** |
 | Usuario en su servidor | uno de solo lectura, con llave | uno de servicio, sin privilegios |
 | Coste en el servidor | ninguno | 0,5 % de un núcleo, ~60 MB |
 | Si se cae la red | se pierde ese rato | **se recupera al volver** |
 | Retirarlo | borrar una línea de `authorized_keys` | una orden, y se comprueba |
 
+La primera fila es la que manda hoy. Todo lo demás de la columna del agente está
+probado y medido, pero **probado en una red compartida**: para un servidor suyo
+con Kinetix en nuestra infraestructura, hasta que exista el punto de entrada de
+§6.1, el modo que se puede desplegar es el de sin agente.
+
 **Las métricas se llaman igual en los dos modos.** Eso no es casualidad: está
 comprobado campo a campo, y significa que pueden empezar sin agente y cambiar
-después —o al revés— sin rehacer un solo tablero ni una sola alerta.
+después —o al revés— sin rehacer un solo tablero ni una sola alerta. Cuando el
+punto de entrada esté, cambiar de modo no costará rehacer nada.
 
 ---
 
@@ -274,8 +325,11 @@ después —o al revés— sin rehacer un solo tablero ni una sola alerta.
   errores de sintaxis, y no se ha ejecutado nunca contra un Windows real. **No
   lo instalen en un servidor suyo hasta que lo probemos**, y cuando lo hagamos
   lo diremos aquí.
+- **El punto de entrada HTTPS para servidores fuera de nuestra red NO existe**
+  (§6.1). Mientras no exista, el modo con agente solo sirve cuando el servidor
+  y Kinetix comparten red. Es la limitación mas importante de este documento.
 - **Cortes de red de más de tres minutos**: el mecanismo está probado, la
-  duración máxima es un cálculo (§6.1).
+  duración máxima es un cálculo (§6.5).
 - **Arquitecturas que no sean x86-64.** ARM existe en Telegraf; no lo hemos
   probado.
 - **Otros sistemas operativos** (AIX, Solaris, BSD).

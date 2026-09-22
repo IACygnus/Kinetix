@@ -1297,6 +1297,38 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     cubo tenía cardinalidad 0 esa mañana y que todo llevaba `zztest-`; el 99 §7.5
     borró dos medidas de `infra` tras comprobar `cliente=laboratorio` único.
 
+36. **Ninguna prueba vive solo dentro de un contenedor.** Todo script de prueba
+    se versiona en **`backend/pruebas_e2e/`**, que se monta en `/app` y
+    sobrevive a cualquier reconstrucción. **`/tmp` es borrador** y se pierde
+    entero en cada `--build`.
+
+    El 22 de septiembre de 2026 un `docker compose up -d --build backend` se
+    llevó `/tmp/e2e` con las cuarenta y tantas suites acumuladas desde H1, los
+    relevos de red y la herramienta de sesión. Se recuperaron del respaldo de
+    `C:\proyectos\Kinetix_pruebas\e2e\` —el mismo del que ya se repuso en H3,
+    reporte 81—, pero eso fue **suerte, no diseño**: el respaldo era de dos días
+    antes y no cubría lo de O2a ni O2b.
+
+    De ahí, tres obligaciones:
+
+    - **Antes de cualquier `--build` del backend**, comparar `/tmp/e2e` con
+      `backend/pruebas_e2e/` y copiar lo que solo esté del lado del contenedor.
+      Después ya no se puede: el contenedor viejo se borra.
+    - **Lo que se instala a mano en el contenedor se anota**, aunque no vaya en
+      `requirements.txt`. Playwright y sus navegadores no estaban en ningún
+      sitio y se perdieron igual; ahora están en
+      `backend/pruebas_e2e/LEEME.md`.
+    - **Nada que las suites necesiten puede ser un proceso de fondo que nadie
+      levante.** Los relevos `rele_5173.py` y `rele_3000.py` lo eran, y su
+      ausencia salía como `ERR_CONNECTION_REFUSED`, que parece un fallo de
+      pantalla. Los levanta `sincronizar.sh` con las suites.
+
+    La regresión se corre así, y el corredor se encarga de todo:
+
+    ```
+    docker exec jmeter_backend sh /app/pruebas_e2e/cierre_o2c.sh
+    ```
+
 ---
 
 ## 14. DEPLOY A PRODUCCIÓN

@@ -32,6 +32,9 @@ from app.db.models.time_tracking import (   # noqa: F401
     Activity, Holiday, Project, ProjectActivity, ProjectActivityChange,
     TimeEntry, WorkCalendar,
 )
+# OBSERVABILIDAD (ETAPA O2c). Mismo motivo que arriba: sin el import,
+# `create_all` no ve la tabla. Es nueva y no altera ninguna existente.
+from app.db.models.observed_server import ObservedServer   # noqa: F401
 from app.core.security import get_password_hash
 
 # Configurar logging

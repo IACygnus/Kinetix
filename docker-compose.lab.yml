@@ -52,13 +52,19 @@ services:
     volumes:
       - lab_db_data:/var/lib/postgresql/data
       - ./lab/db/init:/docker-entrypoint-initdb.d:ro
-    networks:
-      - lab
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${LAB_PG_USER:-tienda} -d ${LAB_PG_DB:-tienda}"]
       interval: 10s
       timeout: 5s
       retries: 30
+    networks:
+      - lab
+      # ETAPA O2c: Kinetix tiene que poder ALCANZAR lo que observa, para probar
+      # la conexion desde la pantalla de servidores. En un cliente pasaria
+      # igual: el recolector y el backend necesitan ruta hasta la base. No se
+      # publica nada a la red del equipo; sigue siendo trafico entre
+      # contenedores.
+      - kinetix
 
   # =========================================================================
   # lab_servidor - el "servidor Linux" con la aplicacion (O-D9)
