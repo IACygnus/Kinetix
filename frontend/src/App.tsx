@@ -29,6 +29,11 @@ import MonitoringPage from './pages/MonitoringPage';
 import MonitoreoVivoPage from './pages/MonitoreoVivoPage';
 // ETAPA O2c (O-D24): la pantalla de servidores observados.
 import ServidoresPage from './pages/ServidoresPage';
+// ETAPA O2d: las sesiones de monitoreo — el listado, el asistente y la pantalla
+// donde por fin se ven las gráficas dentro de Kinetix.
+import SesionesPage from './pages/SesionesPage';
+import SesionNuevaPage from './pages/SesionNuevaPage';
+import SesionPage from './pages/SesionPage';
 import EvidencePage from './pages/EvidencePage';
 import IntegratedReportPage from './pages/IntegratedReportPage';
 // MODULO DE HORAS (ETAPA H1, H-D9): todo cuelga de /horas.
@@ -110,6 +115,32 @@ function App() {
               element={
                 <ProtectedRoute roles={['admin', 'analyst']}>
                   <ServidoresPage />
+                </ProtectedRoute>
+              }
+            />
+            {/* ETAPA O2d: las sesiones. «nueva» va ANTES que «:sesionId», o la
+                ruta con parámetro se la comería. */}
+            <Route
+              path="/observabilidad/sesiones"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <SesionesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/observabilidad/sesiones/nueva"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <SesionNuevaPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/observabilidad/sesiones/:sesionId"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <SesionPage />
                 </ProtectedRoute>
               }
             />

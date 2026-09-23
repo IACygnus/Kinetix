@@ -83,7 +83,15 @@ fi
 [ -n "$LAB_INFLUX_TOKEN" ] || { echo "   no se pudo obtener el token"; exit 1; }
 
 # ---------------------------------------------------------------------------
-echo "== 3. lab/lab.env"
+echo "== 3. Token de SOLO LECTURA para las graficas de Kinetix (O-D33)"
+#
+# Lee los DOS cubos: `infra` para las metricas de los servidores y `jmeter`
+# para las de la prueba. La pantalla de sesiones (O2d) las pinta en el mismo
+# eje de tiempo, y con un token que solo leyera `infra` la mitad de arriba
+# saldria vacia con un 404.
+#
+# No escribe en ninguno: para eso estan los de escritura, que siguen siendo
+# otros y siguen siendo de solo escritura.
 if [ -f "$ENTORNO" ]; then
     echo "   ya existe; solo se actualiza el token"
     # shellcheck disable=SC1090
@@ -100,6 +108,25 @@ fi
 # no se crea ninguno nuevo.
 TOKEN_JMETER="$(influx_en_contenedor auth list 2>/dev/null \
     | awk '$2 == "kinetix-jmeter-escritura" { print $3; exit }' || true)"
+CUBO_JMETER="$(influx_en_contenedor bucket list --name jmeter 2>/dev/null \
+    | awk 'NR==2 {print $1}')"
+TOKEN_LECTURA="$(influx_en_contenedor auth list 2>/dev/null \
+    | awk '$2 == "kinetix-lectura" { print $3; exit }' || true)"
+if [ -n "${TOKEN_LECTURA:-}" ]; then
+    echo "   el token 'kinetix-lectura' ya existia; se reutiliza"
+else
+    TOKEN_LECTURA="$(influx_en_contenedor auth create \
+        --org "$INFLUX_ORG" \
+        --read-bucket "$CUBO_ID" \
+        --read-bucket "$CUBO_JMETER" \
+        --description "kinetix-lectura" \
+        --json | tr -d ' \n' | sed 's/.*"token":"\([^"]*\)".*/\1/')"
+    echo "   token creado: solo lectura, cubos 'infra' y 'jmeter'"
+fi
+[ -n "$TOKEN_LECTURA" ] || { echo "   no se pudo obtener el token de lectura"; exit 1; }
+
+# ---------------------------------------------------------------------------
+echo "== 4. lab/lab.env"
 
 cat > "$ENTORNO" <<ENV
 # Laboratorio de observabilidad - ETAPA O2a.
@@ -114,6 +141,8 @@ LAB_INFLUX_TOKEN=$LAB_INFLUX_TOKEN
 INFLUXDB_ORG=$INFLUX_ORG
 # El de O-D2, solo para la prueba de correlacion de O2a.3.
 KX_TOKEN_ESCRITURA=$TOKEN_JMETER
+# El de solo lectura, el que dibuja las graficas de la pantalla de sesiones.
+KX_TOKEN_LECTURA=$TOKEN_LECTURA
 ENV
 chmod 600 "$ENTORNO" 2>/dev/null || true
 echo "   escrito: $ENTORNO"

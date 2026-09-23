@@ -66,6 +66,7 @@ No hay Etapa H4: el plan saltó de H3 a H5.
 | O2a | El **laboratorio** (`docker-compose.lab.yml`) y el **monitoreo de infraestructura sin agente**: Linux por SSH, PostgreSQL por conexión, cubo `infra`, tablero propio y el documento de permisos para el cliente. Reportes **99** y **100** | implementada, **pendiente validación** |
 | O2b | El **agente**: Telegraf dentro del servidor, **una lectura por segundo** en vez de una cada diez, con instalador y desinstalador de systemd, y el mismo esquema. Reportes **101** y **102** | implementada, **pendiente validación** |
 | O2c | **«Observabilidad» como sección propia del menú** y la pantalla de **Servidores**: alta, prueba de conexión que dice *qué se puede leer* y el error real cuando falla, y generador de configuración. Reportes **103** y **104** | implementada, **pendiente validación** |
+| O2d | **Las sesiones de monitoreo**: se guardan y se recuperan, Kinetix le pone el Backend Listener a tu `.jmx`, y **las gráficas de la prueba y de los servidores se ven dentro de Kinetix**, con el mismo eje de tiempo. Reportes **105** y **106** | implementada, **pendiente validación** |
 
 Las dos aceptaciones que O1 dejó colgando del reinicio de Fredy **pasan**: la
 fuente de datos responde `OK` y el 8086 y el 3000 ya no contestan por la IP de
@@ -93,10 +94,31 @@ confusión con la sección nueva (reporte 103 §5), y **el punto de entrada HTTP
 que el modo con agente necesitaría para un servidor de un cliente no existe**
 (reporte 103 §1) — el documento del cliente ya lo dice así.
 
-Lo que O1, O2a, O2b y O2c **no** tocan, y por qué: el WebSocket de métricas del
-motor propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen en
-`backend/app/services/engine/`, **carpeta protegida**, y la segunda añade una
+De O2d, lo que abrió la etapa y lo que la cierra. Fredy revisó la pantalla de
+Monitoreo en vivo y **no entendió qué hacía**: tenía razón. El diagnóstico lo
+confirmó con números —en su instancia había **0 servidores** dados de alta y
+**ningún token de lectura**—, así que Kinetix no podía enseñarle nada de sus
+servidores. O1 a O2c construyeron la tubería y nadie construyó el grifo.
+
+Ahora una **sesión de monitoreo** se guarda y se recupera, Kinetix le pone el
+Backend Listener al `.jmx` —antes había que copiar diez parámetros a mano— y las
+gráficas se ven **dentro** de Kinetix: la prueba arriba, los servidores abajo,
+mismo eje de tiempo. Medido: la CPU pasa de **5 % a 94,6 %** y las conexiones a
+la base de **0 a 21**.
+
+La corrección que decidió la etapa: **las métricas de infraestructura se cruzan
+por servidor y ventana de tiempo, no por la etiqueta `corrida`** — esa etiqueta
+la pone el recolector y exige reconfigurarlo antes de cada prueba, cosa que
+nadie hace desde una pantalla. **El tablero de Grafana sigue filtrando por
+`corrida`** y por tanto sigue necesitando ese paso manual (reporte 105 §4.1).
+
+Lo que O1, O2a, O2b, O2c y O2d **no** tocan, y por qué: el WebSocket de métricas
+del motor propio (O-D7) y que el motor publique en InfluxDB. Las dos cosas caen
+en `backend/app/services/engine/`, **carpeta protegida**, y la segunda añade una
 dependencia. Van con **O3**, con autorización expresa.
+
+Y lo que sigue faltando para poder vender el modo con agente a un cliente: el
+**punto de entrada HTTPS** en `kinetix.sqasa.co`, que es la etapa **O2e**.
 
 ### El `--build` del 22 de septiembre de 2026
 

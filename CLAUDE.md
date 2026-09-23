@@ -33,9 +33,10 @@
   análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 - **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo),
   **O2a** (el laboratorio y el monitoreo sin agente), **O2b** (con agente) y
-  **O2c** (la sección «Observabilidad» del menú y la pantalla de **Servidores**)
-  implementadas, **las cuatro pendientes de validación de Fredy**. Reportes
-  96-104. Queda **O3** (que el motor propio publique en InfluxDB y el WebSocket
+  **O2c** (la sección «Observabilidad» y la pantalla de **Servidores**) y **O2d**
+  (las **sesiones de monitoreo**: las gráficas de la prueba y de los servidores
+  dentro de Kinetix) implementadas, **las cinco pendientes de validación de
+  Fredy**. Reportes 96-106. Queda **O3** (que el motor propio publique en InfluxDB y el WebSocket
   llegue al navegador — toca `services/engine/`, protegida). **El instalador de
   Windows del agente está escrito y NO probado** (O-D21), y **el punto de
   entrada HTTPS que el modo con agente necesitaría para un servidor de un
@@ -1606,3 +1607,78 @@ Distinto del de escritura, que sigue siendo de escritura a propósito (O-D2).
 Comprobado: lee `infra` (200), **no** escribe en `infra` (403), **no** ve el
 cubo `jmeter` (404) y no lista tokens. Con él, la prueba dice **cuándo llegó la
 última métrica** de ese servidor (O-D34).
+
+---
+
+## 17. OBSERVABILIDAD — LAS SESIONES DE MONITOREO (ETAPA O2d)
+
+**Es la pantalla donde por fin se ve el resultado.** O1 a O2c construyeron la
+tubería —el recolector, el agente, el cubo `infra`, los servidores— y todo eso
+solo se veía en Grafana. O2d lo trae dentro de Kinetix.
+
+### La sesión (O-D35)
+
+`monitoring_sessions` + `monitoring_session_servers`, creadas por `create_all`.
+Una sesión guarda **qué prueba es, qué servidores se miran, su corrida, su
+estado y sus fechas**. Se guarda y se recupera: hasta O2c, una corrida era una
+cadena que había que copiar antes de cambiar de pestaña.
+
+| Estado | Cuándo |
+|---|---|
+| `preparada` | recién creada, sin métricas todavía |
+| `en_curso` | llegó su primera métrica (se marca sola) |
+| `terminada` | se cerró — **y se sigue pudiendo abrir** (O-D40) |
+
+### Los endpoints (`/observabilidad/sesiones`)
+
+CRUD · `/{id}/jmeter` (los valores sueltos) · `/{id}/jmx` (subir un `.jmx` y
+recibirlo con el listener puesto) · `/{id}/metricas` (lo que se pinta).
+
+### Las cuatro cosas que no se pueden perder de vista
+
+1. **Las métricas de infraestructura se cruzan por SERVIDOR y VENTANA DE
+   TIEMPO, no por la etiqueta `corrida`.** La etiqueta la pone el recolector, y
+   ponérsela exige reconfigurarlo antes de cada prueba (`lab_corrida.sh`).
+   Nadie hace eso desde una pantalla, y en casa de un cliente Kinetix no tiene
+   canal para tocarle el recolector: filtrando por `corrida`, la mitad de abajo
+   salía **siempre vacía**. Las métricas de un servidor son continuas; una
+   sesión es una **ventana** sobre ellas.
+   **El tablero de Grafana de O2a SÍ sigue filtrando por `corrida`**, así que
+   para usar *ese* sigue haciendo falta el paso manual.
+2. **El nombre del servidor tiene que coincidir con la etiqueta `host`** que
+   publica el recolector. Es el mismo supuesto que ya hacía la prueba de
+   conexión de O2c.
+3. **`nombre_de_corrida()` tiene resolución de minuto** y `corrida` es único:
+   dos sesiones del mismo cliente y proyecto en el mismo minuto daban un **500**.
+   `_corrida_libre()` le añade un sufijo **sin tocar el formato de O-D4**, que
+   es la definición única que comparten el Backend Listener y el recolector.
+4. **Una cabecera se expone en `expose_headers` del `CORSMiddleware`, no en la
+   respuesta.** `X-Kinetix-Mensaje` llegaba vacío a la pantalla aunque la
+   respuesta llevara su propio `Access-Control-Expose-Headers`.
+
+### El `.jmx` (O-D45, O-D46)
+
+`services/observabilidad/jmx_listener.py`, módulo nuevo: **no toca
+`jmx_parser.py`** —que solo lee— ni ninguna carpeta protegida.
+
+- Sin Backend Listener → se añade dentro del primer grupo de hilos.
+- Con uno → **se reemplaza, no se duplica**, y se avisa en pantalla. Dos a la
+  vez mandando a sitios distintos darían métricas partidas.
+- XML que no es un plan de JMeter → error claro.
+- **El archivo original nunca se modifica**: se devuelve una copia.
+
+Al quitar un elemento hay que quitar **también su `hashTree`**, o el `.jmx`
+queda descuadrado y JMeter no lo abre.
+
+### O-D42
+
+**«Metricas Monitoreo» se llama ahora «Capturas de infraestructura»** y sigue en
+Análisis. Son las capturas que analiza la IA para el informe; con una sección
+llamada Observabilidad al lado, el nombre viejo era una trampa.
+
+### Los documentos para probarlo
+
+`docs/observabilidad/datos-de-prueba.md` (los datos del laboratorio, con el
+comando que pone cada credencial en el portapapeles — **las credenciales no se
+escriben en el repositorio**) y `docs/observabilidad/manual-de-pruebas.md` (paso
+a paso, con **qué número hay que ver y cuál sería un valor equivocado**).

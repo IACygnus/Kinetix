@@ -265,3 +265,79 @@ export interface ConfiguracionServidor {
   orden?: string | null;
   aviso: string;
 }
+
+// ===========================================================================
+// OBSERVABILIDAD — las sesiones de monitoreo (ETAPA O2d)
+// ===========================================================================
+
+export type EstadoSesion = 'preparada' | 'en_curso' | 'terminada';
+
+export interface ServidorDeSesion {
+  id: string;
+  name: string;
+  tipo: TipoServidor;
+  modo: ModoServidor;
+  direccion: string;
+}
+
+/**
+ * Una sesión GUARDADA (O-D35).
+ *
+ * Hasta O2c, una corrida era una cadena que había que copiar antes de cambiar
+ * de pestaña. Aquí vive en la base: sales, vuelves, y sigue con sus métricas.
+ */
+export interface SesionMonitoreo {
+  id: string;
+  nombre: string;
+  client_id: string;
+  cliente_nombre?: string | null;
+  proyecto: string;
+  corrida: string;
+  estado: EstadoSesion;
+  notas?: string | null;
+  servidores: ServidorDeSesion[];
+  creada_en?: string | null;
+  empezo_en?: string | null;
+  termino_en?: string | null;
+}
+
+export interface SerieMetrica {
+  etiqueta: string;
+  unidad: string;
+  /** [[milisegundos, valor], ...] — ya ordenados por tiempo. */
+  puntos: number[][];
+}
+
+export interface GraficaServidor {
+  titulo: string;
+  explicacion: string;
+  unidad: string;
+  series: SerieMetrica[];
+}
+
+export interface MetricasDeServidor {
+  servidor: string;
+  tipo: string;
+  graficas: GraficaServidor[];
+}
+
+/** O-D39: arriba la prueba, abajo la infraestructura, el mismo eje de tiempo. */
+export interface MetricasDeSesion {
+  corrida: string;
+  desde: string;
+  hasta: string;
+  prueba: GraficaServidor[];
+  infraestructura: MetricasDeServidor[];
+  /** El motivo EXACTO cuando no hay nada que pintar. Una gráfica vacía sin
+   *  explicación es el peor resultado posible: parece que el producto no va. */
+  aviso: string;
+  hay_datos: boolean;
+}
+
+export interface ConexionJMeter {
+  url: string;
+  token: string;
+  corrida: string;
+  parametros: { nombre: string; valor: string; explicacion: string }[];
+  aviso: string;
+}

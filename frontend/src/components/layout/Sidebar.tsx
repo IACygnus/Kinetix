@@ -134,11 +134,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <ClipboardList className="w-6 h-6" />,
         },
         {
-          // O-D30: se queda en Análisis, y con su nombre. Son las CAPTURAS de
-          // infraestructura que la IA analiza para el informe, no monitoreo en
-          // vivo. El nombre se presta a confusión con la sección nueva —está
-          // anotado en el reporte de O2c—, pero renombrarlo es otra decisión.
-          label: 'Metricas Monitoreo',
+          // O-D42: se llamaba «Metricas Monitoreo» y se confundía con la
+          // sección Observabilidad, que sí es monitoreo. Esto son las CAPTURAS
+          // que la IA analiza para el informe, y se queda en Análisis con el
+          // nombre que le corresponde.
+          label: 'Capturas de infraestructura',
           path: '/performance/monitoring',
           icon: <Monitor className="w-6 h-6" />,
         },
@@ -168,16 +168,25 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       icon: <Radar className="w-7 h-7" />,
       children: [
         {
-          // Venía de Análisis (O1.6). Es la prueba mientras corre.
-          label: 'Monitoreo en vivo',
-          path: '/observabilidad/vivo',
-          icon: <Activity className="w-6 h-6" />,
+          // ETAPA O2d: la entrada de la sección. Es lo primero que se abre, y
+          // enseña las sesiones guardadas con sus gráficas — no un formulario.
+          label: 'Sesiones de monitoreo',
+          path: '/observabilidad/sesiones',
+          icon: <Radar className="w-6 h-6" />,
           roles: ['admin', 'analyst'],
         },
         {
           label: 'Servidores',
           path: '/observabilidad/servidores',
           icon: <Server className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
+          // Venía de Análisis (O1.6). Da los parámetros sueltos y el tablero de
+          // Grafana; para una prueba normal, lo que se usa es una sesión.
+          label: 'Monitoreo en vivo',
+          path: '/observabilidad/vivo',
+          icon: <Activity className="w-6 h-6" />,
           roles: ['admin', 'analyst'],
         },
       ],

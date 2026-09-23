@@ -4,6 +4,8 @@ Router API centralizado - v2.0
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import auth
+# ETAPA O2d: las sesiones de monitoreo.
+from app.api.v1.endpoints import sesiones
 # OBSERVABILIDAD (ETAPA O2c): los servidores que se miran durante una prueba.
 from app.api.v1.endpoints import observabilidad
 # MODULO DE HORAS (ETAPA H1, H-D9): router propio bajo /time, separado del
@@ -124,3 +126,7 @@ api_router.include_router(time_entries.router, prefix="/time", tags=["Horas — 
 # el modulo de horas cuelga de /time: que se distinga de un vistazo.
 api_router.include_router(
     observabilidad.router, prefix="/observabilidad", tags=["Observabilidad — Servidores"])
+# ETAPA O2d: las sesiones cuelgan del mismo prefijo que los servidores, porque
+# son la misma seccion de la pantalla.
+api_router.include_router(
+    sesiones.router, prefix="/observabilidad", tags=["Observabilidad — Sesiones"])

@@ -35,6 +35,10 @@ from app.db.models.time_tracking import (   # noqa: F401
 # OBSERVABILIDAD (ETAPA O2c). Mismo motivo que arriba: sin el import,
 # `create_all` no ve la tabla. Es nueva y no altera ninguna existente.
 from app.db.models.observed_server import ObservedServer   # noqa: F401
+# ETAPA O2d: las sesiones de monitoreo y su tabla de union. Las dos son nuevas.
+from app.db.models.monitoring_session import (   # noqa: F401
+    MonitoringSession, sesion_servidores,
+)
 from app.core.security import get_password_hash
 
 # Configurar logging
@@ -66,7 +70,12 @@ app.add_middleware(
     expose_headers=["X-CSRF-Token", "Content-Disposition", "X-Filename", "X-Has-CSVs",
                     # ETAPA H5: el conteo de paginas del informe en PDF, para la
                     # vista previa. Sin exponerla, el navegador no deja leerla.
-                    "X-Total-Paginas"],
+                    "X-Total-Paginas",
+                    # ETAPA O2d: que se le hizo al .jmx que acaba de subir —si
+                    # se anadio el listener o si se reemplazo uno que ya traia—.
+                    # Ponerlas en la respuesta NO basta: manda esta lista, y sin
+                    # estar aqui el navegador las recibe y no deja leerlas.
+                    "X-Kinetix-Mensaje", "X-Kinetix-Reemplazado"],
 )
 
 # CSRF middleware — validate double-submit cookie on mutating requests

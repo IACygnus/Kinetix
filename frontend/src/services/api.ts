@@ -2,7 +2,7 @@
  * API Service - SQA Kinetix Pro
  */
 import axios from 'axios';
-import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult, ConfiguracionJMeter, ServidorObservado, ResultadoPrueba, ConfiguracionServidor } from '../types';
+import type { UserInfo, UserCreate, UserUpdate, ProfileUpdate, PasswordChange, DashboardStats, MonitoringConfig, MonitoringConfigUpdate, MonitoringHealth, ClientInfo, ClientCreate, ClientUpdate, UserClientAssign, UserWithClients, AIConfigInfo, AIConfigCreate, AIProviderInfo, AITestResult, ConfiguracionJMeter, ServidorObservado, ResultadoPrueba, ConfiguracionServidor, SesionMonitoreo, MetricasDeSesion, ConexionJMeter } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
@@ -1018,6 +1018,85 @@ export const servidoresAPI = {
   configuracion: async (id: string): Promise<ConfiguracionServidor> => {
     const r = await api.get(`${RUTA}/${id}/configuracion`);
     return r.data;
+  },
+};
+
+// ===========================================================================
+// OBSERVABILIDAD — las sesiones de monitoreo (ETAPA O2d)
+// ===========================================================================
+const SESIONES = '/observabilidad/sesiones';
+
+export const sesionesAPI = {
+  listar: async (clientId?: string): Promise<SesionMonitoreo[]> => {
+    const r = await api.get(SESIONES,
+      clientId ? { params: { client_id: clientId } } : undefined);
+    return r.data;
+  },
+
+  ver: async (id: string): Promise<SesionMonitoreo> => {
+    const r = await api.get(`${SESIONES}/${id}`);
+    return r.data;
+  },
+
+  crear: async (datos: Record<string, unknown>): Promise<SesionMonitoreo> => {
+    const r = await api.post(SESIONES, datos);
+    return r.data;
+  },
+
+  actualizar: async (id: string, datos: Record<string, unknown>): Promise<SesionMonitoreo> => {
+    const r = await api.put(`${SESIONES}/${id}`, datos);
+    return r.data;
+  },
+
+  borrar: async (id: string): Promise<void> => {
+    await api.delete(`${SESIONES}/${id}`);
+  },
+
+  /** O-D38 y O-D39: lo que se pinta. */
+  metricas: async (id: string, minutos = 60): Promise<MetricasDeSesion> => {
+    const r = await api.get(`${SESIONES}/${id}/metricas`, { params: { minutos } });
+    return r.data;
+  },
+
+  /** Los valores sueltos, para la opción avanzada de copiarlos a mano. */
+  jmeter: async (id: string): Promise<ConexionJMeter> => {
+    const r = await api.get(`${SESIONES}/${id}/jmeter`);
+    return r.data;
+  },
+
+  /**
+   * O-D45: sube un `.jmx` y devuelve el mismo plan con el Backend Listener
+   * puesto. Lo que baja es una COPIA: el archivo del disco no se toca.
+   */
+  ponerListener: async (id: string, archivo: File): Promise<{
+    blob: Blob; nombre: string; mensaje: string; reemplazado: boolean;
+  }> => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    const r = await api.post(`${SESIONES}/${id}/jmx`, datos, {
+      responseType: 'blob',
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const disposicion = String(r.headers['content-disposition'] || '');
+    const encontrado = /filename="?([^"]+)"?/.exec(disposicion);
+    return {
+      blob: r.data,
+      nombre: encontrado ? encontrado[1] : `${archivo.name}`,
+      mensaje: String(r.headers['x-kinetix-mensaje'] || ''),
+      reemplazado: String(r.headers['x-kinetix-reemplazado'] || '') === '1',
+    };
+  },
+
+  /** O-D33: si falta el token de lectura, no hay gráficas y hay que decirlo. */
+  estadoTokenLectura: async (): Promise<{
+    columna_aplicada: boolean; hay_token: boolean; sql: string;
+  }> => {
+    const r = await api.get('/observabilidad/token-lectura');
+    return r.data;
+  },
+
+  guardarTokenLectura: async (token: string): Promise<void> => {
+    await api.put('/observabilidad/token-lectura', { token });
   },
 };
 

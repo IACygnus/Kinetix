@@ -98,7 +98,12 @@ def main():
         page.get_by_text("Análisis", exact=True).first.click()
         page.wait_for_timeout(600)
         analisis = menu.inner_text()
-        for entrada in ("Nuevo Reporte", "Historial Reporte", "Metricas Monitoreo",
+        # ETAPA O2d (O-D42): «Metricas Monitoreo» pasa a llamarse «Capturas de
+        # infraestructura» —se confundía con la sección Observabilidad, que sí
+        # es monitoreo—. La suite comprobaba el nombre viejo y fallaba con
+        # razón: el desfasado era el script.
+        for entrada in ("Nuevo Reporte", "Historial Reporte",
+                        "Capturas de infraestructura",
                         "Evidencias", "Informe Integrado"):
             ok(entrada in analisis, f"Analisis conserva «{entrada}»")
         ok(analisis.count("Monitoreo en vivo") <= 1,
