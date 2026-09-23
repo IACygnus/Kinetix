@@ -66,6 +66,7 @@ correr o2c_pantalla                python3  /tmp/e2e/o2c_pantalla.py
 correr o2d2_sesiones               python3  /tmp/e2e/o2d2_sesiones.py
 correr o2d3_jmx                    python3  /tmp/e2e/o2d3_jmx.py
 correr o2d5_pantalla               python3  /tmp/e2e/o2d5_pantalla.py
+correr d1_diseno                   python3  /tmp/e2e/diseno/d1_diseno.py
 
 echo ""
 echo "=== LA BASE DE FREDY, DESPUES ==="

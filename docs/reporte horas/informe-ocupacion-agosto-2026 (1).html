@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ocupación COE Performance · Agosto 2026 · SQASA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@600;800&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#03287D; --azul:#0032A7; --dark:#060B29; --amarillo:#FFC440; --naranja:#FCA311;
+  --bg:#F2F5FA; --surface:#FFFFFF; --line:#DCE3EF; --ink:#0E1730; --muted:#5C6B8A;
+  --facturable:#0032A7; --interno:#FCA311; --sinreg:#8E44AD; --novedad:#94A3B8;
+  --aR:#03287D; --aF:#FCA311; --aM:#4BACC6;
+  --serif:'Exo 2',system-ui,sans-serif; --sans:'Montserrat',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);font-weight:400;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1240px;margin:0 auto;padding:0 24px}
+
+header{background:var(--dark);color:#fff;padding:38px 0 0;position:relative;overflow:hidden}
+header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:5px;
+  background:linear-gradient(90deg,var(--azul) 0%,var(--azul) 62%,var(--naranja) 62%,var(--naranja) 88%,var(--amarillo) 88%)}
+.brandline{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:26px}
+.mark{font-family:var(--serif);font-weight:800;font-size:26px;letter-spacing:.03em;color:#fff}
+.mark span{color:var(--amarillo)}
+.unit{font-size:12.5px;color:#9FB0D4;font-weight:500;padding-left:14px;border-left:1px solid #33406B}
+h1{font-family:var(--serif);font-weight:800;font-size:clamp(30px,4.4vw,48px);line-height:1.05;letter-spacing:-.015em;margin-bottom:16px;max-width:20ch}
+h1 em{font-style:normal;color:var(--amarillo)}
+.meta{display:flex;gap:44px;flex-wrap:wrap;padding:22px 0 34px;border-top:1px solid #1E2A4E;margin-top:26px}
+.meta div{font-size:13px}
+.meta dt{color:#8497C0;font-size:11.5px;font-weight:500;margin-bottom:3px}
+.meta dd{color:#fff;font-weight:600;font-size:14px}
+
+.controls{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40;
+  box-shadow:0 1px 0 rgba(6,11,41,.04)}
+.ctl-in{display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding:13px 0}
+.seg{display:flex;background:#EDF1F8;border-radius:8px;padding:3px;gap:2px}
+.seg button{font-family:var(--sans);font-size:12.5px;font-weight:600;color:var(--muted);background:none;border:0;
+  padding:7px 14px;border-radius:6px;cursor:pointer;transition:background .14s,color .14s}
+.seg button:hover{color:var(--navy)}
+.seg button[aria-pressed="true"]{background:var(--navy);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--naranja);outline-offset:2px}
+.ctl-label{font-size:11.5px;color:var(--muted);font-weight:600;margin-right:-14px}
+.switch{display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--ink)}
+.switch input{position:absolute;opacity:0;width:0;height:0}
+.track{width:40px;height:22px;background:#C6D0E3;border-radius:11px;position:relative;transition:background .18s;flex:none}
+.knob{position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .18s;
+  box-shadow:0 1px 3px rgba(6,11,41,.3)}
+.switch input:checked + .track{background:var(--sinreg)}
+.switch input:checked + .track .knob{transform:translateX(18px)}
+.switch input:focus-visible + .track{outline:2px solid var(--naranja);outline-offset:2px}
+.spacer{margin-left:auto;display:flex;gap:8px}
+.btn{font-family:var(--sans);font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:#fff;color:var(--navy);transition:border-color .14s,background .14s}
+.btn:hover{border-color:var(--azul);background:#F5F8FF}
+.btn:focus-visible{outline:2px solid var(--naranja);outline-offset:2px}
+
+section{padding:46px 0 6px}
+.sec-head{margin-bottom:22px;max-width:76ch}
+.sec-head h2{font-family:var(--serif);font-weight:600;font-size:22px;letter-spacing:-.01em;color:var(--navy);margin-bottom:6px}
+.sec-head p{font-size:13.5px;color:var(--muted);line-height:1.6}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(186px,1fr));gap:2px;background:var(--line);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:-18px}
+.kpi{background:var(--surface);padding:20px 20px}
+.kpi .k-l{font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:9px;min-height:30px;line-height:1.35}
+.kpi .k-v{font-family:var(--serif);font-weight:800;font-size:32px;line-height:1;color:var(--navy);letter-spacing:-.02em}
+.kpi .k-v small{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--muted);letter-spacing:0}
+.kpi .k-s{font-size:11.5px;color:var(--muted);margin-top:8px}
+.kpi.hot .k-v{color:var(--naranja)}
+.kpi.est .k-v{color:var(--sinreg)}
+.kpi.bill .k-v{color:var(--azul)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+thead th{background:#F7F9FD;color:var(--muted);font-weight:600;font-size:11.5px;text-align:right;
+  padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+thead th:first-child{text-align:left}
+tbody td{padding:13px 14px;text-align:right;border-bottom:1px solid #EDF1F8;font-variant-numeric:tabular-nums}
+tbody td:first-child{text-align:left;font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+tr.total td{background:#F7F9FD;font-weight:700;color:var(--navy);border-top:2px solid var(--navy)}
+.pct{display:inline-flex;align-items:center;gap:8px;justify-content:flex-end}
+.bar-mini{width:48px;height:6px;background:#E4EAF5;border-radius:3px;overflow:hidden;flex:none}
+.bar-mini i{display:block;height:100%;background:var(--azul)}
+.bar-mini.over i{background:var(--naranja)}
+.bar-mini.est i{background:var(--sinreg)}
+.est-col{color:var(--sinreg);font-weight:600}
+.est-col.off{color:#B6C0D4}
+.nov-col{color:var(--novedad);font-weight:600}
+.note{font-size:12px;color:var(--muted);padding:13px 16px;background:#F7F9FD;border-top:1px solid var(--line);line-height:1.6}
+.note b{color:var(--ink);font-weight:600}
+
+.chart{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px 24px}
+.chart svg{width:100%;height:auto;display:block;overflow:visible}
+.legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;padding-top:15px;border-top:1px solid #EDF1F8}
+.legend span{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);font-weight:500}
+.sw{width:11px;height:11px;border-radius:2px;flex:none}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+
+.hm{width:100%;border-collapse:separate;border-spacing:3px;font-size:12.5px}
+.hm th{font-weight:600;color:var(--muted);font-size:11px;padding:6px 4px;vertical-align:bottom;text-align:center;line-height:1.25}
+.hm th.rowh{text-align:left;font-weight:600;color:var(--ink);font-size:12.5px;width:210px;padding-right:12px}
+.hm td{text-align:center;border-radius:5px;padding:11px 4px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+.hm td.z{background:#F2F5FA;color:#C3CCDD;font-weight:400}
+.hm td.tot{background:#fff!important;color:var(--navy);font-weight:700;border:1px solid var(--line)}
+
+.filters{display:flex;gap:10px;flex-wrap:wrap;padding:14px 16px;background:#F7F9FD;border-bottom:1px solid var(--line)}
+.filters input,.filters select{font-family:var(--sans);font-size:12.5px;padding:8px 11px;border:1px solid var(--line);
+  border-radius:7px;background:#fff;color:var(--ink);min-width:150px}
+.filters input:focus,.filters select:focus{outline:2px solid var(--azul);outline-offset:-1px;border-color:var(--azul)}
+.filters input{flex:1;min-width:210px}
+.tbl-scroll{max-height:540px;overflow-y:auto}
+.tbl-scroll thead th{position:sticky;top:0;z-index:5;cursor:pointer;user-select:none}
+.tbl-scroll thead th:hover{color:var(--azul)}
+.tbl-scroll thead th::after{content:"";opacity:.45;font-size:9px;margin-left:5px}
+.tbl-scroll thead th.asc::after{content:"▲"}
+.tbl-scroll thead th.desc::after{content:"▼"}
+#dTable td{font-size:12.5px;padding:10px 14px;vertical-align:top}
+#dTable td.desc-c{text-align:left;color:var(--muted);font-weight:400;line-height:1.5;max-width:380px}
+#dTable td.cli{text-align:left;font-weight:600}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:4px;white-space:nowrap}
+.tag.f{background:#E4EBFB;color:var(--azul)}
+.tag.i{background:#FFF1DC;color:#B76E00}
+.tag.n{background:#EDF1F6;color:#64748B}
+.who{display:inline-block;width:22px;height:22px;border-radius:50%;font-size:10.5px;font-weight:700;line-height:22px;
+  text-align:center;color:#fff}
+.who.R{background:var(--aR)}
+.who.F{background:var(--aF)}
+.who.M{background:var(--aM)}
+.empty{padding:44px 16px;text-align:center;color:var(--muted);font-size:13.5px}
+.cnt{font-size:12px;color:var(--muted);padding:12px 16px;background:#F7F9FD;border-top:1px solid var(--line)}
+
+footer{margin-top:60px;background:var(--dark);color:#8497C0;padding:28px 0;font-size:12px}
+footer strong{color:#fff;font-weight:600}
+
+@media print{
+  .controls,.spacer,footer{display:none}
+  body{background:#fff}
+  section{page-break-inside:avoid;padding:22px 0}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .tbl-scroll{max-height:none;overflow:visible}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brandline">
+      <div class="mark">SQA<span>SA</span></div>
+      <div class="unit">Centro de Excelencia · Performance</div>
+    </div>
+    <h1>Dónde trabajó el equipo en <em>agosto</em></h1>
+    <dl class="meta">
+      <div><dt>Dirigido a</dt><dd>José Javier Rodríguez Santos · Delivery Manager</dd></div>
+      <div><dt>Período</dt><dd>1 – 31 de agosto de 2026</dd></div>
+      <div><dt>Equipo</dt><dd>Rubén Darío Flórez · Fredy Gabriel Bonilla · Mónica Alejandra Archila</dd></div>
+      <div><dt>Capacidad base</dt><dd>19 días hábiles · 152 h por analista</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="wrap ctl-in">
+    <span class="ctl-label">Analista</span>
+    <div class="seg" role="group" aria-label="Filtrar por analista">
+      <button data-who="ALL" aria-pressed="true">Equipo</button>
+      <button data-who="R" aria-pressed="false">Rubén</button>
+      <button data-who="F" aria-pressed="false">Fredy</button>
+      <button data-who="M" aria-pressed="false">Mónica</button>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="estToggle">
+      <span class="track"><span class="knob"></span></span>
+      Incluir esfuerzo sin registro (estimado)
+    </label>
+    <div class="spacer">
+      <button class="btn" id="csvBtn">Descargar CSV</button>
+      <button class="btn" onclick="window.print()">Imprimir</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section>
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Ocupación frente a la capacidad del mes</h2>
+      <p>Agosto tuvo 19 días hábiles descontando el 7 y el 17: 152 horas por analista. Los tres cerraron
+         exactamente 160 horas ordinarias, que es el techo del registro y no la medida del esfuerzo.</p>
+    </div>
+    <div class="card">
+      <table id="occTable">
+        <thead><tr>
+          <th>Analista</th><th>Ordinarias</th><th>Extras</th><th>Registrado</th>
+          <th>Sin registro<br>(estimado)</th><th>Esfuerzo total</th><th>Ocupación</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="note" id="occNote"></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Cuánto del registro llegó a una cuenta de cliente</h2>
+      <p>El dato que ordena todo el informe. Una hora facturable está cargada a una cuenta abierta; una hora
+         interna es trabajo real y medido que no tiene dónde cargarse porque el cliente todavía no tiene código.</p>
+    </div>
+    <div class="chart">
+      <svg id="mixChart" role="img" aria-label="Composición del registro por analista"></svg>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--facturable)"></i> Facturable al cliente</span>
+        <span><i class="sw" style="background:var(--interno)"></i> Interno (preventa, producto, laboratorio, formación)</span>
+        <span><i class="sw" style="background:var(--novedad)"></i> Novedades y vacaciones</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Cobertura por cliente</h2>
+      <p>Tres estados por cuenta: horas cargadas al cliente, horas reales cargadas a interno y sesiones
+         atendidas que nunca entraron al timesheet.</p>
+    </div>
+    <div class="chart">
+      <svg id="covChart" role="img" aria-label="Horas y sesiones por cliente"></svg>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--facturable)"></i> Registrado al cliente</span>
+        <span><i class="sw" style="background:var(--interno)"></i> Registrado como interno</span>
+        <span><i class="sw" style="background:var(--novedad)"></i> Novedad</span>
+        <span><i class="sw" style="background:var(--sinreg)"></i> Esfuerzo sin registro (estimado)</span>
+        <span><i class="sw" style="background:#fff;border:1.5px solid var(--sinreg)"></i> Sesiones sin registro</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="grid2">
+      <div>
+        <div class="sec-head">
+          <h2>En qué se fue el tiempo</h2>
+          <p>Clasificación por actividad principal de cada registro.</p>
+        </div>
+        <div class="chart">
+          <svg id="catChart" role="img" aria-label="Horas por tipo de actividad"></svg>
+          <div class="legend" id="catLeg"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-head">
+          <h2>Carga día a día</h2>
+          <p>La línea punteada marca la jornada de referencia donde el registro se satura.</p>
+        </div>
+        <div class="chart">
+          <svg id="dayChart" role="img" aria-label="Horas registradas por día de agosto"></svg>
+          <div class="legend" id="dayLeg"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Las 19 sesiones que no llegaron al timesheet</h2>
+      <p>Trabajo conjunto de Rubén y Fredy, ejecutado en paralelo a jornadas ya completas. Mónica no registra
+         sesiones en esta categoría: su trabajo de apoyo cabe dentro de su jornada y sí quedó registrado.
+         No se mide en horas porque nunca se registró; se mide en frentes atendidos y sesiones sostenidas.</p>
+    </div>
+    <div class="card" style="padding:22px 24px">
+      <table class="hm" id="hmTable"></table>
+      <p class="note" style="margin:18px -24px -22px;border-radius:0">
+        La intensidad del color indica número de sesiones. <b>Colcomercio (Manhattan), Sura México, Campañas
+        Políticas y Grupo Aval</b> no tienen ninguna cuenta facturable abierta pese a haber sido atendidos
+        durante el mes.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Detalle de registros</h2>
+      <p><span id="nrec"></span> registros del mes. Filtra, ordena por cualquier columna o descarga el conjunto filtrado.</p>
+    </div>
+    <div class="card">
+      <div class="filters">
+        <input type="search" id="q" placeholder="Buscar en cliente, actividad o descripción…" aria-label="Buscar">
+        <select id="fCli" aria-label="Filtrar por cliente"><option value="">Todos los clientes</option></select>
+        <select id="fCat" aria-label="Filtrar por actividad"><option value="">Toda actividad</option></select>
+        <select id="fReg" aria-label="Filtrar por tipo de registro">
+          <option value="">Todo registro</option><option value="f">Facturable</option>
+          <option value="i">Interno</option><option value="n">Novedad</option>
+        </select>
+      </div>
+      <div class="tbl-scroll">
+        <table id="dTable">
+          <thead><tr>
+            <th data-k="a" style="width:44px"> </th>
+            <th data-k="d" class="asc" style="text-align:left">Fecha</th>
+            <th data-k="c" style="text-align:left">Cliente</th>
+            <th data-k="cat" style="text-align:left">Actividad</th>
+            <th data-k="h">Horas</th><th data-k="e">Extras</th>
+            <th data-k="r" style="text-align:left">Registro</th>
+            <th style="text-align:left">Descripción</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="cnt" id="cnt"></p>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <strong>Software Quality Assurance S.A.</strong> · Centro de Excelencia de Performance · Informe de ocupación, agosto 2026.
+    Las horas registradas provienen del timesheet. El esfuerzo sin registro es una estimación declarada, no un dato medido.
+  </div>
+</footer>
+
+<script>
+/* ============ CONSTANTES ============ */
+const CAP=152, EST={R:18,F:14,M:0};
+const NOMBRE={R:"Rubén Darío Flórez",F:"Fredy Gabriel Bonilla",M:"Mónica Alejandra Archila"};
+const CORTO={R:"Rubén",F:"Fredy",M:"Mónica"};
+const COLOR={R:"var(--aR)",F:"var(--aF)",M:"var(--aM)"};
+const NOLAB=[1,2,7,8,9,15,16,17,22,23,29,30];
+const NO_FRENTE=new Set(["Capacitación y formación","Gestión y soporte interno","Vacaciones y novedades","Laboratorio I+D (Fabric)"]);
+
+/* ============ REGISTROS ============ */
+/* [analista, día, cliente, categoría, horas, extras, registro(f|i|n), descripción] */
+const RAW=[
+["R",3,"Banco Popular (Bus)","Diseño de scripts",4.5,0,"f","Revisión de diseños del servicio administrar restricción de productos para cuentas y agregar notas crédito"],
+["R",3,"Nutresa (Pideky 2026)","Alineación y seguimiento",2,0,"f","Reunión de ejecución de pruebas de carga"],
+["R",3,"GNP México","Alineación y seguimiento",1,0,"f","Seguimiento de reunión GNP, proceso de estimación"],
+["R",3,"Banco Ficohsa (NOVA)","Alineación y seguimiento",1,0,"f","NOVA — Alineación componentes transversales, sesión 2"],
+["R",4,"Gestión y soporte interno","Gestión y soporte interno",1,0,"i","Reunión COE: estrategias y nuevos procesos"],
+["R",4,"Banco Ficohsa (NOVA)","Alineación y seguimiento",1,0,"f","Alineación componentes transversales, sesión 4"],
+["R",4,"Nutresa (Pideky 2026)","Ejecución y análisis",3,0,"f","Pruebas técnicas de performance sobre servicios Pideky 2026"],
+["R",4,"Banco Popular (Bus)","Diseño de scripts",3.5,0,"f","Revisión de diseños del servicio administrar restricción de productos"],
+["R",5,"Grupo Aval / Honduras","Preventa y estimación",1,0,"f","Estimación Grupo Aval y Honduras Financial: revisión de documentación y proceso"],
+["R",5,"Nutresa (Pideky 2026)","Informes y resultados",5,0,"f","Avance en creación de informes de las ejecuciones de Pideky"],
+["R",5,"Banco Popular (Bus)","Informes y resultados",2.5,0,"f","Avance en informe administración restricción de productos para cuenta"],
+["R",6,"Banco Popular (Bus)","Informes y resultados",3.5,0,"f","Avance en informe administración restricción de productos para cuenta"],
+["R",6,"Nutresa (Pideky 2026)","Informes y resultados",5,0,"f","Avance en creación de informes de las ejecuciones de Pideky"],
+["R",7,"Banco Popular (Bus)","Diseño de scripts",5,5,"f","Diseño de scripts de performance del servicio modificación de cuentas inscritas"],
+["R",8,"Banco Popular (Bus)","Diseño de scripts",4,4,"f","Diseño de scripts de performance del servicio consulta de cuentas inscritas"],
+["R",10,"Banco Popular (Bus)","Diseño de scripts",3.5,0,"f","Avance en diseño del servicio de modificación de cuentas inscritas"],
+["R",10,"Nutresa (Pideky 2026)","Informes y resultados",5,0,"f","Avance en creación de informes de las ejecuciones de Pideky"],
+["R",11,"Banco Popular (Bus)","Diseño de scripts",3.5,0,"f","Avance en diseño del servicio de modificación de cuentas inscritas"],
+["R",11,"Nutresa (Pideky 2026)","Informes y resultados",5,0,"f","Avance en creación de informes de las ejecuciones de Pideky"],
+["R",12,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificación de cuentas inscritas desde canal Sofía"],
+["R",13,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificación de cuentas inscritas desde canal Sofía"],
+["R",14,"Banco Popular (Bus)","Ejecución y análisis",8,0,"f","Diseño y ejecución del servicio de eliminación de cuentas inscritas"],
+["R",18,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio de eliminación de cuentas inscritas"],
+["R",19,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificación de autorizados para retiros en oficina"],
+["R",20,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificación de autorizados para retiros en oficina"],
+["R",21,"Banco Popular (Bus)","Ejecución y análisis",8,0,"f","Diseño y ejecución del servicio modificación de autorizados para retiros en oficina"],
+["R",24,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio administrar cupo de cliente amparada"],
+["R",25,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio administrar cupo de cliente amparada"],
+["R",26,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificar inscripción de concesión desde canal Sofía"],
+["R",27,"Banco Popular (Bus)","Ejecución y análisis",8.5,0,"f","Diseño y ejecución del servicio modificar inscripción de concesión desde canal Sofía"],
+["R",28,"Pluxee","Diseño de scripts",8,0,"f","Revisión de accesos, validación de diseño inicial, smoke y progreso en script"],
+["R",31,"Pluxee","Diseño de scripts",8.5,0,"f","Avance en módulo de autenticación del script de performance y selección de empresas"],
+
+["F",3,"Laboratorio I+D (Fabric)","Laboratorio I+D",8.5,0,"i","Construcción de la base de datos bronce simulando las sedes de los bancos de Ficohsa, con data sintética"],
+["F",4,"Capacitación y formación","Capacitación y formación",2,0,"i","Sesión de capacitación CI/CD y performance"],
+["F",4,"Laboratorio I+D (Fabric)","Laboratorio I+D",4.5,0,"i","Sincronización COE Delivery y Kinetix; continúa la creación de la base de datos bronce del laboratorio Fabric"],
+["F",4,"Coomeva Med. Prepagada","Informes y resultados",2,0,"f","Preinforme de las ejecuciones realizadas el 31 de julio"],
+["F",5,"Nutresa (Pideky 2026)","Ejecución y análisis",4,0,"f","Inspección de logs; smoke test para evaluar tiempos de respuesta contra criterios de aceptación"],
+["F",5,"Laboratorio I+D (Fabric)","Laboratorio I+D",4,0,"i","Revisión de spec SQAi y pruebas a la base de datos con distintos apuntamientos; HU para datos sintéticos en bronce"],
+["F",5,"Colcomercio (Manhattan)","Preventa y estimación",0.5,0,"i","Revisemos pruebas de performance Manhattan"],
+["F",6,"Nutresa (Pideky 2026)","Ejecución y análisis",4,0,"f","Revisión de logs de la prueba de carga contra criterios de aceptación"],
+["F",6,"Coomeva Med. Prepagada","Ejecución y análisis",1,1,"f","Pruebas de carga APIs de tokenización"],
+["F",6,"Laboratorio I+D (Fabric)","Laboratorio I+D",4.5,0,"i","Revisión de la spec para SQ_AI en pruebas de performance; creación de la fase plata del laboratorio"],
+["F",10,"Nutresa (Pideky 2026)","Ejecución y análisis",4,0,"f","Análisis de resultados de la prueba de estrés de 100 UVC: tiempos de respuesta y errores"],
+["F",10,"Laboratorio I+D (Fabric)","Laboratorio I+D",4.5,0,"i","Modificación e inserción de la spec de performance; finalización de la migración plata en Ficohsa"],
+["F",11,"Nutresa (Pideky 2026)","Informes y resultados",4,0,"f","Consolidación con el equipo de los resultados y debate para las conclusiones finales"],
+["F",11,"SQAi / Kinetix","Producto interno",3.5,0,"i","Ajuste de data sintética Fabric; HU para modificar el informe exportado HTML y PDF de Kinetix tras fallo de autoguardado"],
+["F",11,"Aviajar / Avianca","Preventa y estimación",1,0,"i","Estimación de pruebas de performance AViajar"],
+["F",12,"SQAi / Kinetix","Producto interno",8.5,0,"i","Ajustes en Kinetix para generar informes a Nutresa y Bancoomeva, bloqueados por bugs reportados por performance"],
+["F",13,"Banco Mundo Mujer","Preventa y estimación",1,0,"i","Preparación de propuesta BMM — pruebas de performance"],
+["F",13,"Colcomercio (Manhattan)","Preventa y estimación",1,0,"i","Colcomercio MAWM: diagrama de arquitectura"],
+["F",13,"SQAi / Kinetix","Producto interno",5,0,"i","Cierre de ajustes de Kinetix reportados como bugs en el informe HTML; pendiente la presentación del PDF"],
+["F",13,"Coomeva Med. Prepagada","Informes y resultados",1.5,0,"f","Revisión del informe elaborado por Mónica, ajustes y complementos de infraestructura; envío al cliente"],
+["F",14,"Banco Mundo Mujer","Preventa y estimación",7,0,"i","Revisión de documentación para propuesta y estrategia del cliente en preventa"],
+["F",14,"SQAi / Kinetix","Producto interno",1,0,"i","Capacitación revisión de logs; ajuste del PDF a estilo gerencial e inicio del pipeline del proyecto Fabric"],
+["F",18,"Aviajar / Avianca","Preventa y estimación",7.5,0,"i","Revisión de documentación para elaborar propuesta y estrategia del cliente"],
+["F",18,"Gestión y soporte interno","Gestión y soporte interno",1,0,"i","Sincronización COE Delivery"],
+["F",19,"Colcomercio (Manhattan)","Preventa y estimación",1,0,"i","Identificación de servicios críticos y volumetrías para pruebas de performance"],
+["F",19,"Laboratorio I+D (Fabric)","Laboratorio I+D",2.5,0,"i","Investigación de Fabric y despliegues al Docker del laboratorio local"],
+["F",19,"Banco Mundo Mujer","Preventa y estimación",3,0,"i","Envío de propuesta comercial al cliente"],
+["F",19,"Aviajar / Avianca","Preventa y estimación",2,0,"i","Envío de propuesta comercial AViajar — Avianca"],
+["F",20,"Banco Ficohsa (NOVA)","Estrategia y documentación",2.5,0,"f","Revisión de documentación inicial y construcción de la estrategia del proyecto"],
+["F",20,"Laboratorio I+D (Fabric)","Laboratorio I+D",6,0,"i","Apoyo a prueba UAT de SQAi y mantenimiento preventivo; continúa el laboratorio de Microsoft Fabric"],
+["F",21,"Banco Ficohsa (NOVA)","Estrategia y documentación",4,0,"f","Revisión de documentación y creación del documento de estrategia de pruebas de performance"],
+["F",21,"Banco Ficohsa (NOVA)","Estrategia y documentación",4,0,"f","Depuración del listado tentativo de 40 servicios candidatos por canal, arquitectura, tipología y concurrencia"],
+["F",24,"Banco Ficohsa (NOVA)","Alineación y seguimiento",3,0,"f","Conversemos Ficohsa migración: continúa el documento y la estrategia de pruebas de performance"],
+["F",24,"Banco Ficohsa (NOVA)","Estrategia y documentación",5.5,0,"f","Depuración de servicios y estructuración de la estrategia con todos los actores involucrados"],
+["F",24,"Banco Ficohsa (NOVA)","Estrategia y documentación",5.5,5.5,"f","Envío de correos con la planeación y el documento de estrategia de performance para NOVA capa media"],
+["F",25,"Colcomercio (Manhattan)","Preventa y estimación",2,0,"i","Revisión de documentación para ajustar la estrategia de performance del proyecto"],
+["F",25,"Banco Ficohsa (NOVA)","Alineación y seguimiento",4,0,"f","Afinidad con la estrategia pactada y ajustes según el laboratorio realizado"],
+["F",25,"Bancoomeva","Alineación y seguimiento",0.5,0,"i","Revisemos proyectos Bancoomeva"],
+["F",25,"Laboratorio I+D (Fabric)","Laboratorio I+D",2,0,"i","Continúa el laboratorio de migración de datos para comparar con la estrategia en diseño"],
+["F",26,"Banco Ficohsa (NOVA)","Diseño de scripts",8.5,0,"f","De 29 servicios planeados se inicia el diseño de 5: receivable-invoice-customer-retrieve, retrieve-debtor-batch, debtor-retrieve, invoice-retrieve e invoice-batch-authorize"],
+["F",27,"CONDOR","Preventa y estimación",1,0,"i","Contextualización CONDOR: dispersión de fondos por cuenta maestra"],
+["F",27,"Banco Ficohsa (NOVA)","Laboratorio I+D",3,0,"f","Microsoft Fabric y presentación de la estrategia técnica Silver"],
+["F",27,"Banco Ficohsa (NOVA)","Alineación y seguimiento",4.5,0,"f","Definición de datos de prueba: 5 servicios en diseño en STG para pasar a UAT con apuntamientos y headers"],
+["F",28,"Coomeva Med. Prepagada","Preventa y estimación",1,0,"i","Revisión de pruebas de tokenización; pendiente el envío de documentación para estimar el nuevo proyecto"],
+["F",28,"Laboratorio I+D (Fabric)","Laboratorio I+D",3,0,"i","Continúa el laboratorio de migración de datos; sincronización con la cuenta de Fabric para pruebas"],
+["F",28,"Banco Ficohsa (NOVA)","Ejecución y análisis",4,0,"f","Validación de los servicios en operación; se cierra a la espera de documentación UAT y confirmación de servicios expuestos"],
+["F",31,"Banco Ficohsa (NOVA)","Alineación y seguimiento",1.5,0,"f","NOVA — pruebas de performance UAT y sesión de infraestructura"],
+["F",31,"SQAi / Kinetix","Producto interno",7,0,"i","Revisión de proyectos, configuración del equipo nuevo con VPN y respaldo; queda lista la versión pendiente de Kinetix"],
+
+["M",3,"Porvenir","Informes y resultados",1,0,"f","Cierre del análisis de resultados CT-7493, servicio registrar datos"],
+["M",3,"Capacitación y formación","Capacitación y formación",7.5,0,"i","Curso: uso de Jira en el proceso de pruebas"],
+["M",4,"Capacitación y formación","Capacitación y formación",8.5,0,"i","Curso: continuous testing con Azure DevOps 2.0"],
+["M",5,"Capacitación y formación","Capacitación y formación",3.5,0,"i","Curso: IA desde cero, conceptos esenciales"],
+["M",5,"Nutresa (Pideky 2026)","Ejecución y análisis",5,0,"f","Análisis de resultados de tiempos de respuesta y errores de la prueba de carga"],
+["M",6,"Vacaciones y novedades","Novedad",8.5,0,"n","Novedad Buk: vacaciones"],
+["M",10,"Nutresa (Pideky 2026)","Ejecución y análisis",7.5,0,"f","Continúa el análisis de resultados de la prueba de carga Pideky 2.0"],
+["M",10,"Zeus – Atrápalo","Alineación y seguimiento",1,0,"i","Validación de pruebas de carga de temporada alta"],
+["M",11,"Nutresa (Pideky 2026)","Informes y resultados",6.5,0,"f","Análisis de tiempos de respuesta de la prueba de estrés Pideky 2.0 y consolidación de resultados con el equipo"],
+["M",11,"Zeus – Atrápalo","Preventa y estimación",2,0,"i","Realización y envío de estimación de tiempos"],
+["M",12,"Capacitación y formación","Capacitación y formación",8.5,0,"i","Curso: uso de REST Assured para automatizar"],
+["M",13,"Capacitación y formación","Capacitación y formación",1,0,"i","Curso: aprendizaje profundo y machine learning, conceptos y aplicaciones"],
+["M",13,"Coomeva Med. Prepagada","Ejecución y análisis",7.5,0,"f","Análisis de resultados de las pruebas de escalabilidad para los 2 escenarios y las 3 funcionalidades"],
+["M",14,"Capacitación y formación","Capacitación y formación",7,0,"i","Cursos: contenedores y orquestación, diseño de pruebas SQ-AI, automatización low-code y automatización móvil con Appium"],
+["M",14,"Capacitación y formación","Capacitación y formación",1,0,"i","Capacitación revisión de logs"],
+["M",18,"Aviajar / Avianca","Preventa y estimación",2.125,0,"i","Apoyo a la estrategia de performance del cliente"],
+["M",18,"Banco Mundo Mujer","Preventa y estimación",2.125,0,"i","Apoyo a la estrategia de performance del cliente"],
+["M",18,"Laboratorio I+D (Fabric)","Laboratorio I+D",2.125,0,"i","Apoyo en la revisión de Microsoft Fabric"],
+["M",18,"SQAi / Kinetix","Producto interno",2.125,0,"i","Primera vista del apoyo a SQAi"],
+["M",19,"Aviajar / Avianca","Preventa y estimación",2.125,0,"i","Apoyo a la estrategia de performance del cliente"],
+["M",19,"Banco Mundo Mujer","Preventa y estimación",2.125,0,"i","Apoyo a la estrategia de performance del cliente"],
+["M",19,"Laboratorio I+D (Fabric)","Laboratorio I+D",2.125,0,"i","Apoyo en la revisión de Microsoft Fabric"],
+["M",19,"SQAi / Kinetix","Producto interno",2.125,0,"i","Primera vista del apoyo a SQAi"],
+["M",20,"Capacitación y formación","Capacitación y formación",8.5,0,"i","Cursos: diseño de interfaz de usuario y escritura UX, uso de Azure Boards y Test Plan, integración continua Serenity + Jenkins"],
+["M",21,"Capacitación y formación","Capacitación y formación",8,0,"i","Cursos: revisión de código generado por IA en 4 capas, mutation testing y property-based testing, tríada de métricas RAG; inicio de pruebas funcionales SQAI"],
+["M",24,"Gestión y soporte interno","Gestión y soporte interno",5,0,"i","Respaldo de la máquina de coworking por falta de espacio en disco; revisión de alcance Ficohsa"],
+["M",24,"Porvenir","Alineación y seguimiento",0.5,0,"f","Contextualización CT-7598 pruebas de performance y check diario de actividades"],
+["M",24,"Porvenir","Preventa y estimación",1,0,"f","Realización y envío de estimación de tiempos CT-7598, historia laboral generar PDF"],
+["M",24,"Porvenir","Diseño de scripts",2,0,"f","Diseño y configuración del script historia laboral generar PDF CT-7598"],
+["M",25,"Compensar","Alineación y seguimiento",0.5,0,"f","Interoperabilidad Empresarial, API de comunicaciones: pruebas no funcionales"],
+["M",25,"Compensar","Preventa y estimación",2,0,"f","Realización y envío de estimación de tiempos"],
+["M",25,"Porvenir","Ejecución y análisis",0.5,0,"f","Ejecución del servicio historia laboral generar PDF CT-7598 y validación de logs por códigos 210 y 211"],
+["M",25,"Compensar","Ejecución y análisis",0.5,0,"f","Validaciones para retomar las pruebas de carga"],
+["M",25,"Gestión y soporte interno","Gestión y soporte interno",2,0,"i","Generación de respaldo de la máquina de coworking por falta de espacio en disco"],
+["M",25,"Compensar","Ejecución y análisis",1,1,"f","Pruebas de carga Portal Corporativo, servidor de medios"],
+["M",25,"Compensar","Ejecución y análisis",0.5,0.5,"f","Pruebas de carga Portal Corporativo, servidor de medios"],
+["M",25,"Porvenir","Informes y resultados",3,0,"f","Análisis de resultados de la prueba de carga del servicio historia laboral generar PDF CT-7598"],
+["M",26,"Compensar","Informes y resultados",8.5,0,"f","Inicio del análisis de resultados para preinforme: métrica general con percentiles, transacciones por segundo y respuestas por segundo"],
+["M",27,"Compensar","Informes y resultados",8.5,0,"f","Continúa el análisis de resultados para preinforme: métricas individuales de peticiones de descargas"],
+["M",28,"Compensar","Ejecución y análisis",8,0,"f","Análisis de los recursos de CPU y red de los 3 servidores monitoreados"],
+["M",31,"Compensar","Ejecución y análisis",8,0,"f","Análisis de los recursos de memoria y disco de los 3 servidores monitoreados y tiempos de respuesta individuales"],
+["M",31,"Banco Ficohsa (NOVA)","Alineación y seguimiento",0.5,0,"f","Revisión de información del servicio 5344 receivable-invoice-customer-retrieve; la sesión de infraestructura se reagenda"]
+];
+const R=RAW.map(r=>({a:r[0],d:r[1],c:r[2],cat:r[3],h:r[4],e:r[5],r:r[6],t:r[7]}));
+
+/* Sesiones atendidas sin registro de horas — Rubén y Fredy */
+const SIN=[
+["GNP México","Acompañamiento a ejecución","Seguimiento Performance GNP (MX)"],
+["Banco Ficohsa (NOVA)","Alineación técnica","NOVA — Alineación componentes transversales, sesión 2"],
+["Banco Ficohsa (NOVA)","Alineación técnica","Alineación de Performance Ficohsa"],
+["Banco Ficohsa (NOVA)","Alineación técnica","NOVA — Alineación componentes transversales, sesión 4"],
+["Colcomercio (Manhattan)","Acompañamiento a ejecución","Revisemos pruebas de performance Manhattan"],
+["Banco Ficohsa (NOVA)","Alineación técnica","Definición de alcance capa media"],
+["Colcomercio (Manhattan)","Acompañamiento a ejecución","Avances E2E Manhattan"],
+["Aviajar / Avianca","Preventa y estimación","Estimación pruebas de performance Aviajar"],
+["Pluxee","Acompañamiento a ejecución","Pruebas de carga de pedidos"],
+["Pluxee","Capacitación","Capacitación revisión de logs"],
+["Colcomercio (Manhattan)","Preventa y estimación","Identificación de servicios críticos y volumetrías"],
+["Campañas Políticas","Preventa y estimación","Presentación del proyecto"],
+["SQAi / Kinetix","Producto interno","Apoyo a prueba UAT: análisis y scripts de performance"],
+["Banco Ficohsa (NOVA)","Alineación técnica","Performance Ficohsa"],
+["Banco Ficohsa (NOVA)","Alineación técnica","Revisión AWS"],
+["Sura México","Acompañamiento a ejecución","Performance proyecto de PC a tabletas"],
+["Colcomercio (Manhattan)","Alineación técnica","Sesión de infraestructura / pruebas de performance"],
+["Grupo Aval / Honduras","Preventa y estimación","Preventa Grupo Aval"],
+["SQAi / Kinetix","Producto interno","Revisión spec de performance"]
+];
+const H_SESION=(EST.R+EST.F+EST.M)/SIN.length;
+
+/* ============ ESTADO ============ */
+let who="ALL", est=false, sortK="d", sortD=1;
+const f1=n=>(Math.round(n*10)/10).toLocaleString("es-CO",{minimumFractionDigits:1,maximumFractionDigits:1});
+const equipo=()=>who==="ALL"?["R","F","M"]:[who];
+const sub=()=>who==="ALL"?R:R.filter(x=>x.a===who);
+const estH=()=>!est?0:equipo().reduce((a,k)=>a+EST[k],0);
+const sinVis=()=>equipo().some(k=>EST[k]>0)||who!=="M";
+const sesiones=()=>who==="M"?0:SIN.length;
+
+/* ============ KPIs ============ */
+function kpis(){
+  const s=sub();
+  const ord=s.reduce((a,x)=>a+x.h-x.e,0), ex=s.reduce((a,x)=>a+x.e,0), reg=ord+ex;
+  const fac=s.filter(x=>x.r==="f").reduce((a,x)=>a+x.h,0);
+  const nov=s.filter(x=>x.r==="n").reduce((a,x)=>a+x.h,0);
+  const trab=reg-nov;
+  const e=estH(), tot=reg+e, cap=CAP*equipo().length;
+  const frentes=new Set([...s.map(x=>x.c),...(who==="M"?[]:SIN.map(x=>x[0]))].filter(c=>!NO_FRENTE.has(c))).size;
+  const cliF=new Set(s.filter(x=>x.r==="f").map(x=>x.c)).size;
+  document.getElementById("kpis").innerHTML=`
+   <div class="kpi"><div class="k-l">Horas registradas en el timesheet</div>
+     <div class="k-v">${f1(reg)} <small>h</small></div>
+     <div class="k-s">${f1(ord)} ordinarias · ${f1(ex)} extras</div></div>
+   <div class="kpi bill"><div class="k-l">Horas cargadas a una cuenta de cliente</div>
+     <div class="k-v">${Math.round(fac/trab*100)}<small> %</small></div>
+     <div class="k-s">${f1(fac)} h facturables de ${f1(trab)} h trabajadas</div></div>
+   <div class="kpi hot"><div class="k-l">Ocupación sobre la capacidad de ${f1(cap)} h</div>
+     <div class="k-v">${Math.round(tot/cap*100)}<small> %</small></div>
+     <div class="k-s">${est?"esfuerzo total estimado":"solo horas registradas"}</div></div>
+   <div class="kpi est"><div class="k-l">Sesiones atendidas sin registro de horas</div>
+     <div class="k-v">${sesiones()}</div>
+     <div class="k-s">${sesiones()===0?"su apoyo cabe en la jornada registrada":(est?`≈ ${f1(e)} h estimadas`:"activa el interruptor para estimarlas")}</div></div>
+   <div class="kpi"><div class="k-l">Frentes de cliente atendidos en el mes</div>
+     <div class="k-v">${frentes}</div>
+     <div class="k-s">solo ${cliF} con horas cargadas a cuenta de cliente</div></div>`;
+}
+
+/* ============ TABLA OCUPACIÓN ============ */
+function occ(){
+  const ks=equipo(); let body="",T={o:0,e:0,r:0,x:0,t:0};
+  ks.forEach(k=>{
+    const s=R.filter(x=>x.a===k);
+    const o=s.reduce((a,x)=>a+x.h-x.e,0), ex=s.reduce((a,x)=>a+x.e,0), reg=o+ex;
+    const xe=est?EST[k]:0, tot=reg+xe, p=tot/CAP*100;
+    T.o+=o;T.e+=ex;T.r+=reg;T.x+=xe;T.t+=tot;
+    body+=`<tr><td>${NOMBRE[k]}</td><td>${f1(o)}</td><td>${ex?f1(ex):"—"}</td><td>${f1(reg)}</td>
+      <td class="est-col ${est&&xe?"":"off"}">${est?(xe?"+ "+f1(xe):"0,0"):"—"}</td><td><b>${f1(tot)}</b></td>
+      <td><span class="pct"><span class="bar-mini ${est&&xe?"est":"over"}"><i style="width:${Math.min(p,100)}%"></i></span>
+      <b>${Math.round(p)} %</b></span></td></tr>`;
+  });
+  const capT=CAP*ks.length, pT=T.t/capT*100;
+  if(ks.length>1) body+=`<tr class="total"><td>Equipo COE</td><td>${f1(T.o)}</td><td>${f1(T.e)}</td><td>${f1(T.r)}</td>
+      <td class="est-col ${est?"":"off"}">${est?"+ "+f1(T.x):"—"}</td><td>${f1(T.t)}</td>
+      <td><span class="pct"><span class="bar-mini ${est?"est":"over"}"><i style="width:${Math.min(pT,100)}%"></i></span>
+      ${Math.round(pT)} %</span></td></tr>`;
+  document.querySelector("#occTable tbody").innerHTML=body;
+  document.getElementById("occNote").innerHTML= est
+    ? `Con el esfuerzo estimado incluido, el equipo suma <b>${f1(T.t)} h</b> frente a una capacidad de ${f1(capT)} h:
+       un <b>${Math.round(pT)} %</b> de ocupación. Las ${f1(T.x)} h estimadas no provienen del timesheet y no deben
+       usarse para facturación.`
+    : `Los tres analistas cerraron <b>160 h ordinarias exactas</b>. Esa cifra es el techo del registro, no el límite
+       del esfuerzo: el trabajo que excedió el tope quedó fuera del timesheet. Las vacaciones aparecen como un
+       registro propio y filtrable, no como horas faltantes.`;
+}
+
+/* ============ SVG ============ */
+const NS="http://www.w3.org/2000/svg";
+const el=(n,at={})=>{const e=document.createElementNS(NS,n);for(const k in at)e.setAttribute(k,at[k]);return e;};
+const txt=(x,y,s,at={})=>{const t=el("text",Object.assign({x,y,"font-size":11,fill:"#5C6B8A","font-family":"Montserrat,sans-serif"},at));t.textContent=s;return t;};
+
+/* ============ COMPOSICIÓN FACTURABLE / INTERNO ============ */
+function mix(){
+  const ks=equipo(), LW=178,RW=8,BH=30,GAP=16,W=1080,PW=W-LW-RW;
+  const H=ks.length*(BH+GAP)+8, max=Math.max(...ks.map(k=>R.filter(x=>x.a===k).reduce((a,x)=>a+x.h,0)));
+  const svg=document.getElementById("mixChart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML="";
+  ks.forEach((k,i)=>{
+    const s=R.filter(x=>x.a===k), y=i*(BH+GAP);
+    const v={f:0,i:0,n:0}; s.forEach(x=>v[x.r]+=x.h);
+    const tot=v.f+v.i+v.n;
+    svg.appendChild(txt(LW-12,y+BH/2+4,NOMBRE[k],{"text-anchor":"end","font-size":12.5,fill:"#0E1730","font-weight":600}));
+    let x=LW;
+    [["f","var(--facturable)","facturable al cliente"],["i","var(--interno)","interno"],["n","var(--novedad)","novedad"]].forEach(([kk,col,lbl])=>{
+      if(v[kk]<=0) return;
+      const w=v[kk]/max*PW, rc=el("rect",{x,y,width:w,height:BH,fill:col,rx:2});
+      rc.appendChild(el("title")).textContent=`${NOMBRE[k]} — ${lbl}: ${f1(v[kk])} h (${Math.round(v[kk]/tot*100)} %)`;
+      svg.appendChild(rc);
+      if(w>52) svg.appendChild(txt(x+w/2,y+BH/2+4.5,Math.round(v[kk]/tot*100)+" %",
+        {"text-anchor":"middle","font-size":12,"font-weight":700,fill:"#fff"}));
+      x+=w;
+    });
+    svg.appendChild(txt(x+9,y+BH/2+4,f1(tot)+" h",{"font-size":11.5,"font-weight":700,fill:"#0E1730"}));
+  });
+}
+
+/* ============ COBERTURA POR CLIENTE ============ */
+function cov(){
+  const s=sub(), m={}, g=c=>m[c]||(m[c]={f:0,i:0,n:0,s:0});
+  s.forEach(x=>g(x.c)[x.r]+=x.h);
+  if(who!=="M") SIN.forEach(x=>g(x[0]).s++);
+  const rows=Object.entries(m).map(([c,v])=>({c,...v,x:est?v.s*H_SESION:0}))
+    .sort((a,b)=>(b.f+b.i+b.n+b.x)-(a.f+a.i+a.n+a.x)||b.s-a.s);
+  const LW=200,RW=70,BH=24,GAP=8,TOP=26,W=1080,PW=W-LW-RW;
+  const max=Math.max(...rows.map(r=>r.f+r.i+r.n+r.x),10)*1.02;
+  const H=TOP+rows.length*(BH+GAP)+14;
+  const svg=document.getElementById("covChart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML="";
+  const step=max>120?40:max>60?20:10;
+  for(let v=0;v<=max;v+=step){
+    const x=LW+v/max*PW;
+    svg.appendChild(el("line",{x1:x,y1:TOP-8,x2:x,y2:H-14,stroke:"#EDF1F8"}));
+    svg.appendChild(txt(x,TOP-14,v+" h",{"text-anchor":"middle","font-size":10,fill:"#9AA7C0"}));
+  }
+  rows.forEach((r,i)=>{
+    const y=TOP+i*(BH+GAP);
+    svg.appendChild(txt(LW-12,y+BH/2+4,r.c,{"text-anchor":"end","font-size":12,fill:"#0E1730","font-weight":600}));
+    let x=LW;
+    [["f","var(--facturable)","registrado al cliente"],["i","var(--interno)","registrado como interno"],
+     ["n","var(--novedad)","novedad"],["x","var(--sinreg)","estimado sin registro"]].forEach(([k,col,lbl])=>{
+      if(r[k]<=0) return;
+      const w=r[k]/max*PW, rc=el("rect",{x,y,width:Math.max(w,1.5),height:BH,fill:col,rx:2});
+      if(k==="x") rc.setAttribute("opacity",".72");
+      rc.appendChild(el("title")).textContent=`${r.c} — ${lbl}: ${f1(r[k])} h`;
+      svg.appendChild(rc); x+=w;
+    });
+    const tot=r.f+r.i+r.n+r.x;
+    if(tot>0) svg.appendChild(txt(x+8,y+BH/2+4,f1(tot)+" h",{"font-size":11,"font-weight":700,fill:"#0E1730"}));
+    if(r.s>0){
+      const bx=tot>0?x+8+String(f1(tot)).length*7+22:LW+6, gp=el("g");
+      gp.appendChild(el("rect",{x:bx,y:y+4,width:17*r.s+22,height:BH-8,rx:8,fill:"#fff",
+        stroke:"var(--sinreg)","stroke-width":1.2,"stroke-dasharray":"3 2"}));
+      for(let d=0;d<r.s;d++) gp.appendChild(el("circle",{cx:bx+13+d*17,cy:y+BH/2,r:4,fill:"var(--sinreg)"}));
+      gp.appendChild(el("title")).textContent=`${r.s} sesión(es) atendida(s) sin registro de horas`;
+      svg.appendChild(gp);
+    }
+  });
+}
+
+/* ============ CATEGORÍAS ============ */
+function cats(){
+  const ks=equipo(), s=sub(), m={};
+  s.forEach(x=>{ m[x.cat]=m[x.cat]||{R:0,F:0,M:0}; m[x.cat][x.a]+=x.h; });
+  const rows=Object.entries(m).map(([c,v])=>({c,...v,t:v.R+v.F+v.M})).sort((a,b)=>b.t-a.t);
+  const LW=176,RW=52,BH=20,GAP=8,W=560,PW=W-LW-RW,H=rows.length*(BH+GAP)+8;
+  const max=Math.max(...rows.map(r=>r.t));
+  const svg=document.getElementById("catChart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML="";
+  rows.forEach((r,i)=>{
+    const y=i*(BH+GAP);
+    svg.appendChild(txt(LW-11,y+BH/2+4,r.c,{"text-anchor":"end","font-size":11,fill:"#0E1730","font-weight":500}));
+    let x=LW;
+    ks.forEach(k=>{
+      if(r[k]<=0) return;
+      const w=r[k]/max*PW, rc=el("rect",{x,y,width:Math.max(w,1.5),height:BH,fill:COLOR[k],rx:2});
+      rc.appendChild(el("title")).textContent=`${NOMBRE[k]} — ${r.c}: ${f1(r[k])} h`;
+      svg.appendChild(rc); x+=w;
+    });
+    svg.appendChild(txt(x+7,y+BH/2+4,f1(r.t),{"font-size":10.5,"font-weight":700,fill:"#0E1730"}));
+  });
+  document.getElementById("catLeg").innerHTML=ks.map(k=>
+    `<span><i class="sw" style="background:${COLOR[k]}"></i> ${CORTO[k]}</span>`).join("");
+}
+
+/* ============ CARGA DIARIA ============ */
+function days(){
+  const ks=equipo(), s=sub(), m={};
+  for(let d=1;d<=31;d++) m[d]={R:0,F:0,M:0};
+  s.forEach(x=>m[x.d][x.a]+=x.h);
+  const W=560,H=232,L=30,B=42,T=14,PW=W-L-8,PH=H-B-T;
+  const max=ks.length===3?28:ks.length===2?19:10, bw=PW/31;
+  const svg=document.getElementById("dayChart");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML="";
+  for(let v=0;v<=max;v+=(max>20?7:max>12?5:4)){
+    const y=T+PH-v/max*PH;
+    svg.appendChild(el("line",{x1:L,y1:y,x2:W-8,y2:y,stroke:"#EDF1F8"}));
+    svg.appendChild(txt(L-7,y+3.5,v,{"text-anchor":"end","font-size":9.5,fill:"#9AA7C0"}));
+  }
+  const ref=8*ks.length, yr=T+PH-ref/max*PH;
+  svg.appendChild(el("line",{x1:L,y1:yr,x2:W-8,y2:yr,stroke:"var(--naranja)","stroke-width":1.3,"stroke-dasharray":"4 3"}));
+  svg.appendChild(txt(W-8,yr-6,`${ref} h`,{"text-anchor":"end","font-size":9.5,fill:"var(--naranja)","font-weight":700}));
+  for(let d=1;d<=31;d++){
+    const x=L+(d-1)*bw;
+    if(NOLAB.includes(d)) svg.appendChild(el("rect",{x,y:T,width:bw-1.5,height:PH,fill:"#E4EAF5",opacity:.55}));
+    let acc=0;
+    ks.forEach(k=>{
+      if(m[d][k]<=0) return;
+      const h=m[d][k]/max*PH, y=T+PH-acc-h;
+      const rc=el("rect",{x:x+1,y,width:bw-3,height:h,fill:COLOR[k],rx:1.5});
+      rc.appendChild(el("title")).textContent=`${d} de agosto — ${NOMBRE[k]}: ${f1(m[d][k])} h`;
+      svg.appendChild(rc); acc+=h;
+    });
+    if(d%2===1) svg.appendChild(txt(x+bw/2,H-B+18,d,{"text-anchor":"middle","font-size":9,fill:"#9AA7C0"}));
+  }
+  svg.appendChild(txt(L,H-8,"agosto 2026 · el 7 y el 17 fueron festivos",{"font-size":10,fill:"#9AA7C0"}));
+  document.getElementById("dayLeg").innerHTML=ks.map(k=>
+    `<span><i class="sw" style="background:${COLOR[k]}"></i> ${CORTO[k]}</span>`).join("")+
+    `<span><i class="sw" style="background:#E4EAF5"></i> No laboral</span>`;
+}
+
+/* ============ HEATMAP ============ */
+function heat(){
+  const cols=["Alineación técnica","Acompañamiento a ejecución","Preventa y estimación","Capacitación","Producto interno"];
+  const m={}; SIN.forEach(([c,t])=>{ (m[c]=m[c]||{})[t]=(m[c][t]||0)+1; });
+  const rows=Object.keys(m).sort((a,b)=>
+    Object.values(m[b]).reduce((x,y)=>x+y,0)-Object.values(m[a]).reduce((x,y)=>x+y,0));
+  const mx=Math.max(...rows.flatMap(r=>cols.map(c=>m[r][c]||0)));
+  let h=`<thead><tr><th class="rowh">Frente atendido</th>${cols.map(c=>`<th>${c}</th>`).join("")}<th>Total</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const tt=cols.reduce((a,c)=>a+(m[r][c]||0),0);
+    h+=`<tr><th class="rowh">${r}</th>`;
+    cols.forEach(c=>{const v=m[r][c]||0;
+      h+= v?`<td style="background:rgba(142,68,173,${.28+.72*(v/mx)})" title="${r} · ${c}: ${v} sesión(es)">${v}</td>`:`<td class="z">·</td>`;});
+    h+=`<td class="tot">${tt}</td></tr>`;
+  });
+  h+=`<tr><th class="rowh">Total</th>${cols.map(c=>
+    `<td class="tot">${rows.reduce((a,r)=>a+(m[r][c]||0),0)}</td>`).join("")}<td class="tot">${SIN.length}</td></tr></tbody>`;
+  document.getElementById("hmTable").innerHTML=h;
+}
+
+/* ============ DETALLE ============ */
+function filtered(){
+  const q=document.getElementById("q").value.toLowerCase().trim();
+  const c=document.getElementById("fCli").value,ct=document.getElementById("fCat").value,rg=document.getElementById("fReg").value;
+  return sub().filter(x=>(!c||x.c===c)&&(!ct||x.cat===ct)&&(!rg||x.r===rg)&&
+    (!q||(x.c+" "+x.cat+" "+x.t).toLowerCase().includes(q)))
+    .sort((a,b)=>{const A=a[sortK],B=b[sortK];
+      return (typeof A==="number"?A-B:String(A).localeCompare(String(B),"es"))*sortD;});
+}
+const REGL={f:"Facturable",i:"Interno",n:"Novedad"};
+function detail(){
+  const rs=filtered(), tb=document.querySelector("#dTable tbody");
+  if(!rs.length) tb.innerHTML=`<tr><td colspan="8" class="empty">Ningún registro coincide. Ajusta los filtros o limpia la búsqueda.</td></tr>`;
+  else tb.innerHTML=rs.map(x=>`<tr>
+    <td style="text-align:center"><span class="who ${x.a}" title="${NOMBRE[x.a]}">${x.a}</span></td>
+    <td style="text-align:left;font-weight:500">${String(x.d).padStart(2,"0")} ago</td>
+    <td class="cli">${x.c}</td>
+    <td style="text-align:left;font-weight:400;color:var(--muted)">${x.cat}</td>
+    <td><b>${f1(x.h)}</b></td><td>${x.e?f1(x.e):"—"}</td>
+    <td style="text-align:left"><span class="tag ${x.r}">${REGL[x.r]}</span></td>
+    <td class="desc-c">${x.t}</td></tr>`).join("");
+  document.getElementById("cnt").textContent=
+    `${rs.length} registro${rs.length===1?"":"s"} · ${f1(rs.reduce((a,x)=>a+x.h,0))} h`;
+}
+
+/* ============ INIT ============ */
+function fillSelects(){
+  const cs=[...new Set(R.map(x=>x.c))].sort((a,b)=>a.localeCompare(b,"es"));
+  const ct=[...new Set(R.map(x=>x.cat))].sort((a,b)=>a.localeCompare(b,"es"));
+  document.getElementById("fCli").insertAdjacentHTML("beforeend",cs.map(c=>`<option>${c}</option>`).join(""));
+  document.getElementById("fCat").insertAdjacentHTML("beforeend",ct.map(c=>`<option>${c}</option>`).join(""));
+  document.getElementById("nrec").textContent=R.length;
+}
+function render(){kpis();occ();mix();cov();cats();days();detail();}
+
+document.querySelectorAll(".seg button").forEach(b=>b.addEventListener("click",()=>{
+  who=b.dataset.who;
+  document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+  render();
+}));
+document.getElementById("estToggle").addEventListener("change",e=>{est=e.target.checked;render();});
+["q","fCli","fCat","fReg"].forEach(id=>document.getElementById(id).addEventListener("input",detail));
+document.querySelectorAll("#dTable thead th[data-k]").forEach(th=>th.addEventListener("click",()=>{
+  const k=th.dataset.k; sortD=(k===sortK)?-sortD:1; sortK=k;
+  document.querySelectorAll("#dTable thead th").forEach(x=>x.classList.remove("asc","desc"));
+  th.classList.add(sortD===1?"asc":"desc"); detail();
+}));
+document.getElementById("csvBtn").addEventListener("click",()=>{
+  const rows=filtered();
+  const csv=["Analista;Fecha;Cliente;Actividad;Horas;Extras;Registro;Descripcion",
+    ...rows.map(x=>[NOMBRE[x.a],`${String(x.d).padStart(2,"0")}/08/2026`,x.c,x.cat,
+      f1(x.h),f1(x.e),REGL[x.r],`"${x.t.replace(/"/g,"'")}"`].join(";"))].join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}));
+  a.download="ocupacion-coe-performance-agosto-2026.csv"; a.click(); URL.revokeObjectURL(a.href);
+});
+
+fillSelects(); heat(); render();
+window.addEventListener("resize",()=>{mix();cov();cats();days();});
+</script>
+</body>
+</html>

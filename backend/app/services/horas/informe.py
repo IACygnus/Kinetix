@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
 from app.schemas.time_tracking import InformeDatos
+from app.services.horas import fuentes, graficas
 
 # H-D54: el logo va embebido, no enlazado, para que el documento funcione sin red.
 RUTA_LOGO = Path(__file__).resolve().parents[2] / "assets" / "logo-sqa.png"
@@ -131,9 +132,30 @@ def _tabla(cabeceras: Sequence[str], filas: Iterable[str], clase: str = "",
         orden = f' data-col="{i}"' if ordenable else ""
         ths.append(f'<th class="{clases.strip()}"{orden}>{esc(c)}</th>')
     cuerpo = "".join(filas)
-    return (f'<table class="{clase}">'
+    # ETAPA D1 (D-D7): la tabla va dentro de una tarjeta —borde fino y esquinas
+    # redondeadas— que le cierra el borde de abajo y la separa de la siguiente.
+    # La tarjeta es SOLO de pantalla: en el PDF una caja con borde que cruza de
+    # página se dibuja partida, y el papel ya separa con el salto de hoja.
+    return (f'<div class="card"><table class="{clase}">'
             f"<thead><tr>{''.join(ths)}</tr></thead>"
-            f"<tbody>{cuerpo}</tbody></table>")
+            f"<tbody>{cuerpo}</tbody></table></div>")
+
+
+def _barra_pct(valor, pasada_de: float = 0) -> str:
+    """Un porcentaje con su barra al lado (ETAPA D1, D-D6).
+
+    Los dos en la MISMA celda, como en la referencia: la barra se lee de un
+    vistazo y la cifra está ahí para quien necesite el número exacto. Con
+    `pasada_de`, lo que supere ese umbral se pinta en naranja —es el caso de la
+    ocupación por encima del 100 %—.
+
+    Todo con `inline-block`: ni flex ni grid (regla 11).
+    """
+    v = float(valor or 0)
+    clase = "barra pasada" if pasada_de and v > pasada_de else "barra"
+    return (f'<span class="pct"><span class="{clase}">'
+            f'<i class="barra-relleno" style="width:{min(v, 100):.1f}%"></i>'
+            f"</span> {pct(valor)}</span>")
 
 
 def _celdas(valores: Sequence[str], alineadas: Sequence[int] = ()) -> str:
@@ -142,25 +164,53 @@ def _celdas(valores: Sequence[str], alineadas: Sequence[int] = ()) -> str:
         for i, v in enumerate(valores))
 
 
-def _indicador(etiqueta: str, valor: str, clave: str = "") -> str:
-    """Una casilla del resumen. En tabla, no en rejilla: la rama de impresión lo
-    exige (regla 11) y usar la misma estructura en las dos evita dos maquetas."""
+def _indicador(etiqueta: str, valor: str, clave: str = "", unidad: str = "",
+               pie: str = "", tono: str = "") -> str:
+    """Una casilla del resumen (ETAPA D1, D-D3).
+
+    Tres piezas, de arriba abajo: el **rótulo** pequeño, la **cifra grande y de
+    su color**, y debajo una **línea en gris con el desglose**. La unidad va
+    dentro de la cifra pero en pequeño y en gris, para que el número se lea de
+    lejos y no compita con la «h» o el «%».
+
+    Sigue en tabla y no en rejilla: la rama de impresión lo exige (regla 11) y
+    usar la misma estructura en las dos evita mantener dos maquetas.
+    """
     ident = f' id="ind-{clave}"' if clave else ""
-    return (f'<td class="ind"><span class="ind-et">{esc(etiqueta)}</span>'
-            f'<span class="ind-val"{ident}>{valor}</span></td>')
+    uni = f'<small class="ind-uni">{esc(unidad)}</small>' if unidad else ""
+    sub = f'<span class="ind-pie">{esc(pie)}</span>' if pie else ""
+    clase = f"ind {tono}".strip()
+    return (f'<td class="{clase}"><span class="ind-et">{esc(etiqueta)}</span>'
+            f'<span class="ind-val"><span class="ind-num"{ident}>{valor}</span>'
+            f"{uni}</span>{sub}</td>")
 
 
 # ===================== LAS SECCIONES =====================
 
 def _sec_resumen(d: InformeDatos, para_pdf: bool = False) -> str:
     r = d.resumen
+    # ETAPA D1 (D-D3): los seis indicadores son los de siempre y sus cifras son
+    # las de siempre. Lo que cambia es que cada uno lleva su color y, debajo, una
+    # línea que dice de dónde sale el número. Los pies NO traen dato nuevo: se
+    # arman con campos que el resumen ya calcula.
+    extra = float(r.overtime_hours or 0)
     casillas = [
-        _indicador("Horas registradas", horas(r.total_hours), "total"),
-        _indicador("Ordinarias", horas(r.ordinary_hours), "ord"),
-        _indicador("Horas extra", horas(r.overtime_hours), "extra"),
-        _indicador("Facturables", horas(r.billable_hours), "fact"),
-        _indicador("% facturable", pct(r.billable_pct), "pctfact"),
-        _indicador("Días sin registrar", num(r.pending_days, 0), "pend"),
+        # El desglose de esta cifra son las dos casillas de al lado, así que
+        # repetirlo aquí sobraba: el pie dice de cuántos registros sale.
+        _indicador("Horas registradas", num(r.total_hours), "total", "h",
+                   f"en {num(r.entries_count, 0)} registros del periodo"),
+        _indicador("Ordinarias", num(r.ordinary_hours), "ord", "h",
+                   f"sobre una jornada de {horas(r.expected_hours)}"),
+        _indicador("Horas extra", num(r.overtime_hours), "extra", "h",
+                   "ninguna en el periodo" if extra <= 0 else "por encima de la jornada",
+                   tono="" if extra <= 0 else "caliente"),
+        _indicador("Facturables", num(r.billable_hours), "fact", "h",
+                   "las que se cargan a una cuenta de cliente", tono="factura"),
+        _indicador("% facturable", num(r.billable_pct, 1), "pctfact", "%",
+                   f"{horas(r.billable_hours)} de {horas(r.total_hours)}", tono="factura"),
+        _indicador("Días sin registrar", num(r.pending_days, 0), "pend", "",
+                   f"entre {num(r.people_count, 0)} persona(s)",
+                   tono="" if not r.pending_days else "pendiente"),
     ]
     return (f'<table class="indicadores"><tr>{"".join(casillas[:3])}</tr>'
             f'<tr>{"".join(casillas[3:])}</tr></table>'
@@ -176,12 +226,19 @@ def _sec_personas(d: InformeDatos, para_pdf: bool = False) -> str:
             f'<tr data-persona="{esc(p.user_name)}">'
             + _celdas([esc(p.user_name), horas(p.expected_hours), horas(p.ordinary_hours),
                        horas(p.overtime_hours), horas(p.billable_hours),
-                       pct(p.occupancy_pct), num(p.pending_days, 0)],
+                       # La ocupación pasada del 100 % se pinta en naranja: es
+                       # más jornada de la que tocaba, y eso se ve, no se busca.
+                       _barra_pct(p.occupancy_pct, pasada_de=100),
+                       num(p.pending_days, 0)],
                       alineadas=(1, 2, 3, 4, 5, 6))
             + "</tr>")
-    return _tabla(["Persona", "Jornada", "Ordinarias", "Extra", "Facturables",
-                   "Ocupación", "Días sin registrar"], filas,
-                  alineadas=(1, 2, 3, 4, 5, 6), ordenable=True)
+    # ETAPA D1 (D-D6): encima de la tabla, y dibujando DOS DE SUS COLUMNAS —las
+    # horas registradas y las facturables—, no un dato de fuera. La tabla se
+    # queda entera debajo.
+    return (graficas.facturable_por_persona(d.personas, horas, para_pdf)
+            + _tabla(["Persona", "Jornada", "Ordinarias", "Extra", "Facturables",
+                      "Ocupación", "Días sin registrar"], filas,
+                     alineadas=(1, 2, 3, 4, 5, 6), ordenable=True))
 
 
 def _sec_facturacion(d: InformeDatos, para_pdf: bool = False) -> str:
@@ -200,16 +257,15 @@ def _sec_facturacion(d: InformeDatos, para_pdf: bool = False) -> str:
 def _sec_reparto(items, titulo_col: str) -> str:
     filas = []
     for x in items:
-        # La barra va en una celda de tabla con un div de ancho porcentual: se ve
-        # igual en pantalla y en papel, y no necesita ni flex ni grid.
-        barra = (f'<div class="barra"><div class="barra-relleno" '
-                 f'style="width:{min(float(x.pct), 100):.1f}%"></div></div>')
+        # ETAPA D1 (D-D6): la barra y su porcentaje van en la MISMA celda, como
+        # en la referencia. Antes la barra tenía columna propia, con la cabecera
+        # vacía.
         filas.append(
             f'<tr data-cliente="{esc(x.name)}">'
-            + _celdas([esc(x.name), horas(x.hours), pct(x.pct), barra],
+            + _celdas([esc(x.name), horas(x.hours), _barra_pct(x.pct)],
                       alineadas=(1, 2))
             + "</tr>")
-    return _tabla([titulo_col, "Horas", "%", ""], filas, alineadas=(1, 2), ordenable=True)
+    return _tabla([titulo_col, "Horas", "%"], filas, alineadas=(1, 2), ordenable=True)
 
 
 def _sec_proyectos(d: InformeDatos, para_pdf: bool = False) -> str:
@@ -249,12 +305,17 @@ def _sec_mapa(d: InformeDatos, para_pdf: bool = False) -> str:
         celdas.append(f'<td class="num">{horas(p.total_hours)}</td>')
         filas.append(f'<tr data-persona="{esc(p.user_name)}">{"".join(celdas)}</tr>')
 
+    # ETAPA D1 (D-D6): la leyenda nombra TODOS los colores. Faltaba el estado
+    # `vacio` —un día laborable que todavía no ha llegado—, que sale en blanco:
+    # sin su entrada, el lector no tenía forma de saber qué era una casilla
+    # vacía, y es justo la que más se ve en un informe a mitad de mes.
     leyenda = ('<p class="nota leyenda">'
                '<span class="mini trabajado"></span> trabajado '
                '<span class="mini incompleto"></span> incompleto '
                '<span class="mini festivo"></span> festivo '
                '<span class="mini ausencia"></span> ausencia '
-               '<span class="mini finde"></span> fin de semana</p>')
+               '<span class="mini finde"></span> fin de semana '
+               '<span class="mini vacio"></span> aún no ha llegado</p>')
     return (f'<table class="mapa"><thead><tr>{"".join(cab)}</tr></thead>'
             f'<tbody>{"".join(filas)}</tbody></table>{leyenda}')
 
@@ -331,12 +392,109 @@ def _sec_detalle(d: InformeDatos, para_pdf: bool = False) -> str:
                   clase="detalle", alineadas=(5,), ordenable=True) + aviso
 
 
+# ===================== LOS PÁRRAFOS DE SECCIÓN (ETAPA D1, D-D4) =====================
+#
+# Debajo de cada título, antes de la tabla, un párrafo corto que dice QUÉ SE ESTÁ
+# MIRANDO Y POR QUÉ IMPORTA. Es lo que más separa un informe de un listado de
+# tablas, y es lo que le faltaba a este.
+#
+# Son **texto fijo, escrito una vez y sin IA**. Interpolan cifras del propio
+# informe, nunca datos nuevos. Tres reglas al escribirlos:
+#
+#   1. de una a tres líneas, en español llano y sin markdown;
+#   2. no repiten la tabla: explican el término que el lector no tiene por qué
+#      saber —qué es una hora facturable, qué mide la ocupación—;
+#   3. **avisan de lo que el dato NO dice**, que es lo que convierte una tabla en
+#      un informe. Si una cifra se puede leer mal, se dice aquí.
+
+def _intro_resumen(d: InformeDatos) -> str:
+    r = d.resumen
+    if r.pending_days:
+        pista = (f" Los {num(r.pending_days, 0)} días sin registrar son la pista "
+                 f"de cuántas pueden faltar.")
+    else:
+        pista = " En el periodo no quedó ningún día sin registrar."
+    return ("Lo que el equipo apuntó en el periodo y cuánto de ello se carga a una "
+            "cuenta de cliente. Mide el registro, no el esfuerzo: las horas que "
+            "nadie apuntó no están en ninguna de estas cifras." + pista)
+
+
+def _intro_personas(d: InformeDatos) -> str:
+    cap = d.capacidad
+    return ("Cuánto registró cada persona frente a la jornada que le correspondía "
+            "hasta hoy, y la ocupación que sale de comparar esas dos columnas. Un "
+            "porcentaje bajo puede ser trabajo sin apuntar y no tiempo libre: la "
+            "última columna es la que lo dice. La jornada de aquí llega solo hasta "
+            f"hoy; la capacidad del periodo completo —{horas(cap.hours_per_analyst)} "
+            "por analista— está en la portada, y son cifras distintas a propósito.")
+
+
+def _intro_facturacion(d: InformeDatos) -> str:
+    return ("El dato que ordena el informe. Una hora facturable está cargada a una "
+            "cuenta abierta del cliente; una no facturable es trabajo igual de real "
+            "que no tiene dónde cargarse, casi siempre porque el proyecto todavía no "
+            "tiene código. El porcentaje dice dónde se apuntó la hora, no si el "
+            "trabajo valió la pena.")
+
+
+def _intro_clientes(d: InformeDatos) -> str:
+    return ("En qué clientes se repartió el tiempo del periodo. El porcentaje es "
+            "sobre el total registrado, lo facturable y lo que no, todo junto: un "
+            "cliente puede ocupar mucho sitio en esta tabla sin haber dejado ni una "
+            "hora facturable, y la sección anterior es la que lo cuenta.")
+
+
+def _intro_actividades(d: InformeDatos) -> str:
+    return ("El reparto por la actividad que cada persona eligió al registrar. Dice "
+            "en qué se ocupó el tiempo, no cuánto rindió: una hora de preparación y "
+            "una de ejecución pesan lo mismo aquí.")
+
+
+def _intro_proyectos(d: InformeDatos) -> str:
+    return ("Los proyectos que tuvieron horas en el periodo, y cuánto llevan "
+            "gastado frente a lo estimado. Las dos columnas de horas no miden lo "
+            "mismo: en el periodo son las de estas fechas, y consumidas es todo lo "
+            "que lleva el proyecto desde que se abrió, que es contra lo que se mide "
+            "el desfase. Un proyecto sin estimación sale igual, pero su estado no "
+            "significa nada.")
+
+
+def _intro_mapa(d: InformeDatos) -> str:
+    return ("Día a día, quién registró y quién no. El color dice en qué estado quedó "
+            "cada día y la leyenda de abajo los nombra uno a uno; las horas exactas "
+            "están en el detalle. Un día en ámbar tiene horas apuntadas, solo que "
+            "menos de su jornada, y los días que todavía no han llegado salen en "
+            "blanco y no se reclaman.")
+
+
+def _intro_detalle(d: InformeDatos) -> str:
+    return (f"Los {num(d.detalle_total, 0)} registros del periodo, uno por fila. Se "
+            "puede filtrar, ordenar por cualquier columna y descargar en CSV lo que "
+            "quede a la vista. Es la única parte del informe donde se lee lo que "
+            "cada persona escribió en las observaciones.")
+
+
+_INTROS = {
+    "resumen": _intro_resumen,
+    "personas": _intro_personas,
+    "facturacion": _intro_facturacion,
+    "clientes": _intro_clientes,
+    "actividades": _intro_actividades,
+    "proyectos": _intro_proyectos,
+    "mapa": _intro_mapa,
+    "detalle": _intro_detalle,
+}
+
+
 _CONSTRUCTORES = {
     "resumen": _sec_resumen,
     "personas": _sec_personas,
     "facturacion": _sec_facturacion,
     "clientes": lambda d, p=False: _sec_reparto(d.por_cliente, "Cliente"),
-    "actividades": lambda d, p=False: _sec_reparto(d.por_actividad, "Actividad"),
+    # ETAPA D1 (D-D6): la gráfica va ENCIMA de la tabla, no en su lugar.
+    "actividades": lambda d, p=False: (
+        graficas.horas_por_actividad(d.por_actividad, horas, p)
+        + _sec_reparto(d.por_actividad, "Actividad")),
     "proyectos": _sec_proyectos,
     "mapa": _sec_mapa,
     "detalle": _sec_detalle,
@@ -346,29 +504,40 @@ _CONSTRUCTORES = {
 def _secciones(d: InformeDatos, elegidas: Sequence[str], para_pdf: bool) -> str:
     """El cuerpo del documento. **El mismo para las dos ramas** (H-D50)."""
     partes = []
-    for i, (clave, titulo) in enumerate(SECCIONES, start=1):
+    for clave, titulo in SECCIONES:
         if clave not in elegidas:
             continue
         # H-D69: el PDF va todo en vertical. La única sección que obligaba a
         # girar la hoja era «Horas día a día», y ya no está.
         clases = "seccion"
+        # ETAPA D1 (D-D5): fuera el cuadro numerado y el subrayado naranja. El
+        # título va grande y en azul, y debajo su párrafo (D-D4).
+        intro = _INTROS.get(clave)
+        cab = (f'<div class="sec-cab"><h2>{esc(titulo)}</h2>'
+               + (f'<p class="sec-intro">{esc(intro(d))}</p>' if intro else "")
+               + "</div>")
         partes.append(
-            f'<section class="{clases}" id="sec-{clave}">'
-            f'<h2><span class="numsec">{i}</span>{esc(titulo)}</h2>'
+            f'<section class="{clases}" id="sec-{clave}">{cab}'
             f'{_CONSTRUCTORES[clave](d, para_pdf)}</section>')
     return "".join(partes)
 
 
 def _encabezado(d: InformeDatos) -> str:
-    """La portada (ETAPA H7, H-D73), la que aprobó Fredy.
+    """La portada. Contenido de H7 (H-D73), diseño de la ETAPA D1 (D-D2).
 
-    De arriba abajo: el logo con «Centro de Excelencia · Performance» al lado y la
-    fecha de generación a la derecha; una banda azul y naranja; el título con el
-    periodo en naranja; y una fila con **Dirigido a**, **Período** y **Equipo**,
-    más la **capacidad base** del periodo.
+    De arriba abajo, **sobre un bloque azul marino a sangre**: el logo con
+    «Centro de Excelencia · Performance» al lado y la fecha de generación a la
+    derecha; el título grande **con el periodo dentro, en amarillo**; y una fila
+    con los cuatro datos —**Dirigido a**, **Período**, **Equipo** y **Capacidad
+    base**—, cada uno con su rótulo pequeño arriba y su valor debajo. Cierra el
+    bloque una banda de tres tramos: azul, naranja y amarillo.
 
-    Todo en tablas y en `mm`/`pt`: la misma estructura sirve para la pantalla y
-    para el PDF, y la rama de impresión no admite `flex` ni `grid` (regla 11).
+    **El contenido es el mismo que aprobó Fredy** (D-D8): cambia dónde vive cada
+    dato y cómo se ve, no qué dice. La capacidad base sube a la misma fila que
+    los otros tres en vez de ir en una segunda fila a lo ancho.
+
+    Todo en tablas: la misma estructura sirve para la pantalla y para el PDF, y
+    la rama de impresión no admite `flex` ni `grid` (regla 11).
     """
     logo = _logo()
     marca = (f'<img class="logo" src="data:image/png;base64,{logo}" alt="SQA Kinetix">'
@@ -403,72 +572,117 @@ def _encabezado(d: InformeDatos) -> str:
         return (f'<td class="dato"><span class="dato-rot">{esc(rotulo)}</span>'
                 f'<span class="dato-val">{valor}</span></td>')
 
+    # ETAPA D1 (D-D2): el bloque azul marino a sangre, el título con el período
+    # DENTRO en amarillo, y los cuatro datos en una sola fila. La banda de tres
+    # tramos cierra el bloque por abajo. Todo en tablas: la rama de impresión no
+    # admite ni `flex` ni `grid` (regla 11) y así las dos salidas comparten
+    # estructura.
     return (
         f'<header class="cabecera">'
+        f'<div class="portada-fondo">'
         f'<table class="cab"><tr>'
         f'<td class="cab-logo">{marca}</td>'
         f'<td class="cab-coe">Centro de Excelencia<span class="coe-sep"> · </span>'
         f'<strong>Performance</strong></td>'
         f'<td class="cab-der">Generado el {fecha_larga(d.generado.date())}</td>'
         f"</tr></table>"
-        f'<div class="banda"><span class="banda-naranja"></span></div>'
         f'<div class="titulo">'
-        f"<h1>Informe de horas</h1>"
-        f'<p class="sub">{esc(d.filtros.periodo)}</p>'
+        f'<h1>Informe de horas <em>{esc(d.filtros.periodo)}</em></h1>'
         f"</div>"
         f'<table class="portada"><tr>'
         + dato("Dirigido a", esc(d.filtros.dirigido_a) or "—")
         + dato("Período", esc(d.filtros.periodo))
         + dato("Equipo", equipo)
-        + "</tr><tr>"
-        + f'<td class="dato" colspan="3"><span class="dato-rot">Capacidad base</span>'
-          f'<span class="dato-val">{capacidad}</span></td>'
+        + dato("Capacidad base", capacidad)
         + "</tr></table>"
+        f"</div>"
+        f'<div class="banda"><span class="b-azul"></span>'
+        f'<span class="b-naranja"></span><span class="b-amarillo"></span></div>'
         f"{extra}</header>")
 
 
 # ===================== LOS ESTILOS =====================
 
 _BASE_CSS = """
+/* ===== LA PALETA (ETAPA D1, decisión B) =====
+   Sustituye a la de H-D73, que era provisional. Los valores están MEDIDOS del
+   informe de referencia que aprobó Fredy y escritos en
+   `docs/diseno-informe-horas.md`: si hay que cambiar uno, se cambia allí
+   primero. Son variables y no literales para que no queden dos paletas
+   conviviendo en el documento. */
+:root{
+  --dark:#060B29;        /* el bloque de la portada y el pie */
+  --navy:#03287D;        /* títulos y cifras */
+  --azul:#0032A7;        /* lo facturable, el primer tramo de la banda */
+  --naranja:#FCA311;     /* lo que se pasa de la jornada, el segundo tramo */
+  --amarillo:#FFC440;    /* el período dentro del título, el tercer tramo */
+  --sinreg:#8E44AD;      /* lo que falta por registrar */
+  --bg:#F2F5FA; --superficie:#FFFFFF; --linea:#DCE3EF;
+  --tinta:#0E1730; --apagado:#5C6B8A;
+  --fondo-suave:#F7F9FD; --separador:#EDF1F8; --canal:#E4EAF5;
+  /* Los tres que solo viven sobre el fondo oscuro. */
+  --rotulo-oscuro:#8497C0; --unidad-oscuro:#9FB0D4; --linea-oscura:#1E2A4E;
+  /* Las dos familias (decisión A). La pila de respaldo es la de antes, por si
+     faltara un `.woff2`: el documento se ve peor, pero se ve. */
+  --titular:'Exo 2','Segoe UI',system-ui,sans-serif;
+  --texto:'Montserrat','Segoe UI',system-ui,-apple-system,sans-serif;
+}
 *{box-sizing:border-box}
-body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:#1f2937;margin:0}
-h1{font-size:26pt;color:#0a1628;margin:0 0 2mm}
-h2{font-size:13pt;color:#0a1628;margin:0 0 3mm;border-bottom:2px solid #f5a623;
-   padding-bottom:1.5mm}
-.numsec{display:inline-block;background:#0a1628;color:#fff;width:7mm;height:7mm;
-        line-height:7mm;text-align:center;border-radius:1mm;margin-right:2.5mm;
-        font-size:10pt}
-.sub{font-size:13pt;color:#4b5563;margin:0 0 1mm}
-.filtros{font-size:10pt;color:#6b7280;margin:0}
-/* ===== La portada (H-D73). Los colores del logo: azul marino y naranja. ===== */
+body{font-family:var(--texto);color:var(--tinta);margin:0}
+h1{font-family:var(--titular);font-weight:800;font-size:26pt;color:var(--navy);
+   margin:0 0 2mm}
+/* ETAPA D1 (D-D5): el título va grande y en azul. Fuera el cuadro numerado y el
+   subrayado naranja: numeraban ocho secciones que ya se leen en orden, y el
+   subrayado partía la sección justo donde tiene que respirar. */
+h2{font-family:var(--titular);font-weight:600;font-size:15pt;color:var(--navy);
+   margin:0 0 1.5mm;letter-spacing:-.2pt}
+/* El párrafo de sección (D-D4): dice qué se está mirando y por qué importa. */
+.sec-cab{margin-bottom:4mm;max-width:76ch}
+.sec-intro{font-size:9pt;color:var(--apagado);margin:0;line-height:1.5}
+.sub{font-size:13pt;color:var(--apagado);margin:0 0 1mm}
+.filtros{font-size:10pt;color:var(--apagado);margin:2mm 0 0}
+/* ===== LA PORTADA (contenido H-D73, diseño D-D2) =====
+   Un bloque azul marino a sangre. Dentro, de arriba abajo: el logo con la
+   unidad al lado y la fecha a la derecha; el título con el período DENTRO, en
+   amarillo; y los cuatro datos en una fila. Cierra por abajo la banda de tres
+   tramos. Todo en tablas (regla 11). */
 .cabecera{margin-bottom:7mm}
-.cab{width:100%;margin-bottom:2.5mm}
-.cab-logo{width:40mm;vertical-align:middle}
-.cab-coe{font-size:11pt;color:#0a1628;vertical-align:middle;letter-spacing:.3pt}
-.cab-coe strong{color:#f5a623}
-.coe-sep{color:#f5a623;font-weight:700}
-.cab-der{text-align:right;font-size:9pt;color:#6b7280;vertical-align:middle}
-.logo{height:22mm}                 /* que se lea: 14 mm se quedaba corto */
-.marca{font-size:22pt;color:#0a1628;letter-spacing:.5pt;font-weight:700}
-.marca b{color:#f5a623}
-/* La banda: azul de lado a lado y el naranja encima, a la izquierda. En dos
-   divs y no en un degradado, que WeasyPrint dibuja de forma desigual. */
-.banda{background:#0a1628;height:2.2mm;margin-bottom:5mm;font-size:0}
-.banda-naranja{display:inline-block;background:#f5a623;height:2.2mm;width:38%}
-.titulo h1{font-size:26pt;color:#0a1628;margin:0;letter-spacing:-.3pt}
-.titulo .sub{font-size:16pt;color:#f5a623;font-weight:700;margin:1mm 0 5mm}
-/* La fila de datos de la portada: Dirigido a · Período · Equipo, y debajo la
-   capacidad base. En tabla, que es lo único que la rama de impresión admite. */
-.portada{width:100%;border-top:.5pt solid #e5e7eb}
-.portada td.dato{width:33.33%;padding:3mm 4mm 3mm 0;vertical-align:top;
-                 border-bottom:.5pt solid #e5e7eb}
-.dato-rot{display:block;font-size:8pt;color:#6b7280;text-transform:uppercase;
-          letter-spacing:.4pt;margin-bottom:1mm}
-.dato-val{display:block;font-size:11pt;color:#0a1628;font-weight:600}
+.portada-fondo{background:var(--dark);color:#fff;padding:8mm 8mm 2mm}
+.cab{width:100%;margin-bottom:6mm}
+/* `width:1%` encoge la columna del logo a lo que ocupa la imagen: con un ancho
+   fijo se comía el sitio y la fecha de la derecha partía en dos líneas. */
+.cab-logo{width:1%;padding-right:7mm;vertical-align:middle}
+.cab-coe{font-size:10pt;color:var(--unidad-oscuro);vertical-align:middle;
+         letter-spacing:.3pt}
+.cab-coe strong{color:var(--amarillo)}
+.coe-sep{color:var(--amarillo);font-weight:700}
+.cab-der{text-align:right;font-size:8.5pt;color:var(--rotulo-oscuro);
+         vertical-align:middle;white-space:nowrap}
+.logo{height:18mm}
+.marca{font-family:var(--titular);font-size:22pt;color:#fff;letter-spacing:.5pt;
+       font-weight:800}
+.marca b{color:var(--amarillo)}
+.titulo h1{font-size:30pt;color:#fff;margin:0;letter-spacing:-.5pt;line-height:1.05}
+.titulo h1 em{font-style:normal;color:var(--amarillo);display:block}
+.portada{width:100%;border-top:.5pt solid var(--linea-oscura);margin-top:6mm}
+.portada td.dato{width:25%;padding:4mm 4mm 4mm 0;vertical-align:top}
+.dato-rot{display:block;font-size:8pt;color:var(--rotulo-oscuro);margin-bottom:1mm}
+.dato-val{display:block;font-size:10pt;color:#fff;font-weight:600}
+/* La banda: tres tramos en tres spans y no en un degradado, que WeasyPrint
+   dibuja de forma desigual. El reparto es el de la referencia. */
+.banda{height:1.8mm;font-size:0;width:100%;margin-bottom:6mm}
+.banda span{display:inline-block;height:1.8mm}
+.b-azul{background:var(--azul);width:62%}
+.b-naranja{background:var(--naranja);width:26%}
+.b-amarillo{background:var(--amarillo);width:12%}
 table{border-collapse:collapse;width:100%}
-th{background:#f3f4f6;color:#374151;font-size:8.5pt;text-transform:uppercase;
-   text-align:left;padding:2mm;border-bottom:1.5pt solid #d1d5db}
-td{padding:1.8mm 2mm;border-bottom:.5pt solid #e5e7eb;font-size:9.5pt}
+/* ETAPA D1 (D-D7): la cabecera sale de las versalitas. A 8,5 pt, en mayúsculas
+   se lee peor y ocupa más, y la referencia la tiene en caja normal. Igual en
+   pantalla y en papel: no hay razón para que difieran. */
+th{background:var(--fondo-suave);color:var(--apagado);font-size:8.5pt;
+   font-weight:600;text-align:left;padding:2.4mm 2mm;
+   border-bottom:1pt solid var(--linea)}
+td{padding:1.8mm 2mm;border-bottom:.5pt solid var(--separador);font-size:9.5pt}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.izq{text-align:left}
 tr.mal td{background:#fef2f2}
@@ -479,17 +693,46 @@ tr.ojo td{background:#fffbeb}
 .pill.ojo{background:#fef3c7;color:#92400e}
 .pill.mal{background:#fee2e2;color:#991b1b}
 strong.mal{color:#991b1b}
-.indicadores td.ind{width:33%;border:.5pt solid #e5e7eb;padding:3mm;
-                    background:#f9fafb}
-.ind-et{display:block;font-size:8pt;color:#6b7280;text-transform:uppercase}
-.ind-val{display:block;font-size:17pt;font-weight:700;color:#0a1628;
-         font-variant-numeric:tabular-nums}
-.nota{font-size:9pt;color:#6b7280;margin:2mm 0 0}
-.vacio{font-size:10pt;color:#9ca3af;padding:4mm 0;margin:0}
-.barra{background:#e5e7eb;height:3mm;border-radius:2mm;overflow:hidden;min-width:25mm}
-.barra-relleno{background:#4f46e5;height:100%}
+/* ===== LOS INDICADORES (D-D3) =====
+   Rótulo pequeño arriba, cifra grande y de su color, y debajo una línea en gris
+   con el desglose. La unidad va dentro de la cifra, en pequeño y en gris, para
+   que el número se lea de lejos y no compita con la «h» o el «%». */
+.indicadores td.ind{width:33.33%;border:.5pt solid var(--linea);padding:4mm;
+                    background:var(--superficie);vertical-align:top}
+.ind-et{display:block;font-size:8pt;color:var(--apagado);font-weight:600;
+        line-height:1.3;margin-bottom:2mm}
+.ind-val{display:block;font-family:var(--titular);font-weight:800;font-size:22pt;
+         color:var(--navy);line-height:1;letter-spacing:-.4pt}
+.ind-num{font-variant-numeric:tabular-nums}
+.ind-uni{font-family:var(--texto);font-size:10pt;font-weight:600;
+         color:var(--apagado);letter-spacing:0;margin-left:.8mm}
+.ind-pie{display:block;font-size:8pt;color:var(--apagado);margin-top:2mm;
+         line-height:1.4}
+.ind.factura .ind-val{color:var(--azul)}
+.ind.caliente .ind-val{color:var(--naranja)}
+.ind.pendiente .ind-val{color:var(--sinreg)}
+.nota{font-size:9pt;color:var(--apagado);margin:2mm 0 0}
+.vacio{font-size:10pt;color:var(--apagado);padding:4mm 0;margin:0}
+/* La barra y su porcentaje, en la misma celda (D-D6). Todo `inline-block`:
+   la rama de impresión no admite flex (regla 11). */
+.pct{white-space:nowrap}
+.barra{display:inline-block;vertical-align:middle;width:16mm;height:1.6mm;
+       background:var(--canal);border-radius:.8mm;overflow:hidden;margin-right:1.8mm}
+.barra-relleno{display:block;background:var(--azul);height:100%}
+.barra.pasada .barra-relleno{background:var(--naranja)}
+/* ===== LAS GRÁFICAS (D-D6) =====
+   El SVG lo escribe `graficas.py` y se estira al ancho de su caja. La leyenda
+   es HTML y no SVG, para que pueda partir en varias líneas si hace falta. */
+.grafica{margin:0 0 5mm}
+.svg-barras{width:100%;height:auto;display:block}
+.leyenda-grafica{font-size:8pt;color:var(--apagado);margin:2.5mm 0 0;
+                 border-top:.5pt solid var(--separador);padding-top:2mm}
+.clave{display:inline-block;margin-right:6mm;white-space:nowrap}
+.clave b{color:var(--tinta);font-weight:700}
+.sw{display:inline-block;width:2.6mm;height:2.6mm;border-radius:.5mm;
+    vertical-align:middle;margin-right:1.6mm}
 .mapa th.dia,.diaria th.dia{text-align:center;padding:1mm .4mm;font-size:8pt}
-.dsem{display:block;color:#9ca3af}
+.dsem{display:block;color:var(--apagado)}
 .dnum{display:block;font-weight:700}
 .mapa td.casilla,.diaria td.celda{text-align:center;font-size:8pt;padding:1mm .4mm;
                                   font-variant-numeric:tabular-nums}
@@ -499,22 +742,52 @@ td.casilla.festivo{background:#e0e7ff}
 td.casilla.ausencia{background:#f3e8ff}
 td.casilla.finde{background:#f3f4f6}
 .mini{display:inline-block;width:3.5mm;height:3.5mm;vertical-align:middle;
-      border:.5pt solid #d1d5db;margin:0 1mm 0 3mm}
+      border:.5pt solid var(--linea);margin:0 1mm 0 3mm}
 .mini.trabajado{background:#dcfce7}.mini.incompleto{background:#fef3c7}
 .mini.festivo{background:#e0e7ff}.mini.ausencia{background:#f3e8ff}
+.mini.vacio{background:#fff}
 .mini.finde{background:#f3f4f6}
 """
 
 _PDF_CSS = """
 @page{size:A4 portrait;margin:14mm 12mm 16mm;
       @bottom-right{content:"Página " counter(page) " de " counter(pages);
-                    font-size:8pt;color:#9ca3af}}
+                    font-size:8pt;color:var(--apagado)}}
+/* ===== LA PORTADA A SANGRE (ETAPA D1.4, D-D2 · D-D9) =====
+   `@page :first{margin:0}` es la única forma fiable de que un fondo de color
+   llegue al borde del papel; es la misma que usa el informe de análisis
+   (CLAUDE.md §15). Como deja SIN MÁRGENES la primera hoja entera, la portada
+   tiene que ocuparla toda: por eso lleva alto fijo y salto de página detrás.
+   Una portada de color que se queda a 12 mm del borde parece un fallo de
+   impresión, no un diseño.
+
+   Las medidas suman 296 de los 297 mm del A4. El milímetro que sobra es a
+   propósito: con 297 exactos, un redondeo de nada empuja la banda a la hoja
+   siguiente y sale una página en blanco. */
+/* Sin márgenes no hay caja de margen, pero el número de página se sigue
+   dibujando y cae encima de la banda. En la portada no pinta nada. */
+@page:first{margin:0;@bottom-right{content:none}}
+.cabecera{page-break-after:always;margin:0}
+.portada-fondo{height:289mm;padding:22mm 16mm 0}
+.banda,.banda span{height:7mm}
+/* En una hoja entera el título puede respirar: baja hasta pasada la mitad y
+   sube de cuerpo. La fila de datos lo sigue, y debajo queda el azul hasta la
+   banda. */
+.titulo{padding-top:78mm}
+.titulo h1{font-size:40pt}
+.portada td.dato{padding:5mm 4mm 5mm 0}
+.dato-rot{font-size:9pt}
+.dato-val{font-size:11pt}
 body{font-size:9.5pt}
 .seccion{margin-bottom:7mm}
 /* Que ninguna tabla se corte a media fila. */
 tr{page-break-inside:avoid}
 thead{display:table-header-group}
 h2{page-break-after:avoid}
+/* ETAPA D1: la gráfica no se parte entre hojas, y el título con su párrafo no
+   se quedan solos al final de una. */
+.grafica{page-break-inside:avoid}
+.sec-cab{page-break-after:avoid;page-break-inside:avoid}
 /* Ningun texto por debajo de 8 pt: en papel, menos de eso no se lee. */
 .diaria td.celda,.diaria th.dia{font-size:8pt;padding:.8mm .3mm}
 /* El mapa, en el PDF, habla por color: con 31 columnas en vertical, meter la
@@ -523,28 +796,105 @@ h2{page-break-after:avoid}
 """
 
 _WEB_CSS = """
-body{background:#f3f4f6;padding:0 0 40px}
-.hoja{max-width:1180px;margin:0 auto;background:#fff;padding:28px 34px;
-      box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.seccion{margin-bottom:26px}
-.controles{position:sticky;top:0;z-index:5;background:#0a1628;color:#fff;
-           padding:12px 34px;margin-bottom:0}
-.controles .fila{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;
+/* ===== LA RAMA DE PANTALLA (ETAPA D1) =====
+   Hasta aquí, `_BASE_CSS` es una hoja de IMPRESIÓN: todo en `pt` y en `mm`. La
+   pantalla la heredaba entera, y por eso el informe salía con cuerpo de 12,7 px
+   y celdas de 6,8 px de alto. Este bloque le da a la pantalla su propia
+   tipografía y su propio aire, en `px`, con los valores medidos de la
+   referencia (`docs/diseno-informe-horas.md`). El papel no se entera. */
+body{background:var(--bg);padding:0 0 40px;font-size:13.5px;line-height:1.55;
+     -webkit-font-smoothing:antialiased}
+.hoja{max-width:1240px;margin:0 auto;background:var(--superficie);padding:0 0 30px;
+      box-shadow:0 1px 3px rgba(6,11,41,.08)}
+/* La portada va a sangre: ocupa la hoja de borde a borde, y es el cuerpo el que
+   lleva el margen lateral. */
+.cuerpo{padding:0 40px}
+.seccion{margin-bottom:34px}
+h1{font-size:44px;margin:0 0 16px}
+/* --- El título de sección y su párrafo (D-D5, D-D4) --- */
+h2{font-size:22px;margin:0 0 6px;letter-spacing:-.01em}
+.sec-cab{margin-bottom:22px}
+.sec-intro{font-size:13.5px;line-height:1.6}
+/* --- Las tablas respiran (D-D7) --- */
+/* La cabecera deja las mayúsculas: a 11,5 px con versalitas se lee peor que en
+   caja normal, y la referencia la tiene normal. */
+.card{border:1px solid var(--linea);border-radius:10px;overflow:hidden;
+      background:var(--superficie)}
+table{font-size:13.5px}
+th{font-size:11.5px;padding:12px 14px;
+   border-bottom:1px solid var(--linea)}
+td{padding:13px 14px;border-bottom:1px solid var(--separador)}
+tbody tr:last-child td{border-bottom:0}
+tbody td:first-child{font-weight:600}
+/* --- Las gráficas (D-D6) --- */
+.grafica{margin:0 0 22px}
+.leyenda-grafica{font-size:12px;margin:16px 0 0;padding-top:15px;
+                 border-top:1px solid var(--separador)}
+.clave{margin-right:18px}
+.sw{width:11px;height:11px;border-radius:2px;margin-right:7px}
+/* --- La portada (D-D2) --- */
+.cabecera{margin:0 0 30px}
+.portada-fondo{padding:38px 40px 0}
+.cab{margin-bottom:26px}
+.cab-logo{width:1%;padding-right:22px}
+.logo{height:44px}
+.marca{font-size:26px;letter-spacing:.03em}
+.cab-coe{font-size:12.5px;letter-spacing:0;padding-left:14px;
+         border-left:1px solid #33406B}
+.cab-der{font-size:12px}
+.titulo h1{font-size:44px;letter-spacing:-.015em;max-width:20ch}
+.portada{margin-top:26px}
+.portada td.dato{padding:22px 34px 34px 0}
+.dato-rot{font-size:11.5px;margin-bottom:3px}
+.dato-val{font-size:14px}
+.banda{height:5px;margin-bottom:0}
+.banda span{height:5px}
+/* --- Los indicadores (D-D3) --- */
+/* El fondo de la tabla asoma por el `border-spacing`: eso es la línea de 2 px
+   que separa las casillas en la referencia, sin pintar seis bordes. */
+.indicadores{border-collapse:separate;border-spacing:2px;background:var(--linea);
+             border:2px solid var(--linea);border-radius:10px}
+.indicadores td.ind{padding:20px;border:0}
+.ind-et{font-size:11.5px;line-height:1.35;margin-bottom:9px;min-height:30px}
+.ind-val{font-size:32px;letter-spacing:-.02em}
+.ind-uni{font-size:13px;margin-left:3px}
+.ind-pie{font-size:11.5px;margin-top:8px}
+.nota{font-size:12px;line-height:1.6;margin:10px 0 0}
+.filtros{font-size:12px;margin:14px 0 0}
+.vacio{font-size:13.5px;padding:16px 0}
+/* --- La barra dentro de la celda (D-D6) --- */
+.barra{width:48px;height:6px;border-radius:3px;margin-right:8px}
+.mini{width:13px;height:13px;border:1px solid var(--linea);margin:0 4px 0 12px}
+/* --- La barra de controles --- */
+/* Clara, como en la referencia: con la portada oscura debajo, una barra oscura
+   se fundía con ella y no se veía dónde empezaba el documento. */
+.controles{position:sticky;top:0;z-index:5;background:var(--superficie);
+           color:var(--tinta);padding:13px 34px;
+           border-bottom:1px solid var(--linea);box-shadow:0 1px 0 rgba(6,11,41,.04)}
+.controles .fila{max-width:1240px;margin:0 auto;display:flex;flex-wrap:wrap;
                  gap:10px;align-items:center}
-.controles label{font-size:13px;color:#cbd5e1}
-.controles select,.controles input[type=search]{padding:8px 10px;border-radius:8px;
-   border:1px solid #334155;background:#fff;font-size:14px;min-height:38px}
-.btn{padding:9px 16px;border-radius:8px;border:2px solid #f5a623;background:#f5a623;
-     color:#0a1628;font-weight:700;font-size:14px;cursor:pointer;min-height:40px}
-.btn.sec{background:transparent;color:#f5a623}
-.btn.persona{border-color:#475569;background:transparent;color:#e2e8f0;font-weight:600}
-.btn.persona.activo{background:#f5a623;border-color:#f5a623;color:#0a1628}
+.controles label{font-size:11.5px;color:var(--apagado);font-weight:600}
+.controles select,.controles input[type=search]{font-family:var(--texto);
+   padding:8px 11px;border-radius:7px;border:1px solid var(--linea);
+   background:#fff;color:var(--tinta);font-size:12.5px;min-height:36px}
+.controles select:focus,.controles input:focus{outline:2px solid var(--azul);
+   outline-offset:-1px;border-color:var(--azul)}
+.btn{font-family:var(--texto);padding:8px 14px;border-radius:7px;
+     border:1px solid var(--linea);background:#fff;color:var(--navy);
+     font-weight:600;font-size:12.5px;cursor:pointer;min-height:36px}
+.btn:hover{border-color:var(--azul);background:#F5F8FF}
+.btn:focus-visible{outline:2px solid var(--naranja);outline-offset:2px}
+.btn.persona{background:#EDF1F8;border-color:#EDF1F8;color:var(--apagado)}
+.btn.persona.activo{background:var(--navy);border-color:var(--navy);color:#fff}
 th[data-col]{cursor:pointer;user-select:none}
-th[data-col]:hover{background:#e5e7eb}
-th[data-col]::after{content:" \\2195";color:#9ca3af;font-size:9px}
+th[data-col]:hover{color:var(--azul)}
+th[data-col]::after{content:" \\2195";color:var(--apagado);font-size:9px}
 tr.oculta{display:none}
 .detalle td{font-size:13px}
-@media print{.controles{display:none}.hoja{box-shadow:none;max-width:none;padding:0}}
+@media print{.controles{display:none}
+  .hoja{box-shadow:none;max-width:none;padding:0}
+  .cuerpo{padding:0}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 """
 
 
@@ -599,11 +949,13 @@ _JS = r"""
       if (tr.querySelector('.pill.ojo')) extra += h;
       if (tr.dataset.facturable === 'si') fact += h;
     });
-    poner('ind-total', esp(t) + ' h');
-    poner('ind-ord', esp(t - extra) + ' h');
-    poner('ind-extra', esp(extra) + ' h');
-    poner('ind-fact', esp(fact) + ' h');
-    poner('ind-pctfact', (t > 0 ? esp(fact / t * 100, 1) : '0') + ' %');
+    // ETAPA D1 (D-D3): la unidad ya no va en el texto de la cifra, va en su
+    // propio <small> al lado. Aqui se escribe SOLO el numero.
+    poner('ind-total', esp(t));
+    poner('ind-ord', esp(t - extra));
+    poner('ind-extra', esp(extra));
+    poner('ind-fact', esp(fact));
+    poner('ind-pctfact', t > 0 ? esp(fact / t * 100, 1) : '0');
     var av = document.getElementById('aviso-filtro');
     if (av) av.style.display = (F.persona||F.cliente||F.proyecto||F.facturable) ? '' : 'none';
   }
@@ -722,18 +1074,22 @@ def documento_html(d: InformeDatos, secciones: Optional[Sequence[str]] = None) -
     datos_js = json.dumps({"archivo_csv": nombre_archivo(d, "csv")})
     aviso = ('<p class="nota" id="aviso-filtro" style="display:none">'
              "Vista filtrada. Las secciones que dependen de la jornada o de las "
-             "estimaciones enseñan solo las filas que coinciden; no se recalculan."
+             "estimaciones enseñan solo las filas que coinciden; no se recalculan. "
+             "Las gráficas tampoco: están dibujadas en el servidor y siguen "
+             "enseñando el periodo entero."
              "</p>")
     return (
         "<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"utf-8\">"
         f"<title>{esc(nombre_archivo(d, 'html'))}</title>"
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<style>{_BASE_CSS}{_WEB_CSS}</style></head><body>"
+        f"<style>{fuentes.bloque_font_face()}{_BASE_CSS}{_WEB_CSS}</style>"
+        "</head><body>"
         + _controles(d)
         + '<div class="hoja">'
-        + _encabezado(d) + aviso
+        + _encabezado(d)
+        + '<div class="cuerpo">' + aviso
         + _secciones(d, elegidas, para_pdf=False)
-        + "</div>"
+        + "</div></div>"
         f"<script>window.__INFORME__={datos_js};</script>"
         f"<script>{_JS}</script>"
         "</body></html>")
@@ -753,10 +1109,11 @@ def documento_pdf_html(d: InformeDatos, secciones: Optional[Sequence[str]] = Non
     css = _PDF_CSS
     return (
         "<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"utf-8\">"
-        f"<style>{_BASE_CSS}{css}</style></head><body>"
+        f"<style>{fuentes.bloque_font_face()}{_BASE_CSS}{css}</style></head><body>"
         + _encabezado(d)
+        + '<div class="cuerpo">'
         + _secciones(d, elegidas, para_pdf=True)
-        + "</body></html>")
+        + "</div></body></html>")
 
 
 def csv_detalle(d: InformeDatos) -> bytes:

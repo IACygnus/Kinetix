@@ -54,8 +54,14 @@ for trozo, que in (
         ('<img class="logo"', "el logo va embebido"),
         ("Centro de Excelencia", "«Centro de Excelencia»"),
         ("<strong>Performance</strong>", "y «Performance» destacado"),
-        ('class="banda"', "la banda azul"),
-        ('class="banda-naranja"', "con su tramo naranja"),
+        # ETAPA D1 (D-D2): la banda pasa de dos tramos a tres —azul, naranja y
+        # amarillo, el reparto de la referencia— y la portada vive sobre un
+        # bloque azul marino.
+        ('class="portada-fondo"', "la portada va sobre el bloque azul marino"),
+        ('class="banda"', "la banda"),
+        ('class="b-azul"', "con su tramo azul"),
+        ('class="b-naranja"', "su tramo naranja"),
+        ('class="b-amarillo"', "y su tramo amarillo"),
         ("Dirigido a", "el rotulo «Dirigido a»"),
         ("Período", "el rotulo «Período»"),
         ("Equipo", "el rotulo «Equipo»"),

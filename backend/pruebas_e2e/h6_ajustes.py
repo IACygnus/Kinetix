@@ -245,15 +245,22 @@ def main():
     else:
         ok('class="marca"' in html, "sin logo, la cabecera lleva el nombre en texto")
     ok('class="cabecera"' in html, "la cabecera tiene su bloque propio (H-D70)")
-    # La jerarquia, no un numero exacto: el tamaño puede subir o bajar con el
-    # diseño sin que eso sea un fallo. Lo que no puede es invertirse.
+    # ETAPA D1 (D-D2): el periodo dejo de ir debajo del titulo y en otro tamaño.
+    # Ahora va DENTRO del titulo, del mismo cuerpo, y lo que lo distingue es el
+    # color: amarillo sobre el azul marino de la portada. La jerarquia sigue
+    # existiendo, pero se comprueba donde esta.
     import re as _re
+    ok("<h1>Informe de horas <em>" in html, "el periodo va dentro del titulo")
+    ok(".titulo h1 em{font-style:normal;color:var(--amarillo)" in gen._BASE_CSS,
+       "y lo distingue el color, no el tamano")
     _h1 = _re.search(r"\.titulo h1\{font-size:([\d.]+)pt", gen._BASE_CSS)
-    _sub = _re.search(r"\.titulo \.sub\{font-size:([\d.]+)pt", gen._BASE_CSS)
-    ok(_h1 and _sub and float(_h1.group(1)) > float(_sub.group(1)),
-       f"el titulo manda sobre el periodo ({_h1.group(1) if _h1 else '?'} pt "
-       f"> {_sub.group(1) if _sub else '?'} pt)")
-    ok(".logo{height:22mm}" in gen._BASE_CSS, "y el logo a un tamano que se lea")
+    _h2 = _re.search(r"^h2\{[^}]*font-size:([\d.]+)pt", gen._BASE_CSS, _re.M)
+    ok(_h1 and _h2 and float(_h1.group(1)) > float(_h2.group(1)),
+       f"el titulo de la portada manda sobre los de seccion "
+       f"({_h1.group(1) if _h1 else '?'} pt > {_h2.group(1) if _h2 else '?'} pt)")
+    _logo = _re.search(r"\.logo\{height:([\d.]+)mm\}", gen._BASE_CSS)
+    ok(_logo and float(_logo.group(1)) >= 14,
+       f"y el logo a un tamano que se lea ({_logo.group(1) if _logo else '?'} mm)")
 
     limpiar()
     print("\n    datos de prueba borrados")

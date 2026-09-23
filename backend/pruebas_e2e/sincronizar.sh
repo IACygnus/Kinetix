@@ -24,6 +24,12 @@ DESTINO="${KX_DESTINO:-/tmp/e2e}"
 
 mkdir -p "$DESTINO"
 cp -f "$ORIGEN"/*.py "$ORIGEN"/*.sh "$DESTINO"/ 2>/dev/null || true
+# Las suites en carpeta propia — `diseno/` desde la ETAPA D1 — tambien.
+for SUB in "$ORIGEN"/*/; do
+    [ -d "$SUB" ] || continue
+    mkdir -p "$DESTINO/$(basename "$SUB")"
+    cp -f "$SUB"*.py "$DESTINO/$(basename "$SUB")"/ 2>/dev/null || true
+done
 chmod +x "$DESTINO"/*.sh 2>/dev/null || true
 
 # Los planes de prueba de JMeter van a /tmp a secas: es donde los buscan las

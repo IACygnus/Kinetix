@@ -31,6 +31,12 @@
   `docs/ESPECIFICACION-horas.md` **v1.4**. H1, H2, H2b y H3 validadas por Fredy;
   **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
   análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
+  La **Etapa D1** rehízo **el diseño del informe** —solo la presentación:
+  ninguna cifra cambió, comprobado número a número—. Su referencia única es
+  **`docs/diseno-informe-horas.md`**, con los valores **medidos** del informe
+  que Fredy aprobó: colores, tipografía, geometría y gráficas. Todo cambio de
+  aspecto del informe de horas se decide ahí primero. Su paleta **sustituye a
+  la de H-D73**, que era provisional. Cierre en el reporte 107.
 - **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo),
   **O2a** (el laboratorio y el monitoreo sin agente), **O2b** (con agente) y
   **O2c** (la sección «Observabilidad» y la pantalla de **Servidores**) y **O2d**
@@ -1406,7 +1412,26 @@ operativa de las Etapas 1 a 6. Lo bloqueante, en orden:
 - **`margin` negativo en CSS NO extiende la caja** del contenedor padre en
   WeasyPrint — usar `@page :first { margin: 0 }` para cover full-bleed.
 - **`@page :first { margin: 0 }`** es la única forma fiable de tener una
-  portada que sangra al borde sin afectar las páginas internas.
+  portada que sangra al borde sin afectar las páginas internas. Deja la primera
+  hoja **entera** sin márgenes, así que la portada tiene que ocuparla toda —alto
+  fijo y `page-break-after: always`—, y hay que apagarle el número de página con
+  `@bottom-right{content:none}`: sin caja de margen se sigue dibujando, encima
+  del fondo.
+- **WeasyPrint recorta los descendentes de un `<text>` de SVG con
+  `text-anchor="end"`.** Se pierden las colas de la «y», la «g» y la «p».
+  Medido imprimiendo la misma frase dos veces en la misma línea, una anclada a
+  `start` y otra a `end`: la primera sale entera y la segunda recortada. No
+  depende de la familia, del peso ni de `dominant-baseline`. **La solución es no
+  emitir `text-anchor`**: se calcula la posición midiendo el texto con las
+  métricas de la fuente (`services/horas/fuentes.py::ancho_texto`, con
+  `fontTools`, que ya viene con WeasyPrint) y el `<text>` sale siempre alineado
+  a la izquierda. Vale para cualquier SVG que este producto mande a papel.
+- **Un SVG no se puede escalar con el mismo `viewBox` para pantalla y papel.**
+  Se estira hasta el ancho de su caja, así que una letra de 12 unidades en un
+  `viewBox` de 1000 son 13 px en pantalla y **5,9 pt** en el PDF, por debajo del
+  mínimo de 8 pt de la regla 17. La geometría se mide en múltiplos de un tamaño
+  base y el base cambia por rama (12 en pantalla, 17 en papel): misma forma, y
+  el texto legible en las dos.
 - **OpenAI `max_tokens` varía por modelo** — siempre consultar
   `OPENAI_MAX_TOKENS[model_name]` con default `OPENAI_DEFAULT_MAX_TOKENS=4096`.
 - **OpenAI Vision requiere formato multimodal explícito** (`content` como lista

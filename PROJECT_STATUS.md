@@ -54,8 +54,17 @@ de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 | H5 | **El informe**: ocho secciones, HTML autocontenido e interactivo, PDF y CSV | implementada, **pendiente validación** |
 | H6 | Ajustes del veredicto: estados nuevos, renombrar, filtros de cerrados, informe a ocho secciones | implementada, **pendiente validación** |
 | H7 | Portada aprobada, **base de pruebas separada**, documentación y cierre | implementada, **pendiente validación** |
+| **D1** | **El diseño del informe**: fuentes incrustadas, paleta de la referencia, portada a sangre, indicadores, párrafos de sección, tablas y dos gráficas SVG | implementada, **pendiente validación** |
 
 No hay Etapa H4: el plan saltó de H3 a H5.
+
+**Etapa D1 (23 de septiembre de 2026).** El informe era correcto en contenido
+—Fredy lo aprobó— y pobre en diseño. D1 arregla **solo la presentación**:
+**ninguna cifra cambió**, comprobado número a número (308 en septiembre y 647 en
+todo 2026, cero distintas). Los valores medidos del informe de referencia están
+en **`docs/diseno-informe-horas.md`**, que es la fuente; el cierre, en
+`docs/reporte_claude_code/107_D1_diseno_informe_horas.md`. La paleta de D1
+**sustituye a la de H-D73**, que era provisional.
 
 ### Observabilidad — Etapas O1, O2a, O2b y O2c
 

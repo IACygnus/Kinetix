@@ -35,10 +35,14 @@ producto, y no tienen por que viajar a produccion.
 ```sh
 docker exec jmeter_backend pip install playwright
 docker exec jmeter_backend playwright install --with-deps chromium
+
+# ETAPA D1: rasterizar un PDF para mirarlo (pruebas_e2e/diseno/pdf_a_png.py)
+docker exec jmeter_backend pip install pypdfium2
 ```
 
 Si una suite de navegador falla con `ModuleNotFoundError: No module named
-'playwright'`, es esto.
+'playwright'`, es esto. Lo mismo con `pypdfium2` y las comprobaciones de
+diseno de `pruebas_e2e/diseno/`.
 
 ## Antes de cualquier `--build` del backend
 
