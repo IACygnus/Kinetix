@@ -98,9 +98,20 @@ def tablas(documento: str):
 def main() -> None:
     ck = {c["name"]: c["value"] for c in json.load(open(SESION))["cookies"]}
     cli = httpx.Client(cookies=ck, timeout=180)
+    # ETAPA H8.6: la sesión se comprueba ANTES de pedir nada. Sin esto, una
+    # sesión caducada salía como un `ValidationError` de pydantic con dos
+    # «Field required» — el informe nunca llegaba y lo que se intentaba validar
+    # era el `{"detail": "No se pudieron validar las credenciales"}`. Es el
+    # mismo error que las demás suites ya avisaban bien.
+    if cli.get(f"{API}/auth/me").status_code != 200:
+        sys.exit("sesion caducada: corre pruebas_e2e/refrescar_sesion.py")
+
     par = {"desde": os.environ.get("KX_DESDE", "2026-09-01"),
            "hasta": os.environ.get("KX_HASTA", "2026-09-30")}
-    d = cli.get(f"{API}/time/informe", params=par).json()
+    respuesta = cli.get(f"{API}/time/informe", params=par)
+    if respuesta.status_code != 200:
+        sys.exit(f"el informe respondio {respuesta.status_code}: {respuesta.text[:200]}")
+    d = respuesta.json()
 
     from app.schemas.time_tracking import InformeDatos
     from app.services.horas import informe as ahora
