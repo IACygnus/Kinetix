@@ -5,12 +5,16 @@
 
 ---
 
-## ESTADO ACTUAL (2026-09-20)
+## ESTADO ACTUAL (2026-09-24)
 
 - **Branch activa:** `backup-trabajo-local`. **Todo el producto vive ahí.** `main`
   sigue en su commit `Initial commit` y no contiene nada.
-- **Último tag publicado:** `v4.1.0` — cierra el **módulo de horas** (H1 a H7).
-  El `v4.0.0` cerró el plan de corrección del informe (Etapas 1 a 7).
+- **Último tag publicado:** `v4.2.0` — cierra **H8** (el estado del proyecto,
+  las horas extra en el mapa, el borrado de un periodo, el importador de
+  proyectos) y la **CARGA REAL** de septiembre de 2026. El `v4.1.0` cerró el
+  módulo de horas H1 a H7; el `v4.0.0`, el plan de corrección del informe.
+  `v4.2.0` es además la **referencia de las cifras del informe** que compara
+  `scripts/d1_cifras.sh`.
 - **Remoto de push:** `github` (`IACygnus/Kinetix`), el único. `azure` tiene el
   push bloqueado a propósito.
 - **Árbol de trabajo:** limpio. Todo lo de las siete etapas está commiteado.
@@ -39,10 +43,11 @@ informe se valida contra ese documento.
 
 No hay Etapa 4: el plan saltó de la 3 a la 5.
 
-### Módulo de horas — Etapas H1 a H7
+### Módulo de horas — Etapas H1 a H8
 
-Referencia única: **`docs/ESPECIFICACION-horas.md` v1.4**. Es un módulo aparte del
-de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
+Referencia única: **`docs/ESPECIFICACION-horas.md`** — **v1.4** hasta H7,
+**v1.5** desde H8. Es un módulo aparte del de análisis: comparte la tabla
+`clients`, el usuario y la sesión, y nada más.
 **Cero llamadas a la IA en todo el módulo.**
 
 | Etapa | Qué cubrió | Estado |
@@ -55,8 +60,33 @@ de análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
 | H6 | Ajustes del veredicto: estados nuevos, renombrar, filtros de cerrados, informe a ocho secciones | implementada, **pendiente validación** |
 | H7 | Portada aprobada, **base de pruebas separada**, documentación y cierre | implementada, **pendiente validación** |
 | **D1** | **El diseño del informe**: fuentes incrustadas, paleta de la referencia, portada a sangre, indicadores, párrafos de sección, tablas y dos gráficas SVG | implementada, **pendiente validación** |
+| **H8** | **El estado del proyecto** (§3.1, cinco valores), las horas extra en el mapa, el **borrado de un periodo** y el **importador de proyectos y estimaciones** | implementada, **pendiente validación** |
 
 No hay Etapa H4: el plan saltó de H3 a H5.
+
+**Etapa H8 (23-24 de septiembre de 2026), contra la v1.5.** Seis sub-pasos:
+
+| | Qué | Reporte |
+|---|---|---|
+| H8.1 | La especificación v1.5 y el SQL del estado | 108 |
+| H8.2 | El estado en el backend | 109 |
+| H8.3 | Las dos columnas —estado y consumo— en las pantallas | 110 |
+| H8.3b | El estado en el informe | 111 |
+| H8.4 | Las horas extra en el mapa del mes | 112 |
+| H8.5 | El borrado de un periodo, con su constancia | 113 |
+| H8.5b | El importador de proyectos, estados y estimaciones | 114 |
+| H8.6 | Cierre: `CHECK` a cinco, alias de H-D91 fuera, regresión | 116 |
+
+**Estado y consumo son dos cosas** (H-D82) y viven en dos columnas: el estado lo
+decide una persona (`services/horas/estados.py`), el consumo se calcula
+(`services/horas/desfase.py`). «Cerrado» salió del consumo y es un estado.
+
+**CARGA REAL (24 de septiembre de 2026).** Septiembre cargado desde cero:
+**107 registros, 489 h, tres personas**, con `external_id` de 24300 a 24406. El
+catálogo quedó en **ocho** actividades —que son ahora la siembra inicial— y
+`services/horas/sinonimos_actividad.py` es la definición única de qué texto de
+un Excel corresponde a cuál. Se escribió `DELETE /time/projects/{id}`, que no
+existía. Reporte 115.
 
 **Etapa D1 (23 de septiembre de 2026).** El informe era correcto en contenido
 —Fredy lo aprobó— y pobre en diseño. D1 arregla **solo la presentación**:

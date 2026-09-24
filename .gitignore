@@ -205,3 +205,14 @@ tmp/
 # HF20 housekeeping: backups locales del snapshot pre-Sprint 3.0
 # (db_full_*.sql, codigo_snapshot_*.tar.gz) — se mantienen en disco, NO se versionan
 backups/
+
+# CARGA REAL (24 de septiembre de 2026) — los Excel de horas de las personas.
+#
+# NO se versionan por defecto, y es una decision, no un olvido: llevan nombres
+# de clientes reales (SODEXO, ALKOSTO, BANCO FICOHSA, PORVENIR, COMPENSAR,
+# MEDICINA PREPAGADA COOMEVA) y las horas facturables de tres personas con
+# nombre y apellido. Subirlos a GitHub —aunque el repositorio sea privado— es
+# publicarlos, y esa es una decision de Fredy, no del sistema.
+#
+# Si decide incluirlos:  git add -f "docs/documentos carga/"
+docs/documentos carga/

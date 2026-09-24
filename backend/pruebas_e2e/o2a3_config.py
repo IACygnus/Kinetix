@@ -22,7 +22,25 @@ PROYECTO = "ZZTEST-Tienda"
 DESTINO = "/tmp/o2a3_config.json"
 
 
+#: ETAPA H8.6 — lo que hace falta y no se puede adivinar. Sin esto, la suite
+#: reventaba con un `KeyError: 'KX_TOKEN_ESCRITURA'` en mitad de una llamada, y
+#: un traceback no dice a nadie que lo que falta es el guion del anfitrion.
+FALTA_TOKEN = """falta la variable KX_TOKEN_ESCRITURA (el token de escritura de
+InfluxDB, O-D2).
+
+Esta suite no se lanza sola: la llama `scripts/lab_prueba_correlacion.sh`, que
+lee el token de `lab/lab.env` y lo pasa. Desde el anfitrion:
+
+    bash scripts/lab_prueba_correlacion.sh
+
+Es el recorrido entero de O2a.3, y hace dos cosas que NO se pueden hacer desde
+dentro de un contenedor: poner la etiqueta de corrida en el recolector
+(`docker kill -s HUP lab_colector`) y preguntarle a `lab_db` con su psql."""
+
+
 def main():
+    if "KX_TOKEN_ESCRITURA" not in os.environ:
+        sys.exit(FALTA_TOKEN)
     ck = {c["name"]: c["value"] for c in json.load(open(SESION))["cookies"]}
     cli = httpx.Client(cookies=ck,
                        headers={"X-CSRF-Token": ck.get("csrf_token", "")},

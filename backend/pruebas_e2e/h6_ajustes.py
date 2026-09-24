@@ -124,18 +124,20 @@ def main():
     ok(d["overrun_label"] == "Terminado", f"con su texto: «{d['overrun_label']}»")
     d = cli.get(f"{API}/time/projects/{proy[DESFASE]}").json()
     ok(d["overrun_label"] == "Desfasado +5 h", f"el desfase: «{d['overrun_label']}»")
+    # ETAPA H8 (H-D82): esto cambió a propósito y la suite se quedó atrás hasta
+    # H8.6. «Cerrado» **salió** del consumo y es ahora un ESTADO del proyecto
+    # (§3.1): son dos preguntas distintas y viven en dos columnas distintas.
+    # Un proyecto finalizado sigue teniendo su consumo, y el suyo es del 8 %.
     d = cli.get(f"{API}/time/projects/{proy[CERRADO]}").json()
-    ok(d["overrun_status"] == "cerrado",
-       f"un proyecto cerrado dice «Cerrado» ({d['overrun_status']})")
-    ok(d["overrun_label"] == "Cerrado", "y manda sobre su 8 % de consumo")
-
-    todos = {p["name"]: p for p in cli.get(f"{API}/time/projects").json()}
-    en_ejecucion = [p for p in todos.values() if p["overrun_status"] == "en_rango"]
-    if en_ejecucion:
-        ok(en_ejecucion[0]["overrun_label"] == "En ejecución",
-           f"«En rango» ya no existe: ahora es «{en_ejecucion[0]['overrun_label']}»")
-    crudo = cli.get(f"{API}/time/projects").text
-    ok("En rango" not in crudo, "y no queda en ninguna respuesta del listado")
+    ok(d["status"] == "finalizado",
+       f"cerrar un proyecto es un ESTADO: «{d['status']}»")
+    ok(d["overrun_status"] == "en_rango",
+       f"y su consumo se sigue calculando aparte: «{d['overrun_status']}»")
+    ok(d["overrun_label"] == "En rango", f"con su texto: «{d['overrun_label']}»")
+    ok("cerrado" not in [p["overrun_status"]
+                         for p in cli.get(f"{API}/time/projects",
+                                          params={"incluir_finalizados": "true"}).json()],
+       "«cerrado» ya no es un valor de consumo en ninguna fila del listado")
 
     # ==================== 3. DOS MESES (H-D67) ====================
     print("\n=== 3. El consumo suma desde siempre (H-D67) ===")
@@ -185,22 +187,32 @@ def main():
     ok(r.status_code == 409, f"y un nombre de cliente repetido -> {r.status_code}")
     cli.delete(f"{API}/clients/{cid}")
 
-    # ==================== 5. LOS CERRADOS (H-D72) ====================
-    print("\n=== 5. El filtro de cerrados (H-D72) ===")
-    activos = [p["name"] for p in cli.get(f"{API}/time/projects",
-                                          params={"estado": "activo"}).json()]
-    ok(CERRADO not in activos, "el cerrado no sale entre los activos")
-    ok(EXACTO in activos, "y los activos si")
-    todos_n = [p["name"] for p in cli.get(f"{API}/time/projects").json()]
-    ok(CERRADO in todos_n, "sin filtro, el cerrado vuelve a salir")
+    # ==================== 5. LOS FINALIZADOS (H-D72, H-D84, H-D91) ==============
+    print("\n=== 5. El filtro de finalizados (H-D72, H-D84) ===")
+    # ETAPA H8.6: los alias de H-D91 se retiraron. Esta sección los usaba —
+    # `?estado=activo` y `incluir_cerrados`— porque se escribió en H6, cuando
+    # eran los únicos nombres que había. Ahora el filtro por defecto es el que
+    # esconde, y la casilla se llama `incluir_finalizados`.
+    por_defecto = [p["name"] for p in cli.get(f"{API}/time/projects").json()]
+    ok(CERRADO not in por_defecto, "el finalizado no sale en el listado por defecto")
+    ok(EXACTO in por_defecto, "y los que están en marcha sí")
+    con_todos = [p["name"] for p in cli.get(
+        f"{API}/time/projects", params={"incluir_finalizados": "true"}).json()]
+    ok(CERRADO in con_todos, "con ?incluir_finalizados=true vuelve a salir")
+
+    # Y los nombres viejos ya no valen: un 400 que dice cuáles son los buenos es
+    # lo que hace falta para darse cuenta, no un listado que parece funcionar.
+    r = cli.get(f"{API}/time/projects", params={"estado": "activo"})
+    ok(r.status_code == 400, f"?estado=activo (nombre viejo) ya no vale: {r.status_code}")
+    ok("en_ejecucion" in r.text, f"y dice cuáles valen: {r.text[:120]}")
 
     par = {"desde": primero, "hasta": str(hoy)}
     r = cli.get(f"{API}/time/consulta", params=par)
     nombres = [p["project_name"] for p in r.json()["projects"]]
-    ok(CERRADO not in nombres, "la consulta tampoco trae los cerrados por defecto")
-    r = cli.get(f"{API}/time/consulta", params={**par, "incluir_cerrados": True})
+    ok(CERRADO not in nombres, "la consulta tampoco trae los finalizados por defecto")
+    r = cli.get(f"{API}/time/consulta", params={**par, "incluir_finalizados": True})
     nombres = [p["project_name"] for p in r.json()["projects"]]
-    ok(CERRADO in nombres, "y con la casilla, si")
+    ok(CERRADO in nombres, "y con la casilla, sí")
 
     # ==================== 6. EL INFORME (H-D68, H-D69) ====================
     print("\n=== 6. El informe (H-D68, H-D69) ===")

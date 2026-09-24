@@ -41,6 +41,8 @@ from app.schemas.time_tracking import (
 # proyecto, actividad, quién y la marca de desfase de cada fila. Escribirlo otra
 # vez aquí sería la segunda definición de lo mismo.
 from app.api.v1.endpoints.time_entries import _responder
+# ETAPA H8 (§3.1): el estado del proyecto, que es la OTRA columna de §5.1.
+from app.services.horas import estados
 from app.services.horas.desfase import (
     DESFASADO,
     estado as estado_desfase,
@@ -66,7 +68,8 @@ async def consultar(
     project_id: Optional[uuid.UUID] = Query(None),
     user_id: Optional[uuid.UUID] = Query(None),
     solo_desfasados: bool = Query(False, description="§5.1: ver solo los que se pasaron"),
-    incluir_cerrados: bool = Query(False, description="H-D72: por defecto, solo los activos"),
+    incluir_finalizados: bool = Query(
+        False, description="H-D84: trae también los finalizados y los no viables"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -100,10 +103,12 @@ async def consultar(
         q = q.where(TimeEntry.project_id == project_id)
     if user_id:
         q = q.where(TimeEntry.user_id == user_id)
-    # H-D72: lo que se mira todos los días es lo que está en marcha. Los cerrados
-    # siguen consultándose, pero hay que pedirlos.
-    if not incluir_cerrados:
-        q = q.where(Project.status == "activo")
+    # H-D84: lo que se mira todos los días es lo que está en marcha. Los
+    # finalizados y los no viables siguen consultándose, pero hay que pedirlos.
+    # ETAPA H8.6: el alias `incluir_cerrados` de H-D91 se retiró; la pantalla
+    # manda `incluir_finalizados` desde H8.3.
+    if not incluir_finalizados:
+        q = q.where(Project.status.in_(estados.visibles_por_defecto()))
 
     filas = (await db.execute(q)).all()
     if not filas:
@@ -158,12 +163,14 @@ async def consultar(
             por_proyecto[pid] = ConsultaProyecto(
                 project_id=pid, project_name=p.name,
                 client_id=p.client_id, client_name=c.name if c else "",
-                status=p.status,
+                # ETAPA H8 (§5.1): el estado y el consumo, en campos distintos.
+                status=estados.normalizar_legado(p.status),
+                status_label=estados.texto(p.status),
                 estimated_hours=est, consumed_hours=con, remaining_hours=est - con,
                 consumed_pct=porcentaje_consumido(con, est),
-                overrun_status=estado_desfase(con, est, p.status == "cerrado"),
+                overrun_status=estado_desfase(con, est),
                 overrun_hours=horas_de_desfase(con, est),
-                overrun_label=etiqueta_desfase(con, est, p.status == "cerrado"),
+                overrun_label=etiqueta_desfase(con, est),
             )
         bloque = por_proyecto[pid]
         u = usuarios.get(uid)

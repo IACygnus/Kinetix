@@ -39,6 +39,8 @@ from app.schemas.time_tracking import (
     PendingDayResponse, TimeEntryCreate, TimeEntryResponse, TimeEntryUpdate,
     WeekResponse,
 )
+# ETAPA H8 (§3.1): qué estados admiten registros. Definición única.
+from app.services.horas import estados
 from app.services.horas.calendario import (
     construir_dias, dias_pendientes, semana_de,
 )
@@ -93,13 +95,22 @@ def _puede_editar(registro: TimeEntry, actual: User) -> bool:
 
 
 async def _proyecto_abierto(db: AsyncSession, project_id) -> Project:
-    """H-D20: un proyecto cerrado no admite registros nuevos ni edición."""
+    """H-D20, y desde H8 §3.1: **solo `en_ejecucion` admite registros**.
+
+    Pendiente, detenido, no viable y finalizado, no. El mensaje dice en qué
+    estado está, porque «no admite registros» a secas no deja saber si hay que
+    reactivarlo o si es que todavía no ha empezado.
+
+    La importación **no pasa por aquí**: §6.2.8 le deja entrar en cualquier
+    estado salvo `no_viable`, y esa excepción vive en `time_import.py`.
+    """
     proyecto = await db.get(Project, project_id)
     if not proyecto:
         raise HTTPException(404, "Proyecto no encontrado")
-    if proyecto.status == "cerrado":
+    if not estados.admite_registro(proyecto.status):
         raise HTTPException(
-            409, f"El proyecto «{proyecto.name}» está cerrado y no admite registros.")
+            409, f"El proyecto «{proyecto.name}» está "
+                 f"«{estados.texto(proyecto.status)}» y no admite registros de horas.")
     return proyecto
 
 
@@ -189,7 +200,8 @@ async def _responder(db: AsyncSession, registros: List[TimeEntry]) -> List[TimeE
             date=r.date,
             client_id=c.id if c else None, client_name=c.name if c else "",
             project_id=r.project_id, project_name=p.name if p else "",
-            project_status=p.status if p else "activo",
+            project_status=estados.normalizar_legado(p.status if p else None),
+            project_status_label=estados.texto(p.status if p else None),
             activity_id=r.activity_id,
             activity_name=actividades[r.activity_id].name if r.activity_id in actividades else "",
             hours=Decimal(str(r.hours)), billable=r.billable, overtime=r.overtime,

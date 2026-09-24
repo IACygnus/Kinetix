@@ -36,6 +36,7 @@ from app.schemas.time_tracking import (
     InformeFilaDiaria, InformeFiltros, InformeMapaPersona, InformePendiente,
     InformePersona, InformeReparto, InformeResumen,
 )
+from app.services.horas import estados
 from app.services.horas.calendario import construir_dias, dias_del_rango
 from app.services.horas.desfase import (
     estado as estado_desfase, etiqueta as etiqueta_desfase, horas_de_desfase,
@@ -229,6 +230,9 @@ async def construir_informe(
         mapa.append(InformeMapaPersona(
             user_id=uid, user_name=nombre(u),
             por_dia=[d.total for d in resueltos],
+            # ETAPA H8 (H-D85): la parte extra de cada día, para partir la
+            # casilla. Sale del mismo `construir_dias` que el total.
+            extra_por_dia=[d.extra for d in resueltos],
             estados=[_estado_casilla(d) for d in resueltos],
             total_hours=sum((d.total for d in resueltos), CERO),
         ))
@@ -277,12 +281,16 @@ async def construir_informe(
             acc = en_rango[pid]
             proyectos.append(ConsultaProyecto(
                 project_id=pid, project_name=p.name,
-                client_id=p.client_id, client_name=c.name, status=p.status,
+                client_id=p.client_id, client_name=c.name,
+                # ETAPA H8 (§5.1): estado y consumo, en campos distintos. La
+                # sección 6 del informe pinta los dos (H8.3).
+                status=estados.normalizar_legado(p.status),
+                status_label=estados.texto(p.status),
                 estimated_hours=est, consumed_hours=con, remaining_hours=est - con,
                 consumed_pct=porcentaje_consumido(con, est),
-                overrun_status=estado_desfase(con, est, p.status == "cerrado"),
+                overrun_status=estado_desfase(con, est),
                 overrun_hours=horas_de_desfase(con, est),
-                overrun_label=etiqueta_desfase(con, est, p.status == "cerrado"),
+                overrun_label=etiqueta_desfase(con, est),
                 hours_in_range=acc["h"], overtime_in_range=acc["extra"],
                 entries_in_range=int(acc["n"]), people=[],
             ))

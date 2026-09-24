@@ -154,7 +154,7 @@ def main():
     ok(len(lista) == 3, f"los tres proyectos estan ({len(lista)})")
 
     esperado = {
-        RANGO:   ("en_rango",     "En ejecución",  13.5, 33.75, 0),   # H-D66
+        RANGO:   ("en_rango",     "En rango",  13.5, 33.75, 0),   # H-D66
         AGOTAR:  ("por_agotarse", "Por agotarse",   9.0, 90.0,  0),
         DESFASE: ("desfasado",    "Desfasado +4,5 h", 8.5, 212.5, 4.5),
     }

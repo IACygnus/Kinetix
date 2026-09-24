@@ -98,6 +98,86 @@ referencia, porque la referencia no tiene esas secciones: `.pill.ojo`
 del mes (`#dcfce7` trabajado, `#fef3c7` incompleto, `#e0e7ff` festivo,
 `#f3e8ff` ausencia, `#f3f4f6` fin de semana). Son semáforos ya aprobados.
 
+#### Las cinco píldoras del estado del proyecto (ETAPA H8, H-D103)
+
+La sección 6 del informe pasa a tener **una sola** columna de estado, la última,
+y con color (H-D102). Estos son sus cinco tonos, **tomados de la paleta que ya
+está en este documento** salvo uno, que se señala:
+
+| Estado | Fondo | Texto | De dónde sale |
+|---|---|---|---|
+| **Pendiente** | `#f3f4f6` | `#4b5563` | Es `.pill.bien`, la píldora neutra que ya existe |
+| **En ejecución** | `#bfdbfe` | `#03287D` | El azul de las horas extra del mapa (H-D85) sobre `--navy` de la referencia |
+| **Detenido** | `#fef3c7` | `#92400e` | Es `.pill.ojo`, sin cambio |
+| **No viable** | `#e5e7eb` | `#991b1b` | Gris de §1.2 con la tinta roja de `.pill.mal` |
+| **Finalizado** | `#dcfce7` | `#166534` | El verde «trabajado» del mapa · **el texto es un tono NUEVO** |
+
+**«No viable» es rojo apagado, no rojo de alarma**, y por eso es tinta roja
+sobre gris y no el bloque `#fee2e2` de `.pill.mal`. Dos razones: un proyecto que
+no se va a hacer no es una alarma que haya que atender, y `.pill.mal` **sigue
+significando «desfase»** en la sección 8 del mismo documento. Dos cosas distintas
+con la misma píldora en el mismo informe se leerían como la misma.
+
+> **El único tono nuevo de H8 es `#166534`**, el verde oscuro del texto de
+> «Finalizado». Hacía falta porque el fondo `#dcfce7` es demasiado claro para
+> llevar texto de su propio color, y dejarlo en tinta negra habría hecho de
+> «Finalizado» la única píldora sin color de letra. **Aprobado por Fredy el 23
+> de septiembre de 2026.**
+
+**El tinte de fila se retira** (aprobado por Fredy). La sección 6 teñía el fondo
+de la fila cuando el proyecto iba desfasado (`tr.mal td{background:#fef2f2}`) o
+por agotarse (`tr.ojo`). Ese tinte salía del **consumo**, que es lo que H-D102
+saca de la tabla, y además una fila roja con una píldora verde de «Finalizado»
+al final se contradice a la vista. El aviso lo da «Restantes».
+
+**El consumo sale de la tabla** (H-D102): ninguna píldora `bien`/`ojo`/`mal` en
+la sección 6. Las que quedan en el informe son las de la sección 8 —«extra» y
+«desfase»— y no cambian.
+
+**Y «Restantes» en negativo se pinta en rojo y en negrita** (`#991b1b`, la tinta
+que ya existe), que es lo que deja ver un proyecto desfasado ahora que su columna
+no está. **Solo en negativo**: un proyecto que va sobrado no es un aviso.
+H-D106, aprobado por Fredy.
+
+#### El azul de las horas extra (ETAPA H8, H-D85)
+
+El sexto color del mapa, y el único que se añade después de D1: **`#bfdbfe`**,
+aprobado por Fredy el 23 de septiembre de 2026.
+
+| Parte de la casilla | Color | Qué es |
+|---|---|---|
+| Abajo | `#dcfce7` | Las horas **ordinarias**. Es el verde de «trabajado», sin cambio |
+| Arriba | `#bfdbfe` | Las horas **extra** |
+
+La casilla se parte **en proporción a las horas de cada tipo**, no por la mitad:
+8,5 ordinarias y 2 extra dejan el azul ocupando 2 / 10,5 de la altura.
+
+**Por qué `#bfdbfe` y no cualquier azul:** `#e0e7ff` ya es «festivo». Un azul
+más claro que ese se confundiría con él en una tabla de 31 columnas donde cada
+casilla mide tres milímetros. `#bfdbfe` es netamente más saturado y se distingue
+de un vistazo, que es para lo único que sirve el mapa.
+
+**Un día sin extras no cambia**: sale verde entero, como hasta ahora. El color
+nuevo solo aparece donde hay horas extra, y la leyenda lo nombra igual que a los
+otros cinco.
+
+> **Medido en H8.4: WeasyPrint 61.2 SÍ honra el `linear-gradient`** de corte
+> duro, y no hizo falta recurrir a dos rectángulos. **Pero solo con la sintaxis
+> clásica** —el mismo porcentaje repetido en los dos colores—:
+>
+> ```css
+> /* funciona */   linear-gradient(to top,#dcfce7 81%,#bfdbfe 81%)
+> /* NO funciona */ linear-gradient(to top,#dcfce7 0 81%,#bfdbfe 81% 100%)
+> ```
+>
+> La segunda es la forma de **doble posición** de CSS Images Level 4.
+> WeasyPrint la descarta entera **sin avisar**, y la casilla se queda con el
+> fondo de su clase: verde y sin partir, con aspecto de estar bien. Se descubrió
+> rasterizando el PDF y contando píxeles **dentro de la fila**; medido aparte,
+> una prueba al 81 % da 21.714 píxeles verdes contra 5.313 azules.
+>
+> Vale para cualquier gradiente que este producto mande a papel.
+
 ---
 
 ## 2. Tipografía

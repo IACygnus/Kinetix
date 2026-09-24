@@ -27,10 +27,18 @@
   `PROJECT_STATUS.md`; deuda de despliegue en
   `docs/reporte_claude_code/53_checklist_despliegue.md` y su **versión corregida**
   en `docs/reporte_claude_code/59_handoff_despliegue_analisis.md` §4.
-- **Estado del módulo de horas:** **completo**, etapas H1 a H7, contra
-  `docs/ESPECIFICACION-horas.md` **v1.4**. H1, H2, H2b y H3 validadas por Fredy;
-  **H5, H6 y H7 pendientes de su validación**. Es un módulo aparte del de
-  análisis: comparte la tabla `clients`, el usuario y la sesión, y nada más.
+- **Estado del módulo de horas:** **completo**, etapas H1 a H7 contra
+  `docs/ESPECIFICACION-horas.md` **v1.4**, y **H8 (H8.1 a H8.6)** contra la
+  **v1.5**, que añadió el **estado del proyecto** (§3.1: pendiente ·
+  en_ejecucion · detenido · no_viable · finalizado), las horas extra en el mapa,
+  el **borrado de un periodo** y el **importador de proyectos y estimaciones**.
+  H1, H2, H2b y H3 validadas por Fredy; **H5, H6, H7 y todo H8 pendientes de su
+  validación**. Es un módulo aparte del de análisis: comparte la tabla
+  `clients`, el usuario y la sesión, y nada más.
+  La **CARGA REAL** del 24 de septiembre de 2026 dejó septiembre cargado desde
+  cero —107 registros, 489 h, tres personas— con el catálogo en **ocho**
+  actividades y la tabla de sinónimos que las reconoce en las importaciones.
+  Reportes 108 a 117.
   La **Etapa D1** rehízo **el diseño del informe** —solo la presentación:
   ninguna cifra cambió, comprobado número a número—. Su referencia única es
   **`docs/diseno-informe-horas.md`**, con los valores **medidos** del informe
@@ -548,7 +556,7 @@ mira no pueden discrepar.
 - `GET /reports/integrated-reports` — listar
 - `GET/PATCH/DELETE /reports/integrated-reports/{id}`
 
-### MÓDULO DE HORAS (`/time`) — H1 a H7
+### MÓDULO DE HORAS (`/time`) — H1 a H8
 
 Todo cuelga de `/time` (H-D9) para que se distinga de un vistazo del módulo de
 análisis. **§8: todos ven los registros de todos**; los filtros de persona son del
@@ -557,7 +565,10 @@ usuario, no del permiso.
 | Verbo | Path | Función |
 |---|---|---|
 | CRUD | `/time/activities` | Catálogo de actividades |
-| CRUD | `/time/projects` | Proyectos; `PUT` renombra (H-D63) y `POST /{id}/cerrar\|reabrir` es **solo admin** |
+| CRUD | `/time/projects` | Proyectos; `PUT` renombra (H-D63), `POST /{id}/estado` cambia el estado (H8) y `DELETE /{id}` lo borra: **solo admin, solo sin horas**, y se lleva sus estimaciones y sus dos historiales. Deja constancia en `project_deletions`. **No está en la pantalla** |
+| GET | `/time/projects/{id}/historial-estado` | Los cambios de estado (H-D83) |
+| GET/POST | `/time/borrado/preview` · `/time/borrado/confirm` | H8.5: borrar **un periodo entero** de registros. Copia + frase tecleada + solo admin; constancia en `time_entry_purges` |
+| POST | `/time/import/proyectos/preview` · `/confirm` | H8.5b: proyectos, estados y **estimaciones** desde un `.xlsx` |
 | PUT/DELETE | `/time/projects/{id}/actividades` | Estimaciones, con su historial |
 | GET | `/time/projects/{id}/historial` | Los cambios de estimación |
 | CRUD | `/time/entries` | El registro de horas |
@@ -575,7 +586,9 @@ todas las pantallas digan la misma cifra:
 | Módulo | Qué decide |
 |---|---|
 | `services/horas/calendario.py` | La jornada y cuándo un día está **incompleto**. Cuatro reglas en orden: no laborable → futuro → extras → jornada |
-| `services/horas/desfase.py` | El estado de consumo: **En ejecución · Por agotarse · Terminado** (el 100 % exacto) **· Desfasado +X h · Cerrado** |
+| `services/horas/desfase.py` | El estado de consumo: **En rango · Por agotarse · Terminado** (el 100 % exacto) **· Desfasado +X h**. Son **cuatro** desde H8 (H-D82): «Cerrado» salió de aquí porque es un ESTADO del proyecto, no un nivel de consumo |
+| `services/horas/estados.py` | El **estado** del proyecto (H8, §3.1): **pendiente · en_ejecucion · detenido · no_viable · finalizado**. Qué bloquea cada uno y quién puede ponerlo. Es la otra columna, y no se mezcla con la de arriba |
+| `services/horas/sinonimos_actividad.py` | Qué texto de un Excel corresponde a cuál de las **ocho** actividades del catálogo. Solo lo usan las **dos importaciones**; el registro a mano no pasa por ahí |
 | `services/horas/informe_datos.py` | Las ocho secciones del informe, en **una sola pasada** por la base |
 
 Y dos más del informe: `services/horas/informe.py` arma el documento (una sola
@@ -625,20 +638,34 @@ Todas en `backend/app/db/models/time_tracking.py`. **Las crea
 | Tabla | Contenido y lo que hay que saber |
 |---|---|
 | **`activities`** | Catálogo global. `name_normalized` lleva el UNIQUE: «Planeación» y «planeacion» son la misma. Con horas registradas no se borra, se desactiva |
-| **`projects`** | Cliente, nombre, estado (`activo`/`cerrado`). Nombre único **por cliente**, comparado normalizado (`uq_project_cliente_nombre`) |
+| **`projects`** | Cliente, nombre y **estado**: `pendiente`/`en_ejecucion`/`detenido`/`no_viable`/`finalizado` (H8, H-D80). Desde **H8.6** el `CHECK` acepta **solo esos cinco**; `activo` y `cerrado` ya no se pueden escribir. Nombre único **por cliente**, comparado normalizado (`uq_project_cliente_nombre`) |
+| **`project_status_changes`** | Historial de estado (H-D83): anterior, nuevo, quién y cuándo. Tabla aparte del historial de estimaciones |
+| **`time_entry_purges`** · **`project_deletions`** | La constancia de los dos borrados en bloque. **Nunca se borran desde el producto**: son el rastro, no un dato de trabajo |
 | **`project_activities`** | Horas estimadas por actividad. `Numeric(8,2)` y `CHECK estimated_hours > 0`: **no se puede crear con 0** |
 | **`project_activity_changes`** | Historial de estimaciones: valor anterior, nuevo, quién y cuándo |
 | **`time_entries`** | El registro. `external_id` único y nullable (idempotencia de la importación), `source` = `manual`/`import`, `created_by` distinto de `user_id` cuando registra un admin por otro, y dos `CHECK`: horas > 0 y **múltiplo de 0,25** |
 | **`work_calendar`** | Jornada por día de la semana: L-J 8,5 · V 8,0 · fin de semana 0 |
 | **`holidays`** | Festivos nacionales (`user_id` NULL) y ausencias por persona, en la misma tabla porque se usan igual. Índice parcial `ux_festivo_nacional` para que no se duplique un nacional |
 
-El seed (`db/seed_time_tracking.py`) es idempotente y siembra 5 actividades, la
-jornada y 40 festivos colombianos de 2026-2027 **de una lista literal** —un
-algoritmo de Ley Emiliani se equivoca en silencio y una lista se revisa—.
+El seed (`db/seed_time_tracking.py`) es idempotente y siembra **8 actividades**
+—las `CANONICAS` de `services/horas/sinonimos_actividad.py`, que es donde vive
+la lista; eran cinco hasta la CARGA REAL—, la jornada y 40 festivos colombianos
+de 2026-2027 **de una lista literal** —un algoritmo de Ley Emiliani se equivoca
+en silencio y una lista se revisa—.
 
-**Columna añadida sin Alembic:** `ai_config.reasoning_effort VARCHAR(20)`
-(`docs/sql/etapa2_reasoning_effort.sql`, idempotente). Aplicada en desarrollo,
-**pendiente en producción**.
+> **Ojo con esa idempotencia.** La siembra añade lo que falte **en cada
+> arranque**. Editar la lista y guardar basta para que el backend recargue y
+> escriba en la base de Fredy sin que nadie lo haya pedido: pasó el 24 de
+> septiembre de 2026 con las tres actividades nuevas (reporte 115 §2).
+
+**SQL sin Alembic (regla 10), en orden y todos idempotentes:**
+
+| Archivo | Qué | Estado |
+|---|---|---|
+| `docs/sql/etapa2_reasoning_effort.sql` | `ai_config.reasoning_effort` | Aplicado en desarrollo · **pendiente en producción** |
+| `docs/sql/o2c_influxdb_read_token.sql` | El token de lectura de O2c | Aplicado en desarrollo · **pendiente en producción** |
+| `docs/sql/h8_estado_proyecto.sql` | `projects.status` a cinco valores; el `CHECK` acepta **siete** durante el despliegue | Aplicado en desarrollo · **pendiente en producción** |
+| `docs/sql/h8_estado_proyecto_cierre.sql` | Estrecha ese `CHECK` a los **cinco**. **Va el último**: aplicarlo con código viejo corriendo rompería la creación de proyectos | Aplicado en desarrollo (H8.6) · **pendiente en producción** |
 
 ---
 

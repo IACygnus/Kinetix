@@ -1,6 +1,6 @@
 # Especificación funcional — Módulo de Horas y Proyectos (Kinetix)
 
-**Versión 1.4 · Aprobada por Fredy Bonilla**
+**Versión 1.5 · Aprobada por Fredy Bonilla**
 
 Referencia única del módulo. Todo prompt de desarrollo se valida contra este documento,
 no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
@@ -25,9 +25,10 @@ no contra mensajes anteriores. Mismo criterio que `ESPECIFICACION-informe.md`.
 |---|---|
 | `clients` | **Ya existe.** Se comparte con el módulo de análisis, sin cambios |
 | `activities` | Catálogo global: nombre, activa, quién la creó. Es la lista que alimenta a todos los proyectos |
-| `projects` | Cliente, nombre, estado (activo/cerrado), quién lo creó, fechas |
+| `projects` | Cliente, nombre, **estado (los cinco de §3.1)**, quién lo creó, fechas |
 | `project_activities` | Horas estimadas de cada actividad dentro de un proyecto |
 | `project_activity_changes` | Historial de las estimaciones: valor anterior, nuevo, quién y cuándo |
+| `project_status_changes` | Historial del estado: de qué estado a cuál, quién y cuándo (§3.1) |
 | `time_entries` | El registro de horas (ver §1.1) |
 | `work_calendar` | Jornada por día de la semana, festivos y ausencias por usuario |
 
@@ -83,9 +84,44 @@ Cada uno es una pantalla independiente. No se mezclan.
   tengan horas registradas.
 - **El nombre del proyecto se puede cambiar** después de crearlo, desde su detalle, con las
   mismas reglas del alta: único por cliente, comparando sin tildes ni mayúsculas.
-- **Un proyecto cerrado** no admite registros nuevos, pero se sigue consultando.
-- **El listado enseña solo los proyectos activos.** Una casilla «Incluir cerrados» los trae
-  cuando hacen falta: lo que se mira todos los días es lo que está en marcha.
+- **Un proyecto que no está en ejecución** puede no admitir registros nuevos, según su estado
+  (§3.1), pero se sigue consultando siempre.
+- **El listado enseña solo los proyectos vivos.** Una casilla «Incluir finalizados y no
+  viables» trae el resto cuando hace falta: lo que se mira todos los días es lo que está en
+  marcha.
+
+### 3.1 El estado del proyecto (v1.5)
+
+**El estado lo decide una persona y no lo deduce el sistema.** Es independiente del consumo:
+un proyecto puede estar desfasado y seguir en ejecución, o estar finalizado sin haber gastado
+ni la mitad de lo estimado. Son dos preguntas distintas —*¿en qué punto está este trabajo?* y
+*¿cuántas horas lleva gastadas?*— y cada una tiene su columna (§5.1).
+
+| Estado | Qué significa | Registrar horas | Cambiar estimaciones |
+|---|---|---|---|
+| **Pendiente** | Aprobado pero aún no empezado | No | Sí |
+| **En ejecución** | En marcha. **Es el estado por defecto** | Sí | Sí |
+| **Detenido** | Parado por ahora; se espera retomarlo | No | Sí |
+| **No viable** | No se va a hacer | No | No |
+| **Finalizado** | Terminado | No | No |
+
+**Pendiente y detenido son temporales**: se planifican aunque todavía no se registren horas
+en ellos, y por eso admiten cambios de estimación. **No viable y finalizado están cerrados**
+a todo.
+
+- **«Cerrado» deja de existir como concepto aparte.** El estado `cerrado` de las versiones
+  anteriores **es** `finalizado`, y los proyectos cerrados que hubiera se migran a él. No hay
+  dos campos para lo mismo.
+- **Se cambia desde el detalle del proyecto**, con un selector, y también desde el listado
+  sin tener que abrirlo.
+- **Cada cambio queda registrado** en `project_status_changes`: de qué estado a cuál, quién y
+  cuándo. Se lee junto al historial de estimaciones.
+- **Pasar a `finalizado` o a `no_viable` es del administrador** —son los dos que cierran el
+  proyecto y lo esconden del listado—. Los otros tres los cambia cualquier usuario, como el
+  resto del módulo.
+- **Los listados esconden por defecto `finalizado` y `no_viable`**, y los demás estados se
+  ven siempre. La casilla «Incluir finalizados y no viables» los trae, con el mismo
+  comportamiento que tenía la casilla de cerrados.
 
 ---
 
@@ -150,6 +186,25 @@ del día frente a su jornada, con las horas extra aparte.
    día con horas extra no cuenta como incompleto.
 7. **Festivos y ausencias** no se reclaman como días incompletos.
 
+### 4.3 Borrado de un periodo (v1.5)
+
+Para poder **volver a cargar un periodo desde cero** cuando la importación trajo algo mal.
+
+- **Solo administrador.**
+- **Borra registros de horas y nada más.** Los proyectos, los clientes, las actividades y sus
+  horas estimadas se quedan intactos, con su historial. Si el periodo borrado era el único que
+  tenía horas de un proyecto, el proyecto sigue ahí con su estimación, a cero de consumo.
+- **Vista previa obligatoria, que no borra nada**: cuántos registros caen, de qué personas y
+  cuántas horas cada una, y el total. Se puede mirar y cerrar sin más.
+- **Confirmación escribiendo el periodo.** No basta con pulsar un botón: hay que teclear las
+  fechas que se van a borrar, y tienen que coincidir con las de la previa.
+- **La copia de seguridad la hace Fredy, y el sistema la exige.** La pantalla muestra el
+  comando `pg_dump` exacto, listo para copiar, y una casilla de «ya hice la copia de
+  seguridad» que hay que marcar antes de que el botón se active. **Kinetix no ejecuta
+  `pg_dump` ni escribe respaldos**: mismo criterio que con los `docker compose build` —el
+  sistema no toca lo que es de Fredy, le da el comando.
+- El borrado queda en el registro del servidor: quién, cuándo, qué rango y cuántas filas.
+
 ---
 
 ## 5. Consulta de proyectos
@@ -159,20 +214,36 @@ del día frente a su jornada, con las horas extra aparte.
 - **Al ampliar la consulta**, la tabla cambia y muestra **los días** en que se registraron
   esas horas, con su detalle.
 - Filtros por cliente, proyecto, usuario y rango de fechas, y una casilla
-  **«Incluir proyectos cerrados»**, que por defecto está sin marcar.
+  **«Incluir finalizados y no viables»**, que por defecto está sin marcar.
 
-### 5.1 Alertas de desfase
+### 5.1 Estado y consumo son dos columnas (v1.5)
 
-El listado de proyectos **avisa antes de que sea tarde**. Cada proyecto muestra una barra con
-lo consumido frente a lo estimado y su estado:
+**Nunca en la misma celda: dicen cosas distintas y las dos importan.** Donde se listen
+proyectos —el listado de Proyectos, la Consulta y la sección 6 del informe— hay dos columnas
+con dos títulos:
 
-| Estado | Cuándo |
+| Columna | Qué contesta | De dónde sale |
+|---|---|---|
+| **Estado** | ¿En qué punto está este trabajo? | Lo decide una persona (§3.1) |
+| **Consumo** | ¿Cuántas horas lleva gastadas de las estimadas? | Lo calcula el sistema |
+
+**El consumo tiene cuatro valores**, y ya no incluye «Cerrado»: cerrar un proyecto es un
+estado, no una forma de gastar horas. Un proyecto finalizado sigue diciendo cuánto consumió.
+
+| Consumo | Cuándo |
 |---|---|
-| **En ejecución** | por debajo del 90 % de lo estimado |
+| **En rango** | por debajo del 90 % de lo estimado |
 | **Por agotarse** | del 90 % al 99,9 % |
 | **Terminado** | justo el 100 %: se consumió lo estimado, ni una hora más |
 | **Desfasado +X h** | por encima del 100 %, con las horas de más |
-| **Cerrado** | el proyecto se cerró a mano; manda sobre cualquier estado de consumo |
+
+**Se dice «En rango», no «En ejecución»**: «En ejecución» es ahora un estado del proyecto
+(§3.1), y dos cosas distintas no pueden llamarse igual en la misma fila.
+
+### 5.2 Alertas de desfase
+
+El listado de proyectos **avisa antes de que sea tarde**. Cada proyecto muestra una barra con
+lo consumido frente a lo estimado y su consumo de §5.1.
 
 El consumo se mide contra **todo lo registrado desde que existe el proyecto**, no contra el
 periodo que se esté mirando. Un proyecto que lleva dos meses suma los dos: si no, consultar
@@ -221,6 +292,11 @@ Extra Hour · Fecha · Tiempo total · Facturable`
    cualquiera.
 7. Si una fila es inválida (fecha o horas ilegibles), se señala y **no se importa esa fila**;
    el resto sí.
+8. **La importación registra en cualquier estado menos `no_viable`** (v1.5). Es la excepción a
+   §3.1: un Excel trae horas de hace semanas y el proyecto pudo cambiar de estado desde
+   entonces —rechazarlas obligaría a reabrir el proyecto, importar y volver a cerrarlo—. La
+   vista previa **avisa de cuántas filas caen en proyectos que no están en ejecución**, y
+   dice en cuáles. Las filas de un proyecto `no_viable` sí se rechazan, con su motivo.
 
 ---
 
@@ -246,9 +322,20 @@ informe: es el detalle de registros para llevárselo a Excel.
 | 3 | **Facturable frente a no facturable** | En total y por cliente |
 | 4 | **Cobertura por cliente** | Reparto de las horas entre clientes |
 | 5 | **En qué se fue el tiempo** | Reparto por actividad |
-| 6 | **Consumido frente a estimado** | Por proyecto, con horas restantes y el estado de §5.1 |
+| 6 | **Consumido frente a estimado** | Por proyecto, con horas restantes y **las dos columnas de §5.1**: Estado y Consumo |
 | 7 | **Mapa del mes** | Una fila por persona, una casilla por día: quién trabajó cuándo, de un vistazo |
 | 8 | **Detalle de registros** | La tabla completa del periodo |
+
+**El mapa del mes distingue las horas extra** (v1.5). Un día con extras se pinta **partido**:
+la parte de abajo verde, con las horas ordinarias, y la de arriba azul, con las extra, **en
+proporción a las horas de cada tipo** —un día de 8,5 ordinarias y 2 extra sale con algo más
+de un quinto de azul arriba—. La leyenda nombra el azul como las demás, y el párrafo de la
+sección lo explica en una línea. Vale igual **en pantalla, en el HTML y en el PDF**: el mapa
+en papel sigue sin cifras, así que el color es lo único que puede contarlo.
+
+Los colores concretos —el verde de las ordinarias y el azul de las extra— **se deciden en
+`docs/diseno-informe-horas.md`**, que es la referencia única del aspecto de este informe, y
+solo después se escriben en el código.
 
 **«Días sin registrar» y «Horas día a día» salieron del informe.** Sus datos siguen
 calculándose y se siguen viendo donde sirven —el calendario y la pantalla de consulta—, pero
@@ -339,7 +426,9 @@ mide y se reporta antes de tocar nada.
 | Borrar registros | **Solo administrador** |
 | Crear proyectos y actividades | Todos |
 | Editar horas estimadas | Todos, con historial |
-| Cerrar un proyecto | Administrador |
+| Cambiar el estado a pendiente, en ejecución o detenido | Todos, con historial |
+| Cambiar el estado a **finalizado** o **no viable** | **Solo administrador**, con historial |
+| Borrar los registros de un periodo (§4.3) | **Solo administrador** |
 
 ---
 
@@ -371,3 +460,4 @@ Quedan anotadas por si se quieren en una versión posterior.
 | 1.2 | §7 reescrito: **un solo informe** en HTML y PDF con diez secciones · filtros y casillas por sección · HTML autocontenido e interactivo · **PDF con orientación mixta** (la sección 9 en horizontal) · la vista previa enseña el documento real · CSV del detalle · nombres de archivo y tiempos máximos |
 | 1.3 | §5.1 renombra los estados: **En ejecución · Por agotarse · Terminado · Desfasado · Cerrado**, y deja dicho que el consumo suma desde siempre · §3 añade el cambio de nombre del proyecto y el listado **solo de activos** con su casilla · §5 añade la casilla de proyectos cerrados · §7 pasa a **ocho secciones** —salen «Días sin registrar» y «Horas día a día»—, el **PDF queda todo vertical** sin selector de orientación, y se rediseña la cabecera |
 | 1.4 | §7.3 añade **la portada**: logo con «Centro de Excelencia · Performance», banda azul y naranja, título con el periodo, y la fila de **Dirigido a · Período · Equipo** con la **capacidad base** del periodo (días hábiles y horas por analista). El destinatario por defecto es configurable y se puede cambiar antes de generar |
+| 1.5 | §3.1 añade **el estado del proyecto**: cinco valores que decide una persona, con su historial, qué bloquea cada uno y quién puede ponerlo; «cerrado» pasa a ser **finalizado** y deja de existir como campo aparte · §5.1 separa **Estado y Consumo en dos columnas**, el consumo baja a cuatro valores y «En ejecución» pasa a llamarse **«En rango»** · §5 y §3 cambian la casilla por **«Incluir finalizados y no viables»** · §6.2.8 deja que **la importación registre en cualquier estado menos `no_viable`**, avisando en la previa · §7.2 pinta **las horas extra en el mapa del mes**, con la casilla partida en proporción · §4.3 añade el **borrado de los registros de un periodo**, con previa obligatoria, confirmación escrita y copia de seguridad exigida al usuario |

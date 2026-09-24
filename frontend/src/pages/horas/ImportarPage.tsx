@@ -17,9 +17,11 @@ import {
   AlertTriangle, ArrowRight, Check, FileSpreadsheet, Loader2, Plus, Upload,
 } from 'lucide-react';
 import {
-  FilaImportacion, ResumenImportacion, VistaPrevia,
+  ActividadNueva, FilaImportacion, ResumenImportacion, VistaPrevia,
   fechaLarga, horas, horasApi, mensajeDeError,
 } from '../../api/horasApi';
+import BorrarPeriodo from '../../components/horas/BorrarPeriodo';
+import ImportarProyectos from '../../components/horas/ImportarProyectos';
 import { usersAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -36,6 +38,8 @@ export default function ImportarPage() {
   const [analizando, setAnalizando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [error, setError] = useState('');
+  // ETAPA H8.5b (H-D94): «registros» o «proyectos».
+  const [pestana, setPestana] = useState<string>('registros');
   const entrada = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -91,12 +95,33 @@ export default function ImportarPage() {
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-gray-800">Importar horas</h1>
+        <h1 className="text-4xl font-bold text-gray-800">Importar</h1>
         <p className="text-lg text-gray-500 mt-1">
-          Sube el archivo de tu herramienta de horas. Antes de guardar nada verás
-          exactamente qué va a pasar.
+          Antes de guardar nada verás exactamente qué va a pasar.
         </p>
       </div>
+
+      {/* ETAPA H8.5b (H-D94): dos importadores en la misma pantalla, cada uno en
+          su pestaña. El orden es el de uso: primero los proyectos con sus
+          estimaciones, y después las horas, que caen sobre ellos. */}
+      <div className="flex gap-2 mb-6 border-b border-gray-200" data-testid="pestanas-importar">
+        {([['registros', 'Registros de horas'],
+           ['proyectos', 'Proyectos y estimaciones']] as [string, string][]).map(
+          ([clave, titulo]) => (
+            <button key={clave} onClick={() => setPestana(clave)}
+              data-testid={`pestana-${clave}`}
+              className={`px-5 py-3 text-lg font-semibold border-b-4 -mb-px ${
+                pestana === clave
+                  ? 'border-[#f5a623] text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+              {titulo}
+            </button>
+          ))}
+      </div>
+
+      {pestana === 'proyectos' && <ImportarProyectos />}
+
+      {pestana === 'registros' && (<>
 
       {error && (
         <div className="mb-4 flex items-start gap-2 p-4 rounded-xl bg-red-50 border border-red-200 text-red-800">
@@ -200,6 +225,9 @@ export default function ImportarPage() {
             </Seccion>
           )}
 
+          {/* §4: las actividades que el catálogo no tenía */}
+          <ActividadesNuevas actividades={previa.actividades_nuevas} />
+
           {/* Las que no entran (H-D40) */}
           {previa.invalidas.length > 0 && (
             <Seccion titulo={`No se importan (${previa.invalidas.length})`}
@@ -301,6 +329,10 @@ export default function ImportarPage() {
             </Seccion>
           )}
 
+          {/* §4: el mismo bloque de la previa, para que quede a la vista
+              DESPUÉS de confirmar y no haya que acordarse de lo que decía. */}
+          <ActividadesNuevas actividades={resumen.actividades_nuevas} yaCreadas />
+
           <div className="flex flex-wrap justify-end gap-3 mt-6">
             <button onClick={() => navegar('/horas/registro')} data-testid="ver-calendario"
               className="px-6 py-3 text-lg font-semibold rounded-xl border-2 border-gray-300 hover:bg-gray-50">
@@ -313,6 +345,13 @@ export default function ImportarPage() {
           </div>
         </div>
       )}
+
+      </>)}
+
+      {/* ETAPA H8.5 (§4.3): borrar un periodo. Va aquí porque el orden real de
+          uso es borrar → cargar proyectos → cargar horas, y es donde se está.
+          Fuera de las pestañas: vale para las dos. Solo admin, plegado por defecto. */}
+      {esAdmin && <BorrarPeriodo />}
     </div>
   );
 }
@@ -351,6 +390,53 @@ function ListaNombres({ titulo, nombres, testid }: {
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * §4 (carga real): las actividades que NO estaban en el catálogo.
+ *
+ * Bloque propio y no una línea más en «se va a crear», porque dice otra cosa:
+ * aquello enumera nombres, esto avisa de que el archivo trae una actividad que
+ * la tabla de sinónimos no conoce. Con el nombre a secas no se puede decidir;
+ * con **las filas y las horas** sí: una desconocida con 40 horas repartidas en
+ * 12 filas casi nunca es nueva, es una variante de escritura de una de las
+ * ocho, y entonces lo que hay que hacer es añadir el sinónimo y volver a
+ * importar, no confirmar.
+ *
+ * Se pinta igual en la vista previa y en el resumen, para que siga a la vista
+ * después de confirmar.
+ */
+function ActividadesNuevas({ actividades, yaCreadas }: {
+  actividades: ActividadNueva[]; yaCreadas?: boolean;
+}) {
+  if (actividades.length === 0) return null;
+  return (
+    <Seccion
+      titulo={`Actividades nuevas que no estaban en el catálogo (${actividades.length})`}
+      testid="actividades-nuevas" color="amber">
+      <p className="text-base text-amber-900 mb-3">
+        {yaCreadas
+          ? 'Se crearon con el nombre que traía el archivo.'
+          : 'Entran igual y se crean con el nombre que trae el archivo.'}{' '}
+        Si alguna es en realidad una de las del catálogo escrita de otra manera,
+        lo que falta es un <strong>sinónimo</strong>, no una actividad.
+      </p>
+      <ul className="space-y-2">
+        {actividades.map((a) => (
+          <li key={a.name} data-testid="actividad-nueva" data-nombre={a.name}
+            data-filas={a.filas.length} data-horas={String(a.horas)}
+            className="text-base text-gray-800">
+            <strong>{a.name}</strong>
+            {' — '}{horas(a.horas)} h en {a.filas.length}{' '}
+            {a.filas.length === 1 ? 'fila' : 'filas'}
+            {a.filas.length > 0 && (
+              <span className="text-gray-500"> ({a.filas.join(', ')})</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Seccion>
   );
 }
 

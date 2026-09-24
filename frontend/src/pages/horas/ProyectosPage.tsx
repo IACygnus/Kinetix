@@ -15,15 +15,17 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Plus, Trash2, History, Loader2, AlertTriangle, Lock, Unlock, ChevronLeft, Pencil,
+  Plus, Trash2, History, Loader2, AlertTriangle, ChevronLeft, Pencil,
 } from 'lucide-react';
 import {
-  Actividad, CambioDeEstimacion, Proyecto, ProyectoDetalle,
+  Actividad, CambioDeEstado, CambioDeEstimacion, EstadoProyecto, Proyecto, ProyectoDetalle,
   esPasoValido, horas, horasApi,
 } from '../../api/horasApi';
 import AvisoDesfase, {
   AvisoDesfasados, BarraConsumo, PorcentajeConsumido,
 } from '../../components/horas/AvisoDesfase';
+// ETAPA H8 (§3.1): el estado, en un solo sitio.
+import ChipEstado, { SelectorEstado } from '../../components/horas/EstadoProyecto';
 import { clientsAPI } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -39,7 +41,8 @@ export default function ProyectosPage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [filtroCliente, setFiltroCliente] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState('activo');   // H-D72: solo activos
+  // H-D84: por defecto se esconden los finalizados y los no viables.
+  const [incluirFinalizados, setIncluirFinalizados] = useState(false);
   const [texto, setTexto] = useState('');
   // §5.1: ver solo los que se pasaron. Se filtra aquí y no en el backend porque
   // el listado ya viene entero y el estado viaja en cada fila.
@@ -49,6 +52,9 @@ export default function ProyectosPage() {
   const [vista, setVista] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<ProyectoDetalle | null>(null);
   const [cambios, setCambios] = useState<CambioDeEstimacion[]>([]);
+  // ETAPA H8 (H-D83): el historial de estados, que viene de su propio endpoint
+  // y se enseña junto al de estimaciones.
+  const [cambiosEstado, setCambiosEstado] = useState<CambioDeEstado[]>([]);
   const [verHistorial, setVerHistorial] = useState(false);
   // H-D63: el nombre se puede cambiar después de crear el proyecto.
   const [editandoNombre, setEditandoNombre] = useState(false);
@@ -69,13 +75,13 @@ export default function ProyectosPage() {
     try {
       setProyectos(await horasApi.listarProyectos({
         client_id: filtroCliente || undefined,
-        estado: filtroEstado || undefined,
+        incluir_finalizados: incluirFinalizados || undefined,
         texto: texto.trim() || undefined,
       }));
       setError('');
     } catch (e) { fallo(e, 'No se pudieron cargar los proyectos.'); }
     setCargando(false);
-  }, [filtroCliente, filtroEstado, texto]);
+  }, [filtroCliente, incluirFinalizados, texto]);
 
   useEffect(() => {
     (async () => {
@@ -96,7 +102,11 @@ export default function ProyectosPage() {
     try {
       const d = await horasApi.verProyecto(id);
       setDetalle(d);
-      setCambios(await horasApi.historial(id));
+      const [est, edo] = await Promise.all([
+        horasApi.historial(id), horasApi.historialEstado(id),
+      ]);
+      setCambios(est);
+      setCambiosEstado(edo);
       setVista(id);
       setVerHistorial(false);
       setError('');
@@ -105,7 +115,11 @@ export default function ProyectosPage() {
 
   const refrescarDetalle = async (d: ProyectoDetalle) => {
     setDetalle(d);
-    setCambios(await horasApi.historial(d.id));
+    const [est, edo] = await Promise.all([
+      horasApi.historial(d.id), horasApi.historialEstado(d.id),
+    ]);
+    setCambios(est);
+    setCambiosEstado(edo);
   };
 
   // ---------- Alta ----------
@@ -172,13 +186,12 @@ export default function ProyectosPage() {
     }
   };
 
-  const alternarEstado = async () => {
-    if (!detalle) return;
+  // ---------- ETAPA H8 (H-D83): el estado del proyecto ----------
+  const cambiarEstado = async (id: string, nuevo: EstadoProyecto) => {
     try {
-      const d = detalle.status === 'activo'
-        ? await horasApi.cerrarProyecto(detalle.id)
-        : await horasApi.reabrirProyecto(detalle.id);
-      await refrescarDetalle(d);
+      const d = await horasApi.cambiarEstadoProyecto(id, nuevo);
+      if (detalle && detalle.id === id) await refrescarDetalle(d);
+      else await cargarListado();
       setError('');
     } catch (e) { fallo(e, 'No se pudo cambiar el estado del proyecto.'); }
   };
@@ -292,7 +305,10 @@ export default function ProyectosPage() {
 
   // ==================== DETALLE ====================
   if (vista && detalle) {
-    const cerrado = detalle.status === 'cerrado';
+    // ETAPA H8 (§3.1): **la regla viene del backend**, no se escribe aquí. Si
+    // se escribiera, el día que cambiara una de las dos copias la pantalla
+    // permitiría lo que el backend rechaza.
+    const bloqueado = !detalle.can_edit_estimates;
     return (
       <div className="p-8 max-w-5xl mx-auto">
         <button onClick={() => { setVista(null); setDetalle(null); setError(''); }}
@@ -337,18 +353,18 @@ export default function ProyectosPage() {
               <AvisoDesfase dato={detalle} siempre />
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span data-testid="estado-proyecto"
-              className={`px-4 py-1.5 rounded-full text-base font-bold uppercase ${
-                cerrado ? 'bg-gray-200 text-gray-600' : 'bg-emerald-100 text-emerald-800'}`}>
-              {cerrado ? 'Cerrado' : 'Activo'}
-            </span>
-            {esAdmin && (
-              <button onClick={alternarEstado} data-testid="alternar-estado"
-                className="flex items-center gap-2 px-4 py-2 text-base font-semibold rounded-xl border border-gray-300 hover:bg-gray-50">
-                {cerrado ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-                {cerrado ? 'Reabrir' : 'Cerrar'}
-              </button>
+          {/* ETAPA H8 (H-D83): el estado se cambia desde el detalle, con un
+              selector. Es la columna «Estado» de §5.1, la otra es el consumo
+              que está a la izquierda, junto al nombre. */}
+          <div className="flex flex-col items-end gap-2" data-testid="estado-proyecto"
+            data-estado={detalle.status}>
+            <span className="text-sm uppercase text-gray-500 font-semibold">Estado</span>
+            <SelectorEstado estado={detalle.status} esAdmin={esAdmin}
+              onCambiar={(e) => cambiarEstado(detalle.id, e)} />
+            {bloqueado && (
+              <span className="text-sm text-gray-500 max-w-[220px] text-right">
+                Un proyecto «{detalle.status_label}» no admite cambios en sus estimaciones.
+              </span>
             )}
           </div>
         </div>
@@ -374,7 +390,7 @@ export default function ProyectosPage() {
                   data-actividad={a.activity_name}>
                   <td className="py-3 px-4 text-lg text-gray-800">{a.activity_name}</td>
                   <td className="py-3 px-4 text-right">
-                    <input type="number" step="0.25" min="0.25" disabled={cerrado}
+                    <input type="number" step="0.25" min="0.25" disabled={bloqueado}
                       defaultValue={String(a.estimated_hours)}
                       data-testid="estimacion"
                       onBlur={(e) => {
@@ -399,7 +415,7 @@ export default function ProyectosPage() {
                   </td>
                   <td className="py-3 px-4 text-right">
                     <button onClick={() => quitar(a.activity_id, a.activity_name)}
-                      disabled={cerrado} data-testid="quitar-actividad"
+                      disabled={bloqueado} data-testid="quitar-actividad"
                       aria-label={`Quitar ${a.activity_name}`}
                       className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-30">
                       <Trash2 className="w-5 h-5" />
@@ -422,7 +438,7 @@ export default function ProyectosPage() {
         </div>
 
         {/* Añadir actividad */}
-        {!cerrado && disponibles.length > 0 && (
+        {!bloqueado && disponibles.length > 0 && (
           <AnadirActividad actividades={disponibles}
             onAnadir={(id, h) => cambiarEstimacion(id, String(h))} />
         )}
@@ -432,10 +448,56 @@ export default function ProyectosPage() {
           <button onClick={() => setVerHistorial((v) => !v)} data-testid="ver-historial"
             className="flex items-center gap-2 text-lg font-semibold text-gray-600 hover:text-gray-900">
             <History className="w-5 h-5" />
-            {verHistorial ? 'Ocultar historial' : `Ver historial de estimaciones (${cambios.length})`}
+            {verHistorial ? 'Ocultar historial'
+              : `Ver historial (${cambios.length + cambiosEstado.length})`}
           </button>
+
+          {/* ETAPA H8 (H-D83): el historial de ESTADOS, encima del de
+              estimaciones. Son dos tablas y no una: una va por actividad y la
+              otra no tiene ninguna. */}
+          {verHistorial && cambiosEstado.length > 0 && (
+            <div className="mt-3 bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-sm uppercase
+                              text-gray-500 font-semibold">
+                Cambios de estado
+              </div>
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr className="text-sm uppercase text-gray-500">
+                    <th className="py-2 px-4 text-left">De</th>
+                    <th className="py-2 px-4 text-left">A</th>
+                    <th className="py-2 px-4 text-left w-52">Quién</th>
+                    <th className="py-2 px-4 text-left w-44">Cuándo</th>
+                  </tr>
+                </thead>
+                <tbody data-testid="tabla-historial-estado">
+                  {cambiosEstado.map((c) => (
+                    <tr key={c.id} className="border-b border-gray-100 last:border-0">
+                      <td className="py-2 px-4">
+                        {c.previous_status
+                          ? <ChipEstado estado={c.previous_status} etiqueta={c.previous_label} />
+                          : <span className="text-base text-gray-400">—</span>}
+                      </td>
+                      <td className="py-2 px-4">
+                        <ChipEstado estado={c.new_status} etiqueta={c.new_label} />
+                      </td>
+                      <td className="py-2 px-4 text-base text-gray-600">{c.changed_by_name}</td>
+                      <td className="py-2 px-4 text-base text-gray-500">
+                        {new Date(c.changed_at + 'Z').toLocaleString('es-CO')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {verHistorial && (
             <div className="mt-3 bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-sm uppercase
+                              text-gray-500 font-semibold">
+                Cambios de estimación
+              </div>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr className="text-sm uppercase text-gray-500">
@@ -510,13 +572,13 @@ export default function ProyectosPage() {
           <option value="">Todos los clientes</option>
           {clientes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        {/* H-D72: por defecto solo los activos. La casilla trae los cerrados,
-            que se siguen consultando pero no estorban el día a día. */}
+        {/* H-D84: por defecto se esconden los finalizados y los no viables, que
+            se siguen consultando pero no estorban el día a día. */}
         <label className="flex items-center gap-2 px-4 py-2.5">
-          <input type="checkbox" checked={filtroEstado === ''} data-testid="incluir-cerrados"
-            onChange={(e) => setFiltroEstado(e.target.checked ? '' : 'activo')}
+          <input type="checkbox" checked={incluirFinalizados} data-testid="incluir-finalizados"
+            onChange={(e) => setIncluirFinalizados(e.target.checked)}
             className="w-5 h-5 accent-[#f5a623]" />
-          <span className="text-lg text-gray-700">Incluir cerrados</span>
+          <span className="text-lg text-gray-700">Incluir finalizados y no viables</span>
         </label>
         <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Buscar por nombre…"
           className="flex-1 min-w-[200px] px-4 py-2.5 border-2 border-gray-300 rounded-xl text-lg" />
@@ -531,10 +593,12 @@ export default function ProyectosPage() {
               <tr className="text-sm uppercase text-gray-500">
                 <th className="py-3 px-4 text-left">Cliente</th>
                 <th className="py-3 px-4 text-left">Proyecto</th>
-                <th className="py-3 px-4 text-center w-32">Estado</th>
+                {/* §5.1 (H-D82): «Estado» y «Consumo» son DOS columnas, con dos
+                    títulos. Nunca en la misma celda: dicen cosas distintas y
+                    las dos importan. */}
+                <th className="py-3 px-4 text-center w-44">Estado</th>
                 <th className="py-3 px-4 text-right w-36">Estimadas</th>
                 <th className="py-3 px-4 text-right w-36">Consumidas</th>
-                {/* §5.1: el desfase se ve desde el listado, sin entrar. */}
                 <th className="py-3 px-4 text-right w-56">Consumo</th>
               </tr>
             </thead>
@@ -549,11 +613,13 @@ export default function ProyectosPage() {
                       {p.activities_count} actividad{p.activities_count === 1 ? '' : 'es'}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-center">
-                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                      p.status === 'activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-600'}`}>
-                      {p.status === 'activo' ? 'Activo' : 'Cerrado'}
-                    </span>
+                  {/* H-D83: también se cambia desde el listado, sin abrirlo. El
+                      `stopPropagation` del selector evita que elegir un estado
+                      abra el proyecto. */}
+                  <td className="py-3 px-4 text-center" data-proyecto-estado={p.status}>
+                    <SelectorEstado estado={p.status} esAdmin={esAdmin}
+                      testid="selector-estado-fila"
+                      onCambiar={(e) => cambiarEstado(p.id, e)} />
                   </td>
                   <td className="py-3 px-4 text-right text-lg tabular-nums text-gray-700">
                     {horas(p.total_estimated_hours)}

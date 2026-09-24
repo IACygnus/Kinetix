@@ -113,12 +113,23 @@ class ProjectActivityResponse(BaseModel):
 
 
 class ProjectResponse(BaseModel):
+    """Un proyecto en el listado.
+
+    **Estado y consumo son dos cosas** (§5.1, H-D82) y van en campos distintos:
+
+        status / status_label     en qué punto está el trabajo (§3.1)
+        overrun_status / _label   cuántas horas lleva de las estimadas
+
+    Nunca se mezclan en un campo: dicen cosas distintas y las dos importan.
+    """
     id: UUID
     client_id: UUID
     client_name: str = ""
     name: str
     description: Optional[str] = None
+    # ETAPA H8 (§3.1): pendiente | en_ejecucion | detenido | no_viable | finalizado
     status: str
+    status_label: str = "En ejecución"
     created_at: datetime
     total_estimated_hours: Decimal = Decimal("0")
     total_consumed_hours: Decimal = Decimal("0")
@@ -126,15 +137,39 @@ class ProjectResponse(BaseModel):
     # ETAPA H2b (§5.1). Campos AÑADIDOS: el contrato que cerraron H1 y H2 no
     # cambia, así que nada de lo que ya consumía esta respuesta se entera.
     consumed_pct: Decimal = Decimal("0")
-    overrun_status: str = "en_rango"      # en_rango | por_agotarse | desfasado
+    # v1.5: CUATRO valores. `cerrado` salió de aquí y es un estado (H-D82).
+    overrun_status: str = "en_rango"      # en_rango | por_agotarse | terminado | desfasado
     overrun_hours: Decimal = Decimal("0")
     overrun_label: str = "En rango"
+    # ETAPA H8: la tabla de §3.1, ya resuelta, para que la pantalla **no la
+    # vuelva a escribir en TypeScript**. Dos copias de la misma regla acaban
+    # diciendo cosas distintas en cuanto una de las dos cambia.
+    can_log_hours: bool = True
+    can_edit_estimates: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectDetailResponse(ProjectResponse):
     activities: List[ProjectActivityResponse] = []
+
+
+class ProjectStatusUpdate(BaseModel):
+    """Cambiar el estado del proyecto (ETAPA H8, H-D83, §3.1)."""
+    status: str
+
+
+class ProjectStatusChangeResponse(BaseModel):
+    """Una línea del historial de estados (H-D83)."""
+    id: UUID
+    previous_status: Optional[str] = None
+    previous_label: str = ""
+    new_status: str
+    new_label: str = ""
+    changed_by_name: str = ""
+    changed_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectActivityUpsert(BaseModel):
@@ -210,7 +245,8 @@ class TimeEntryResponse(BaseModel):
     client_name: str = ""
     project_id: UUID
     project_name: str = ""
-    project_status: str = "activo"
+    project_status: str = "en_ejecucion"
+    project_status_label: str = "En ejecución"
     activity_id: UUID
     activity_name: str = ""
     hours: Decimal
@@ -335,7 +371,9 @@ class ConsultaProyecto(BaseModel):
     project_name: str = ""
     client_id: UUID
     client_name: str = ""
-    status: str = "activo"
+    # ETAPA H8 (§5.1): el estado y el consumo, en campos distintos.
+    status: str = "en_ejecucion"
+    status_label: str = "En ejecución"
     estimated_hours: Decimal = Decimal("0")
     consumed_hours: Decimal = Decimal("0")
     remaining_hours: Decimal = Decimal("0")
@@ -377,6 +415,10 @@ class FilaImportacion(BaseModel):
     client_name: str = ""
     project_name: str = ""
     activity_name: str = ""
+    # §4: lo que venía escrito en el archivo, cuando la tabla de sinónimos lo
+    # tradujo a otra cosa. Vacío = el archivo ya decía el nombre del catálogo.
+    # Se enseña para que se vea QUÉ se tradujo, no solo el resultado.
+    activity_original: str = ""
     hours: Optional[Decimal] = None
     billable: bool = False
     overtime: bool = False
@@ -391,11 +433,47 @@ class FilaImportacion(BaseModel):
     overrun_label: str = "En rango"
     # Al actualizar, si el registro cambia de persona.
     cambia_de_persona: bool = False
+    # ETAPA H8 (§6.2.8): la fila entra, pero su proyecto no está en ejecución.
+    # Se marca para que la previa lo diga fila a fila, no solo en el total.
+    project_status: str = "en_ejecucion"
+    project_status_label: str = ""
 
 
 class ProyectoAImportar(BaseModel):
     client_name: str
     project_name: str
+
+
+class ProyectoNoEnEjecucion(BaseModel):
+    """Un proyecto que recibe filas sin estar en ejecución (ETAPA H8, §6.2.8).
+
+    No es un error: la importación entra igual. Es lo que hace falta saber
+    **antes** de confirmar, y por eso lleva el nombre, el estado y cuántas filas
+    caen ahí — decir solo «hay filas en proyectos parados» no deja decidir nada.
+    """
+    project_name: str = ""
+    client_name: str = ""
+    status: str = ""
+    status_label: str = ""
+    filas: int = 0
+    horas: Decimal = Decimal("0")
+
+
+class ActividadNueva(BaseModel):
+    """Una actividad del archivo que NO estaba en el catálogo.
+
+    No es un error —se crea igual (§4)—, es lo que hay que ver antes de
+    confirmar. Lleva **en qué filas aparece y cuántas horas trae**, no solo el
+    nombre: con el nombre a secas no se puede decidir si falta un sinónimo o si
+    de verdad es una actividad nueva. Si trae 40 horas repartidas en 12 filas,
+    casi seguro es una variante de escritura de una de las ocho.
+
+    La misma clase sirve a las dos importaciones: en la de registros `horas` son
+    horas trabajadas y en la de proyectos, horas estimadas.
+    """
+    name: str
+    filas: List[int] = []
+    horas: Decimal = Decimal("0")
 
 
 class VistaPreviaImportacion(BaseModel):
@@ -412,7 +490,16 @@ class VistaPreviaImportacion(BaseModel):
     clientes_a_crear: List[str] = []
     proyectos_a_crear: List[ProyectoAImportar] = []
     actividades_a_crear: List[str] = []
+    # §4 (carga real): las mismas de `actividades_a_crear`, pero con sus filas y
+    # sus horas. La lista de nombres se conserva porque la pantalla y las suites
+    # de H3 ya la leen; este bloque es el que se enseña.
+    actividades_nuevas: List[ActividadNueva] = []
     total_horas: Decimal = Decimal("0")
+    # ETAPA H8 (§6.2.8): el aviso. Las filas SÍ entran —salvo las de un proyecto
+    # `no_viable`, que van en `invalidas` con su motivo—, pero antes de
+    # confirmar hay que ver cuántas son y en qué proyectos caen.
+    proyectos_no_en_ejecucion: List[ProyectoNoEnEjecucion] = []
+    filas_no_en_ejecucion: int = 0
 
 
 class ProyectoCreado(BaseModel):
@@ -430,6 +517,8 @@ class ResumenImportacion(BaseModel):
     total_horas: Decimal = Decimal("0")
     clientes_creados: List[str] = []
     actividades_creadas: List[str] = []
+    # §4: el resumen lo repite, para que quede a la vista DESPUÉS de confirmar.
+    actividades_nuevas: List[ActividadNueva] = []
     proyectos_creados: List[ProyectoCreado] = []
     user_id: UUID
     user_name: str = ""
@@ -521,6 +610,12 @@ class InformeMapaPersona(BaseModel):
     user_name: str = ""
     por_dia: List[Decimal] = []
     estados: List[str] = []
+    # ETAPA H8 (H-D85): las horas EXTRA de cada día, alineadas con `por_dia`.
+    # La casilla se parte en proporción a las de cada tipo, así que hacen falta
+    # las dos cifras: `por_dia` es el total y esta es la parte de arriba.
+    # El dato ya existía en `DiaDelCalendario.extra` desde H2; el mapa solo
+    # usaba el total y tiraba la mitad.
+    extra_por_dia: List[Decimal] = []
     total_hours: Decimal = Decimal("0")
 
 
@@ -577,3 +672,158 @@ class ProjectActivityChangeResponse(BaseModel):
     changed_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============ BORRADO DE UN PERIODO (ETAPA H8.5, §4.3, H-D88/H-D89) ============
+
+class BorradoPersona(BaseModel):
+    """Cuánto pierde cada persona si se confirma."""
+    user_name: str = ""
+    entries: int = 0
+    hours: Decimal = Decimal("0")
+
+
+class BorradoPreview(BaseModel):
+    """Lo que se verá ANTES de borrar nada. **Este endpoint no escribe.**
+
+    Lleva todo lo que hace falta para decidir, y la frase exacta que hay que
+    teclear: si la pantalla la compusiera por su cuenta, podría no coincidir con
+    la que el backend espera y el botón no se activaría nunca.
+    """
+    desde: DateOnly
+    hasta: DateOnly
+    periodo: str = ""
+    total_entries: int = 0
+    total_hours: Decimal = Decimal("0")
+    por_persona: List[BorradoPersona] = []
+    # De dónde vinieron: dice si se está borrando lo que se importó o algo que
+    # alguien tecleó a mano.
+    de_importacion: int = 0
+    manuales: int = 0
+    # Lo que hay que teclear, literal.
+    frase_de_confirmacion: str = ""
+    # El `pg_dump` ya escrito, con la fecha puesta (H-D89). Kinetix no lo ejecuta.
+    comando_copia: str = ""
+    # §4.3 con esas palabras: qué sobrevive, y cuánto hay de cada cosa AHORA.
+    lo_que_no_se_borra: str = ""
+
+
+class BorradoConfirm(BaseModel):
+    """La confirmación (§4.3). Las tres condiciones viajan explícitas."""
+    desde: DateOnly
+    hasta: DateOnly
+    # H-D88: hay que teclear el periodo. Se compara normalizado.
+    confirmacion: str
+    # H-D89: la copia la hace una persona; el sistema solo la exige.
+    copia_hecha: bool = False
+
+
+class BorradoResumen(BaseModel):
+    """Lo que se borró. Es lo mismo que queda en `time_entry_purges`."""
+    desde: DateOnly
+    hasta: DateOnly
+    periodo: str = ""
+    entries_deleted: int = 0
+    hours_deleted: Decimal = Decimal("0")
+    performed_by: str = ""
+    performed_at: datetime
+    lo_que_no_se_borro: str = ""
+
+
+# ====== IMPORTACIÓN DE PROYECTOS Y ESTIMACIONES (ETAPA H8.5b, H-D94 a H-D101) ======
+
+class FilaProyectoImportacion(BaseModel):
+    """Una fila del archivo de proyectos, ya leída y decidida.
+
+    `numero` es el número de fila **del archivo**, para poder ir a mirarla.
+    """
+    numero: int
+    accion: str = "crea"           # crea | actualiza | igual | invalida
+    motivo: str = ""               # por qué no entra (H-D100)
+    client_name: str = ""
+    project_name: str = ""
+    activity_name: str = ""
+    # §4: igual que en la importación de registros — lo que decía el archivo
+    # cuando la tabla de sinónimos lo tradujo.
+    activity_original: str = ""
+    status: str = ""
+    status_label: str = ""
+    estimated_hours: Optional[Decimal] = None
+    # Lo que había antes, cuando la fila actualiza una estimación (H-D97).
+    previous_hours: Optional[Decimal] = None
+    # Qué se crearía por culpa de esta fila.
+    crea_cliente: bool = False
+    crea_proyecto: bool = False
+    crea_actividad: bool = False
+
+
+class ProyectoImportado(BaseModel):
+    """Un proyecto del archivo, con sus actividades juntas (H-D96, H-D99).
+
+    `total_hours` es **lo que suma el proyecto entero** en el archivo, que es la
+    cifra con la que se comprueba de un vistazo si el Excel está bien.
+    """
+    client_name: str = ""
+    project_name: str = ""
+    status: str = ""
+    status_label: str = ""
+    es_nuevo: bool = False
+    cambia_de_estado: bool = False
+    status_anterior_label: str = ""
+    actividades: int = 0
+    total_hours: Decimal = Decimal("0")
+    filas: List[FilaProyectoImportacion] = []
+
+
+class VistaPreviaProyectos(BaseModel):
+    """Lo que se verá ANTES de escribir nada (H-D99). Nada de esto toca la base."""
+    sheet: str = ""
+    sheets: List[str] = []
+    total_filas: int = 0
+    proyectos: List[ProyectoImportado] = []
+    invalidas: List[FilaProyectoImportacion] = []
+    proyectos_nuevos: int = 0
+    proyectos_actualizados: int = 0
+    estimaciones_nuevas: int = 0
+    estimaciones_actualizadas: int = 0
+    estimaciones_iguales: int = 0
+    clientes_a_crear: List[str] = []
+    actividades_a_crear: List[str] = []
+    actividades_nuevas: List[ActividadNueva] = []
+    total_horas: Decimal = Decimal("0")
+
+
+class ResumenProyectos(BaseModel):
+    """Lo que se escribió."""
+    proyectos_creados: List[ProyectoCreado] = []
+    proyectos_actualizados: int = 0
+    estimaciones_creadas: int = 0
+    estimaciones_actualizadas: int = 0
+    estimaciones_iguales: int = 0
+    estados_cambiados: int = 0
+    clientes_creados: List[str] = []
+    actividades_creadas: List[str] = []
+    actividades_nuevas: List[ActividadNueva] = []
+    omitidas: int = 0
+    total_horas: Decimal = Decimal("0")
+
+
+# ===================== BORRAR UN PROYECTO (CARGA REAL, §2) =====================
+
+class ProyectoBorrado(BaseModel):
+    """Lo que se llevó por delante el borrado de un proyecto.
+
+    Se devuelven las tres cuentas —estimaciones, historial de estimaciones e
+    historial de estados— en vez de un «borrado: sí». Las tres tablas cuelgan
+    del proyecto con `ON DELETE CASCADE`, así que se van solas; decir cuántas
+    filas eran es la única forma de comprobar desde fuera que se fueron.
+    """
+    id: UUID
+    name: str
+    client_name: str = ""
+    status: str = ""
+    estimaciones_borradas: int = 0
+    historial_estimaciones_borrado: int = 0
+    historial_estados_borrado: int = 0
+    performed_by: str = ""
+    performed_at: datetime

@@ -48,9 +48,33 @@ export interface Actividad {
   has_entries: boolean;
 }
 
-/** ETAPA H2b (§5.1). Se dice «desfase», no «exceso» (H-D27). */
+/**
+ * ETAPA H8 (§3.1): **el estado del proyecto**. Lo decide una persona y no lo
+ * deduce el sistema. Es la otra columna de §5.1, y no tiene nada que ver con
+ * `EstadoDesfase`: una dice en qué punto está el trabajo y la otra cuántas
+ * horas lleva gastadas.
+ *
+ * Lo que puede hacerse en cada estado **no se escribe aquí**: viene resuelto
+ * del backend en `can_log_hours` y `can_edit_estimates`. Una segunda copia de
+ * esa tabla en TypeScript acabaría permitiendo lo que el backend rechaza.
+ */
+export type EstadoProyecto =
+  | 'pendiente' | 'en_ejecucion' | 'detenido' | 'no_viable' | 'finalizado';
+
+/** El ESTADO de un proyecto, tal como lo devuelve el backend. */
+export interface ConEstado {
+  status: EstadoProyecto;
+  status_label: string;
+}
+
+/** ETAPA H2b (§5.1). Se dice «desfase», no «exceso» (H-D27).
+ *
+ *  ETAPA H8 (H-D82): son **cuatro**. `cerrado` salió de aquí —cerrar un
+ *  proyecto es un estado, no una forma de gastar horas— y «en rango» vuelve a
+ *  leerse «En rango», porque «En ejecución» es ahora un estado.
+ */
 export type EstadoDesfase =
-  | 'en_rango' | 'por_agotarse' | 'terminado' | 'desfasado' | 'cerrado';
+  | 'en_rango' | 'por_agotarse' | 'terminado' | 'desfasado';
 
 export interface Desfase {
   consumed_pct: string | number;
@@ -68,17 +92,19 @@ export interface ActividadDeProyecto extends Desfase {
   over_estimate: boolean;
 }
 
-export interface Proyecto extends Desfase {
+export interface Proyecto extends Desfase, ConEstado {
   id: string;
   client_id: string;
   client_name: string;
   name: string;
   description?: string | null;
-  status: 'activo' | 'cerrado';
   created_at: string;
   total_estimated_hours: string | number;
   total_consumed_hours: string | number;
   activities_count: number;
+  /** ETAPA H8 (§3.1), ya resueltos por el backend. **No se recalculan aquí.** */
+  can_log_hours: boolean;
+  can_edit_estimates: boolean;
 }
 
 export interface ProyectoDetalle extends Proyecto {
@@ -92,6 +118,17 @@ export interface CambioDeEstimacion {
   previous_hours: string | number | null;
   new_hours: string | number | null;
   change_type: 'alta' | 'cambio' | 'baja';
+  changed_by_name: string;
+  changed_at: string;
+}
+
+/** ETAPA H8 (H-D83): una línea del historial de estados. */
+export interface CambioDeEstado {
+  id: string;
+  previous_status: EstadoProyecto | null;
+  previous_label: string;
+  new_status: EstadoProyecto;
+  new_label: string;
   changed_by_name: string;
   changed_at: string;
 }
@@ -217,6 +254,9 @@ export interface InformeMapaPersona {
   user_id: string;
   user_name: string;
   por_dia: (string | number)[];
+  /** ETAPA H8 (H-D85): las horas extra de cada día, alineadas con `por_dia`.
+   *  La casilla se parte en proporción a las de cada tipo. */
+  extra_por_dia: (string | number)[];
   estados: string[];
   total_hours: string | number;
 }
@@ -286,7 +326,10 @@ export interface FilaImportacion {
   date?: string | null;
   client_name: string;
   project_name: string;
+  /** Ya traducida por la tabla de sinónimos: es la que se va a guardar. */
   activity_name: string;
+  /** Lo que decía el archivo, solo cuando la tabla lo tradujo a otra cosa. */
+  activity_original: string;
   hours?: string | number | null;
   billable: boolean;
   overtime: boolean;
@@ -305,6 +348,19 @@ export interface ProyectoAImportar {
   project_name: string;
 }
 
+/**
+ * Una actividad del archivo que NO estaba en el catálogo (§4 de la carga real).
+ *
+ * No es un error —se crea igual—, pero lleva sus filas y sus horas porque con
+ * el nombre a secas no se puede decidir si lo que falta es un sinónimo en
+ * `services/horas/sinonimos_actividad.py` o si de verdad es una actividad nueva.
+ */
+export interface ActividadNueva {
+  name: string;
+  filas: number[];
+  horas: string | number;
+}
+
 export interface VistaPrevia {
   sheet: string;
   sheets: string[];
@@ -318,6 +374,7 @@ export interface VistaPrevia {
   clientes_a_crear: string[];
   proyectos_a_crear: ProyectoAImportar[];
   actividades_a_crear: string[];
+  actividades_nuevas: ActividadNueva[];
   total_horas: string | number;
 }
 
@@ -334,6 +391,7 @@ export interface ResumenImportacion {
   total_horas: string | number;
   clientes_creados: string[];
   actividades_creadas: string[];
+  actividades_nuevas: ActividadNueva[];
   proyectos_creados: ProyectoCreado[];
   user_id: string;
   user_name: string;
@@ -355,12 +413,11 @@ export interface ConsultaPersona {
  *  `hours_in_range` es lo del rango consultado; `consumed_hours` es todo lo que
  *  lleva el proyecto **desde siempre**, que es contra lo que se mide el desfase.
  *  No son la misma cifra y no se pintan en la misma columna. */
-export interface ConsultaProyecto extends Desfase {
+export interface ConsultaProyecto extends Desfase, ConEstado {
   project_id: string;
   project_name: string;
   client_id: string;
   client_name: string;
-  status: string;
   estimated_hours: string | number;
   consumed_hours: string | number;
   remaining_hours: string | number;
@@ -388,8 +445,8 @@ export interface FiltrosConsulta {
   project_id?: string;
   user_id?: string;
   solo_desfasados?: boolean;
-  /** H-D72: por defecto solo los activos. */
-  incluir_cerrados?: boolean;
+  /** H-D84: por defecto se esconden los finalizados y los no viables. */
+  incluir_finalizados?: boolean;
 }
 
 /** Una casilla del calendario (ETAPA H2b, §4.1). Viene resuelta del backend. */
@@ -550,7 +607,14 @@ export const horasApi = {
   },
 
   // ---------- Proyectos ----------
-  listarProyectos: async (filtros?: { client_id?: string; estado?: string; texto?: string }): Promise<Proyecto[]> =>
+  listarProyectos: async (filtros?: {
+    client_id?: string;
+    /** Uno de los cinco de §3.1. Vacío = el filtro por defecto de H-D84. */
+    estado?: EstadoProyecto;
+    /** H-D84: trae también los finalizados y los no viables. */
+    incluir_finalizados?: boolean;
+    texto?: string;
+  }): Promise<Proyecto[]> =>
     (await api.get('/time/projects', { params: filtros })).data,
 
   verProyecto: async (id: string): Promise<ProyectoDetalle> =>
@@ -566,11 +630,12 @@ export const horasApi = {
   editarProyecto: async (id: string, datos: { name?: string; description?: string }): Promise<ProyectoDetalle> =>
     (await api.put(`/time/projects/${id}`, datos)).data,
 
-  cerrarProyecto: async (id: string): Promise<ProyectoDetalle> =>
-    (await api.post(`/time/projects/${id}/cerrar`)).data,
-
-  reabrirProyecto: async (id: string): Promise<ProyectoDetalle> =>
-    (await api.post(`/time/projects/${id}/reabrir`)).data,
+  /** ETAPA H8 (H-D83): el estado del proyecto, con su historial.
+   *
+   *  Sustituye a `cerrarProyecto`/`reabrirProyecto`, que eran el mismo cambio
+   *  con dos botones y solo llegaban a uno de los cinco estados. */
+  cambiarEstadoProyecto: async (id: string, status: EstadoProyecto): Promise<ProyectoDetalle> =>
+    (await api.post(`/time/projects/${id}/estado`, { status })).data,
 
   /** Añadir una actividad al proyecto o cambiar su estimación (escribe historial). */
   guardarActividadDeProyecto: async (
@@ -583,6 +648,44 @@ export const horasApi = {
 
   historial: async (projectId: string): Promise<CambioDeEstimacion[]> =>
     (await api.get(`/time/projects/${projectId}/historial`)).data,
+
+  /** ETAPA H8 (H-D83): el historial de estados. Endpoint aparte del de
+   *  estimaciones —aquel va por actividad y este no tiene ninguna—, aunque la
+   *  pantalla los enseñe juntos. */
+  historialEstado: async (projectId: string): Promise<CambioDeEstado[]> =>
+    (await api.get(`/time/projects/${projectId}/historial-estado`)).data,
+
+  // ---------- Importar proyectos y estimaciones (ETAPA H8.5b) ----------
+
+  /** La plantilla con las cinco columnas y dos filas de ejemplo (H-D101). */
+  plantillaProyectos: async (): Promise<Blob> =>
+    (await api.get('/time/import/proyectos/plantilla', { responseType: 'blob' })).data,
+
+  vistaPreviaProyectos: async (archivo: File): Promise<VistaPreviaProyectos> => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    return (await api.post('/time/import/proyectos/preview', datos, MULTIPART)).data;
+  },
+
+  /** Aplica el archivo, todo en una transacción (H-D99). */
+  confirmarProyectos: async (archivo: File): Promise<ResumenProyectos> => {
+    const datos = new FormData();
+    datos.append('archivo', archivo);
+    return (await api.post('/time/import/proyectos/confirm', datos, MULTIPART)).data;
+  },
+
+  // ---------- Borrado de un periodo (ETAPA H8.5, §4.3) ----------
+
+  /** Qué se borraría. **No escribe nada**: es un `GET`. Solo admin. */
+  borradoPreview: async (desde: string, hasta: string): Promise<BorradoPreview> =>
+    (await api.get('/time/borrado/preview', { params: { desde, hasta } })).data,
+
+  /** Borra. Las tres condiciones viajan explícitas y el backend las vuelve a
+   *  comprobar: lo de la pantalla es comodidad, no seguridad. */
+  borradoConfirm: async (datos: {
+    desde: string; hasta: string; confirmacion: string; copia_hecha: boolean;
+  }): Promise<BorradoResumen> =>
+    (await api.post('/time/borrado/confirm', datos)).data,
 };
 
 /** Horas a texto español: 40 -> "40", 10.5 -> "10,5". */
@@ -630,6 +733,108 @@ export const hoyISO = (): string => {
 };
 
 /** `2026-09-14` -> `14`. El número del día, para la casilla del calendario. */
+// ====== IMPORTAR PROYECTOS Y ESTIMACIONES (ETAPA H8.5b, H-D94 a H-D101) ======
+
+export interface FilaProyectoImportacion {
+  numero: number;
+  accion: 'crea' | 'actualiza' | 'igual' | 'invalida';
+  motivo: string;
+  client_name: string;
+  project_name: string;
+  activity_name: string;
+  activity_original: string;
+  status: string;
+  status_label: string;
+  estimated_hours: string | number | null;
+  previous_hours: string | number | null;
+  crea_cliente: boolean;
+  crea_proyecto: boolean;
+  crea_actividad: boolean;
+}
+
+export interface ProyectoImportado {
+  client_name: string;
+  project_name: string;
+  status: EstadoProyecto;
+  status_label: string;
+  es_nuevo: boolean;
+  cambia_de_estado: boolean;
+  status_anterior_label: string;
+  actividades: number;
+  /** Lo que suma el proyecto entero en el archivo (H-D99). */
+  total_hours: string | number;
+  filas: FilaProyectoImportacion[];
+}
+
+export interface VistaPreviaProyectos {
+  sheet: string;
+  sheets: string[];
+  total_filas: number;
+  proyectos: ProyectoImportado[];
+  invalidas: FilaProyectoImportacion[];
+  proyectos_nuevos: number;
+  proyectos_actualizados: number;
+  estimaciones_nuevas: number;
+  estimaciones_actualizadas: number;
+  estimaciones_iguales: number;
+  clientes_a_crear: string[];
+  actividades_a_crear: string[];
+  actividades_nuevas: ActividadNueva[];
+  total_horas: string | number;
+}
+
+export interface ResumenProyectos {
+  proyectos_creados: { id: string; name: string; client_name: string }[];
+  proyectos_actualizados: number;
+  estimaciones_creadas: number;
+  estimaciones_actualizadas: number;
+  estimaciones_iguales: number;
+  estados_cambiados: number;
+  clientes_creados: string[];
+  actividades_creadas: string[];
+  actividades_nuevas: ActividadNueva[];
+  omitidas: number;
+  total_horas: string | number;
+}
+
+// ============ BORRADO DE UN PERIODO (ETAPA H8.5, §4.3) ============
+
+export interface BorradoPersona {
+  user_name: string;
+  entries: number;
+  hours: string | number;
+}
+
+export interface BorradoPreview {
+  desde: string;
+  hasta: string;
+  periodo: string;
+  total_entries: number;
+  total_hours: string | number;
+  por_persona: BorradoPersona[];
+  /** De dónde vinieron: dice si se borra lo que se importó o algo tecleado. */
+  de_importacion: number;
+  manuales: number;
+  /** Lo que hay que teclear, literal. **La pantalla no la compone**: si la
+   *  inventara por su cuenta podría no coincidir con la que el backend espera,
+   *  y el botón no se activaría nunca. */
+  frase_de_confirmacion: string;
+  /** El `pg_dump` ya escrito (H-D89). Kinetix no lo ejecuta. */
+  comando_copia: string;
+  lo_que_no_se_borra: string;
+}
+
+export interface BorradoResumen {
+  desde: string;
+  hasta: string;
+  periodo: string;
+  entries_deleted: number;
+  hours_deleted: string | number;
+  performed_by: string;
+  performed_at: string;
+  lo_que_no_se_borro: string;
+}
+
 export const diaDelMes = (iso: string): number => Number(iso.split('-')[2]);
 
 /** La columna de esa fecha en el calendario: 0 = lunes … 6 = domingo, el mismo

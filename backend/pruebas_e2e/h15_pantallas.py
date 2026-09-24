@@ -18,6 +18,10 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
+# CARGA REAL §3: el catálogo son OCHO y la lista está en el producto, no aquí.
+sys.path.insert(0, "/app")
+from app.services.horas.sinonimos_actividad import CANONICAS  # noqa: E402
+
 WEB = os.environ.get("KX_WEB", "http://localhost:5173")
 SESION = os.environ.get("KX_SESION", "/tmp/e2e_sesion_test.json")
 # H-D76: la pantalla es la de siempre (el frontend apunta al 8001), pero el
@@ -104,7 +108,14 @@ def main():
         page.goto(f"{WEB}/horas/actividades", wait_until="networkidle")
         page.wait_for_selector("[data-testid='tabla-actividades'] tr", timeout=20000)
         filas = page.locator("[data-testid='tabla-actividades'] tr")
-        ok(filas.count() == 5, f"están las cinco actividades sembradas ({filas.count()})")
+        # CARGA REAL §3: la siembra son OCHO, no cinco, y la lista vive en
+        # `sinonimos_actividad.CANONICAS`. Se comprueba que **estén las ocho**,
+        # no que la tabla tenga ocho filas: una base de pruebas acumula
+        # actividades de pasadas anteriores y contar filas haría fallar esta
+        # prueba por algo que no es el catálogo.
+        nombres = set(filas.locator("td:first-child").all_inner_texts())
+        faltan = sorted(set(CANONICAS) - {n.strip() for n in nombres})
+        ok(not faltan, f"están las ocho actividades sembradas (faltan: {faltan or 'ninguna'})")
         nombres = [filas.nth(i).get_attribute("data-actividad") for i in range(filas.count())]
         print(f"    {nombres}")
         ok("Planeación" in nombres, "con sus tildes: «Planeación»")

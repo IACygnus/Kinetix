@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
-"""ETAPA D1.5 — **ninguna cifra cambió** (D-D8). 0 llamadas a la IA.
+"""Las cifras del informe de horas no se mueven solas. 0 llamadas a la IA.
 
-El rediseño solo podía tocar la presentación. Esto lo comprueba número a
-número, no a ojo: genera el informe con el generador **de antes** —el de
-`f5bf053`, copiado a `/tmp/antes/informe_antes.py`— y con el de ahora, **con los
-mismos datos**, y compara.
+Genera el informe con un generador **de referencia** y con el de ahora, **con
+los mismos datos**, y compara número a número. Comparar dos generadores sobre
+los mismos datos —y no las cifras contra una lista congelada— es lo que hace que
+esta prueba aísle el cambio de código del cambio de datos: el mes que se mire
+puede traer otras horas y la prueba sigue diciendo lo mismo.
+
+    Nació en D1.5 para comprobar que el rediseño del informe no movía ningún
+    número (D-D8), con la referencia en `f5bf053`. **Ese trabajo está hecho.**
+    H8.3b movió una cifra a propósito —quitó el «Desfasado +4,5 h» de la columna
+    de consumo— y la prueba lo cazó, que es exactamente para lo que estaba. Ver
+    el reporte 111 §4.
+
+    En **H8.6 se regeneró la referencia**: pasa a ser el informe tal como quedó
+    al cerrar H8. A partir de ahí la pregunta ya no es «¿el rediseño movió algo?»
+    sino «¿se ha movido algo desde que H8 cerró?». El día que se regenera no
+    prueba nada —los dos generadores son el mismo—; empieza a valer con el
+    primer cambio que venga después.
+
+**No corre dentro del contenedor a secas**, igual que las dos del laboratorio:
+la referencia se saca de git, y el contenedor no ve el repositorio. Una sola
+orden, desde el anfitrión:
+
+    bash scripts/d1_cifras.sh
 
 La comparación es por tabla: de cada una se saca la lista ordenada de números
 que contiene y se enfrentan las dos. Así aguanta que una tabla haya cambiado de
@@ -16,8 +35,6 @@ Lo que el rediseño SÍ añadió —los párrafos de sección, el pie de cada in
 y las gráficas— se quita antes de comparar: son texto nuevo que repite cifras
 que ya estaban, no cifras nuevas. Cada una de ellas se comprueba aparte, contra
 el dato del que sale.
-
-    docker exec jmeter_backend python /app/pruebas_e2e/diseno/d1_cifras.py
 """
 import json
 import os
@@ -28,13 +45,10 @@ import httpx
 import lxml.html
 
 sys.path.insert(0, "/app")
-# El generador de ANTES no se congela en el repositorio: son 781 líneas que solo
-# sirven para esta comparación, y a partir del commit de D1 el «antes» está en
-# git. Se saca así, desde el anfitrión, antes de correr esto:
-#
-#   git show f5bf053:backend/app/services/horas/informe.py > informe_antes.py
-#   docker cp informe_antes.py jmeter_backend:/tmp/antes/informe_antes.py
-#
+# El generador de REFERENCIA no se congela en el repositorio: son ochocientas y
+# pico líneas que solo sirven para esta comparación, y en git ya están. Lo saca
+# `scripts/d1_cifras.sh` del commit que dice `KX_INFORME_ANTES_REF` y lo deja
+# aquí. Cuál es ese commit y por qué cambió en H8.6 está en la cabecera.
 ANTES = os.environ.get("KX_INFORME_ANTES", "/tmp/antes")
 sys.path.insert(0, ANTES)
 
@@ -93,9 +107,10 @@ def main() -> None:
     try:
         import informe_antes as antes
     except ImportError:
-        print(f"No esta el generador de antes en {ANTES}/informe_antes.py.\n"
-              "Se saca con `git show f5bf053:backend/app/services/horas/informe.py`;\n"
-              "mira la cabecera de este archivo.")
+        print(f"No esta el generador de referencia en {ANTES}/informe_antes.py.\n"
+              "Lo saca de git y lo deja ahi `scripts/d1_cifras.sh`, que es la\n"
+              "forma de correr esta prueba. Desde el anfitrion:\n\n"
+              "    bash scripts/d1_cifras.sh\n")
         sys.exit(2)
 
     datos = InformeDatos(**d)

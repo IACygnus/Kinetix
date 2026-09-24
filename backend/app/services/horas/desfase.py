@@ -20,20 +20,26 @@ from typing import Optional
 
 CERO = Decimal("0")
 
-# Los estados de §5.1 (v1.3). La clave interna `en_rango` se conserva —la usan las
-# tres pantallas y el informe— y lo que cambia es lo que se lee: «En ejecución»
-# dice lo que pasa; «en rango» no decía nada.
+# Los CUATRO valores del consumo (§5.1, v1.5).
+#
+# ETAPA H8 (H-D82): el rótulo vuelve a ser **«En rango»**. v1.3 lo había puesto
+# como «En ejecución», pero `en_ejecucion` es ahora un ESTADO del proyecto
+# (§3.1) y dos cosas distintas no pueden llamarse igual en la misma fila. La
+# clave interna nunca cambió: era `en_rango` desde H2b.
+#
+# Y **desaparece el quinto valor, `cerrado`**: cerrar un proyecto es un estado,
+# no una forma de gastar horas. Un proyecto finalizado sigue diciendo cuánto
+# consumió, en su columna, que es justo lo que H-D82 quería. Quién lo cerró y
+# cuándo lo cuenta `estados.py`.
 EN_RANGO = "en_rango"
 POR_AGOTARSE = "por_agotarse"
 TERMINADO = "terminado"
 DESFASADO = "desfasado"
-CERRADO = "cerrado"
 
 TEXTOS = {
-    EN_RANGO: "En ejecución",
+    EN_RANGO: "En rango",
     POR_AGOTARSE: "Por agotarse",
     TERMINADO: "Terminado",
-    CERRADO: "Cerrado",
 }
 
 # §5.1. En porcentaje, para poder compararlos sin dividir dos veces.
@@ -54,8 +60,8 @@ def porcentaje(consumido: Decimal, estimado: Decimal) -> Decimal:
     return (Decimal(str(consumido or 0)) / est) * Decimal("100")
 
 
-def estado(consumido: Decimal, estimado: Decimal, cerrado: bool = False) -> str:
-    """El estado de §5.1 (v1.3). Los bordes, uno a uno:
+def estado(consumido: Decimal, estimado: Decimal) -> str:
+    """El **consumo** de §5.1 (v1.5). Los bordes, uno a uno:
 
     - **exactamente 90 %** ya es `por_agotarse`: el aviso llega al llegar al
       umbral, no un cuarto de hora después;
@@ -64,14 +70,14 @@ def estado(consumido: Decimal, estimado: Decimal, cerrado: bool = False) -> str:
     - **por encima del 100 %**, `desfasado`;
     - **sin estimación**, `en_rango`: no hay contra qué comparar.
 
-    `cerrado` manda sobre todo lo demás: un proyecto que se cerró a mano ya no
-    está «en ejecución» aunque le sobren horas.
+    **El estado del proyecto no entra aquí** (H-D82). Hasta v1.4, un proyecto
+    cerrado tapaba su consumo con la palabra «Cerrado» y ya no se sabía si se
+    había pasado de horas o no. Ahora son dos columnas: esta contesta cuánto se
+    gastó, y `estados.py` contesta en qué punto está el trabajo.
 
     El consumo que llega aquí es **el de siempre**, no el del periodo que se esté
     mirando (H-D67): lo calculan así la consulta, el informe y el listado.
     """
-    if cerrado:
-        return CERRADO
     est = Decimal(str(estimado or 0))
     if est <= 0:
         return EN_RANGO
@@ -94,15 +100,17 @@ def horas_de_desfase(consumido: Decimal, estimado: Decimal) -> Decimal:
     return con - est
 
 
-def etiqueta(consumido: Decimal, estimado: Decimal, cerrado: bool = False) -> str:
+def etiqueta(consumido: Decimal, estimado: Decimal) -> str:
     """El texto que ve el usuario, ya en formato español.
 
     >>> etiqueta(Decimal("49"), Decimal("40"))
     'Desfasado +9 h'
     >>> etiqueta(Decimal("40"), Decimal("40"))
     'Terminado'
+    >>> etiqueta(Decimal("10"), Decimal("40"))
+    'En rango'
     """
-    e = estado(consumido, estimado, cerrado)
+    e = estado(consumido, estimado)
     if e == DESFASADO:
         de_mas = horas_de_desfase(consumido, estimado)
         return f"Desfasado +{_horas(de_mas)} h"

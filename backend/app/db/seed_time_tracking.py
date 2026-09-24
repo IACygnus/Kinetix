@@ -2,7 +2,7 @@
 
 Tres cosas que el módulo necesita para arrancar y que no las pone el usuario:
 
-  1. Las cinco actividades iniciales (§1.2, H-D3).
+  1. Las ocho actividades iniciales (CARGA REAL §3; eran cinco en §1.2, H-D3).
   2. La jornada: lunes a jueves 8,5 y viernes 8,0 (H-D5).
   3. Los festivos de Colombia de 2026 y 2027 (H-D5).
 
@@ -24,17 +24,26 @@ from sqlalchemy import select
 from app.db.models.time_tracking import (
     Activity, Holiday, WorkCalendar, normalizar,
 )
+from app.services.horas.sinonimos_actividad import CANONICAS as ACTIVIDADES_INICIALES
 
 logger = logging.getLogger(__name__)
 
-# §1.2 — el catálogo arranca con estas cinco.
-ACTIVIDADES_INICIALES = [
-    "Planeación",
-    "Diseño y generación de script",
-    "Ejecución",
-    "Análisis de resultados",
-    "Administrativas o gerenciales",
-]
+# El catálogo arranca con estas OCHO (CARGA REAL, §3). Sustituyen a las cinco
+# de H1: las de entonces se escribieron antes de ver un mes de horas de verdad,
+# y los archivos de septiembre de 2026 enseñaron que faltaban tres —la etapa de
+# conocimiento, la preventa y la investigación— y que dos de las cinco estaban
+# mal nombradas: «Diseño y generación de script» era solo una de las seis
+# maneras de escribir **Diseño de script**, y «Administrativas o gerenciales»
+# es lo que aquí se llama **Gestión de proyectos**.
+#
+# **La lista NO se escribe dos veces**: es la de `CANONICAS` en
+# `services/horas/sinonimos_actividad.py`, que además sabe a cuál corresponde
+# cada texto que puede traer un Excel. Si allí se añade una, aquí se siembra
+# sola.
+#
+# Esto solo afecta a una instalación **nueva**: la siembra es idempotente y no
+# renombra ni borra lo que ya exista (los catálogos vivos se arreglan desde la
+# pantalla de actividades, no desde aquí).
 
 # H-D5 — 0 = lunes … 6 = domingo (mismo criterio que `date.weekday()`).
 JORNADA = {0: 8.5, 1: 8.5, 2: 8.5, 3: 8.5, 4: 8.0, 5: 0.0, 6: 0.0}

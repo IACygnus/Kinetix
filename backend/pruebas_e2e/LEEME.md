@@ -15,16 +15,49 @@ pero eso fue suerte, no diseno. Ahora la fuente de verdad es el repositorio.
 
 ## Como se corre
 
-```sh
-# 1. Dejar una copia de trabajo en /tmp/e2e (las suites escriben ahi)
-docker exec jmeter_backend sh /app/pruebas_e2e/sincronizar.sh
+**Desde el anfitrion, y con esto basta** (ETAPA H8.6):
 
-# 2. La regresion completa, en serie, contra la base de PRUEBAS (regla 34)
-docker exec jmeter_backend sh /app/pruebas_e2e/cierre_o2c.sh
+```sh
+bash scripts/regresion_h8.sh
 ```
 
-El corredor renueva la sesion el mismo, toma la huella de la base de Fredy antes
-y despues, y la compara al final.
+Encadena las tres partes y no se salta nada:
+
+1. **El laboratorio (O2a.3)** — unos cinco minutos, lanza carga de verdad. Va
+   primero porque deja una corrida recien escrita en los dos cubos, y
+   `o2a4_tablero` la necesita **fresca**: los paneles miran los ultimos 40
+   minutos.
+2. **Las suites de dentro del contenedor** — `cierre_h8.sh`, que sincroniza,
+   renueva la sesion, toma la huella de la base de Fredy antes y despues, y la
+   compara al final.
+3. **Las cifras del informe** — `d1_cifras.sh`, que saca su referencia de git.
+
+Con `--rapido` se salta la 1 y la 3.
+
+Solo la parte de dentro del contenedor, si es lo que hace falta:
+
+```sh
+docker exec jmeter_backend sh /app/pruebas_e2e/sincronizar.sh
+docker exec jmeter_backend sh /app/pruebas_e2e/cierre_h8.sh
+```
+
+Asi se saltan tres suites de observabilidad: sus credenciales viven en
+`lab/lab.env`, que no se versiona, y `cierre_h8.sh` **no las lleva escritas
+dentro** —`cierre_o2d.sh` si llevaba el token de InfluxDB en claro—. Se saltan
+diciendolo, no cuentan como fallo.
+
+### Tres cosas que NO pueden correr desde dentro del contenedor
+
+No es un olvido y no tiene arreglo:
+
+| Qué | Por qué | Cómo |
+|---|---|---|
+| `o2a3_config.py` · `o2a3_correlacion.py` | Ponen la etiqueta de corrida con `docker kill -s HUP lab_colector` y preguntan a `lab_db` con su psql | `bash scripts/lab_prueba_correlacion.sh` |
+| `diseno/d1_cifras.py` | Saca su generador de referencia **de git**, y el contenedor monta `./backend`, no el repositorio | `bash scripts/d1_cifras.sh` |
+
+Las tres, lanzadas sueltas y sin sus requisitos, **dicen que les falta y quien
+se lo da**. Antes soltaban un `KeyError` y un `FileNotFoundError`, que no le
+cuentan eso a nadie.
 
 ## Lo que hace falta en el contenedor, y no esta en `requirements.txt`
 
@@ -76,6 +109,14 @@ Las que corre `cierre_o2c.sh`, en orden:
 | `o16_pantalla.py` | Monitoreo en vivo (O1) |
 | `probar_tablero.py` | Que los paneles del tablero de infraestructura den datos (O2a) |
 | `o2c1_backend.py` | Los servidores observados y O-D26 (O2c) |
+| `h82_estados.py` | Los cinco estados del proyecto y qué bloquea cada uno (H8) |
+| `h83_pantallas.py` | Estado y consumo, las dos columnas, en pantalla (H8) |
+| `h84_mapa.py` | Las horas extra en el mapa del mes (H8) |
+| `h85_borrado.py` · `h85_pantalla.py` | El borrado de un periodo y sus tres frenos (H8) |
+| `h85b_proyectos.py` · `h85b_pantalla.py` | El importador de proyectos y estimaciones (H8) |
+| `carga_borrado_proyecto.py` | `DELETE /time/projects/{id}` y sus guardas (carga real) |
+| `carga_actividades_nuevas.py` | La tabla de sinónimos y el aviso de actividades nuevas |
+| `corrida_para_tablero.py` | No es una suite: **busca** la corrida con la que probar el tablero |
 
 Y fuera del corredor, porque protegen el informe de JMeter y cuestan mas:
 `verificar_etapa2.py` (las cuatro salidas), `captura_informe.py`,

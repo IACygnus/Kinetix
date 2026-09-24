@@ -122,7 +122,21 @@ def numero(valor, sufijo=""):
     return "sin dato" if valor is None else f"{valor:,.2f}{sufijo}".replace(",", " ")
 
 
+#: ETAPA H8.6 — igual que en `o2a3_config.py`: sin esto, la suite reventaba con
+#: un `FileNotFoundError` que no dice de donde sale ese archivo ni quien lo
+#: escribe.
+FALTA_CONFIG = """falta /tmp/o2a3_config.json, que lo escribe `o2a3_config.py`.
+
+Esta suite es el PASO 2 de O2a.3 y no se lanza sola. El paso 1 le deja ahi la
+corrida, y entre los dos hace falta poner esa etiqueta en el recolector, que
+solo se puede desde el anfitrion. Los tres pasos, en orden, los da:
+
+    bash scripts/lab_prueba_correlacion.sh"""
+
+
 def main():
+    if not os.path.exists("/tmp/o2a3_config.json"):
+        sys.exit(FALTA_CONFIG)
     cfg = json.load(open("/tmp/o2a3_config.json"))
     corrida = cfg["application"]
     if not corrida.startswith("zztest-"):

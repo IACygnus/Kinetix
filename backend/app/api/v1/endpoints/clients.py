@@ -4,7 +4,7 @@ Endpoints CRUD de Clientes y asignaciones Usuario-Cliente - Admin only - v2.1
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from typing import List
 import io
 import uuid
@@ -13,6 +13,8 @@ import logging
 from app.db.session import get_db
 from app.db.models.client import Client, UserClient
 from app.db.models.client_logo import ClientLogo
+# CARGA REAL §2: la guarda del borrado necesita saber si le cuelgan proyectos.
+from app.db.models.time_tracking import Project
 from app.db.models.user import User
 from app.core.security import require_role, get_current_active_user
 from app.schemas.client import (
@@ -125,6 +127,19 @@ async def delete_client(
     client = result.scalar_one_or_none()
     if not client:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    # CARGA REAL §2: solo si no le cuelga ningun proyecto del modulo de horas.
+    # La clave ajena `projects.client_id` es NO ACTION, asi que sin esta guarda
+    # el borrado reventaba con un 500 de integridad, que no dice nada de lo que
+    # pasa ni de como arreglarlo. Aqui se dice cuantos son y por donde se empieza.
+    proyectos = (await db.execute(
+        select(func.count()).select_from(Project).where(Project.client_id == cid)
+    )).scalar_one()
+    if proyectos:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"«{client.name}» tiene {proyectos} proyecto(s) del modulo de "
+                    "horas y no se puede borrar. Borra antes sus proyectos."))
 
     await db.delete(client)
     await db.flush()

@@ -75,9 +75,10 @@ class Project(Base):
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     name_normalized = Column(String(200), nullable=False)
-    # 'activo' | 'cerrado'. Un proyecto cerrado no admite registros nuevos pero se
-    # sigue consultando (§3).
-    status = Column(String(20), default="activo", nullable=False, index=True)
+    # ETAPA H8 (H-D80), §3.1: los cinco estados. Lo decide una persona y es
+    # independiente del consumo. La definición única —qué bloquea cada uno,
+    # quién puede ponerlos— está en `services/horas/estados.py`.
+    status = Column(String(20), default="en_ejecucion", nullable=False, index=True)
     description = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     closed_at = Column(DateTime, nullable=True)
@@ -87,8 +88,44 @@ class Project(Base):
 
     __table_args__ = (
         UniqueConstraint("client_id", "name_normalized", name="uq_project_cliente_nombre"),
-        CheckConstraint("status in ('activo','cerrado')", name="ck_project_status"),
+        # ETAPA H8.6: los CINCO de H-D80, los mismos que deja
+        # `docs/sql/h8_estado_proyecto_cierre.sql`. Esta lista solo se aplica en
+        # una base nueva —la de pruebas, que se recrea—, porque `create_all` no
+        # altera una tabla que ya existe; tiene que quedar igual que la base de
+        # Fredy o las suites probarían otra cosa.
+        #
+        # `activo` y `cerrado` estuvieron aquí mientras duró el despliegue de
+        # H8, para que el SQL y el código se pudieran aplicar en cualquier
+        # orden. Ya no: **escribirlos es un error**. Leerlos sigue tolerándose
+        # en `services/horas/estados.py`, que es otra cosa y tiene su razón.
+        CheckConstraint(
+            "status in ('pendiente','en_ejecucion','detenido','no_viable','finalizado')",
+            name="ck_project_status"),
     )
+
+
+class ProjectStatusChange(Base):
+    """Historial del estado del proyecto (ETAPA H8, H-D83, §3.1).
+
+    Tabla aparte del historial de estimaciones, y no una fila más en
+    `project_activity_changes`, por una razón de forma: aquel exige
+    `activity_id` y un `change_type` de alta/cambio/baja, y un cambio de estado
+    no tiene actividad ninguna. Forzarlo obligaría a poner nulos donde la tabla
+    dice que no los hay.
+
+    La crea `Base.metadata.create_all` al arrancar, por ser una tabla nueva
+    (regla 10). **No hay SQL que ejecutar para esto.**
+    """
+    __tablename__ = "project_status_changes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    # El anterior admite NULL: un proyecto migrado de H-D81 no tiene de dónde venir.
+    previous_status = Column(String(20), nullable=True)
+    new_status = Column(String(20), nullable=False)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    changed_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class ProjectActivity(Base):
@@ -234,3 +271,63 @@ class Holiday(Base):
               postgresql_where=Column("user_id").is_(None)),
         CheckConstraint("kind in ('festivo','ausencia')", name="ck_tipo_dia"),
     )
+
+
+class ProjectDeletion(Base):
+    """Constancia del borrado de un proyecto (CARGA REAL, §2).
+
+    Mismo criterio que `TimeEntryPurge`, y por la misma razón: borrar un
+    proyecto se lleva con él sus estimaciones, su historial de estimaciones y su
+    historial de estados. Sin esta fila, después del borrado no queda **nada**
+    en la base que diga que ese proyecto existió —ni quién lo borró, ni cuándo, ni
+    de qué cliente era—, y esa fue exactamente la pregunta que no se pudo
+    contestar el 18 de septiembre de 2026 (regla 33).
+
+    El cliente y el nombre se guardan como **texto**, no por `client_id`: el
+    sentido de esta fila es sobrevivir al proyecto, y un cliente también se
+    puede borrar después.
+
+    La crea `Base.metadata.create_all` al arrancar, por ser una tabla nueva
+    (regla 10). **No hay SQL que ejecutar.**
+    """
+    __tablename__ = "project_deletions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_name = Column(String(200), nullable=False)
+    client_name = Column(String(200), nullable=True)
+    status = Column(String(20), nullable=True)
+    # Lo que se fue por el `ON DELETE CASCADE`. Se cuentan antes de borrar.
+    estimaciones_borradas = Column(Integer, nullable=False, default=0)
+    historial_estimaciones = Column(Integer, nullable=False, default=0)
+    historial_estados = Column(Integer, nullable=False, default=0)
+    performed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    performed_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class TimeEntryPurge(Base):
+    """Constancia de un borrado de registros por periodo (ETAPA H8.5, H-D88).
+
+    **Por qué una tabla y no solo el log**: el log del contenedor se pierde en
+    cada reconstrucción, y el 18 de septiembre de 2026 la pregunta que no se
+    pudo contestar fue exactamente esta —quién borró qué y cuándo—. Una fila por
+    borrado no cuesta nada y deja la respuesta escrita para siempre.
+    Ver `docs/reporte_claude_code/92_diagnostico_perdida_de_datos.md`.
+
+    La crea `Base.metadata.create_all` al arrancar, por ser una tabla nueva
+    (regla 10). **No hay SQL que ejecutar.**
+
+    Nunca se borra desde el producto: es el rastro, no un dato de trabajo.
+    """
+    __tablename__ = "time_entry_purges"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # El rango que se borró, tal cual se pidió.
+    desde = Column(Date, nullable=False)
+    hasta = Column(Date, nullable=False)
+    entries_deleted = Column(Integer, nullable=False, default=0)
+    hours_deleted = Column(Numeric(10, 2), nullable=False, default=0)
+    # Lo que la persona tecleó para confirmar. Se guarda literal: si algún día
+    # hay dudas, dice que el borrado se confirmó a mano y con qué palabras.
+    confirmation_text = Column(String(200), nullable=True)
+    performed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    performed_at = Column(DateTime, default=datetime.utcnow, index=True)

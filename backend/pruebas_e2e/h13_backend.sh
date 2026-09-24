@@ -41,11 +41,23 @@ CSRF=$(grep csrf_token $J | awk '{print $7}')
 R=$(req GET /auth/me); ok 200 "$(codigo "$R")" "login de admin"
 
 echo ""
-echo "=== 1. Actividades: las cinco sembradas ==="
+echo "=== 1. Actividades: las ocho sembradas ==="
+# CARGA REAL §3: la siembra pasa de las cinco de H1 a OCHO, y la lista vive en
+# `services/horas/sinonimos_actividad.py` (CANONICAS), no aqui: preguntarsela a
+# ella es lo que evita que esta prueba y el producto acaben con dos listas.
+#
+# Se comprueba que **esten las ocho**, no que haya exactamente ocho filas: una
+# base de pruebas acumula actividades de pasadas anteriores, y contar filas
+# haria fallar a esta suite por algo que no es el seed.
 R=$(req GET /time/activities)
 ok 200 "$(codigo "$R")" "listar actividades"
-N=$(cuerpo "$R" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
-ok 5 "$N" "estan las cinco iniciales"
+FALTAN=$(cuerpo "$R" | python3 -c '
+import json, sys
+sys.path.insert(0, "/app")
+from app.services.horas.sinonimos_actividad import CANONICAS
+hay = {a["name"] for a in json.load(sys.stdin) if a["is_active"]}
+print(", ".join(sorted(set(CANONICAS) - hay)) or "ninguna")')
+ok "ninguna" "$FALTAN" "estan las ocho iniciales, activas — faltan"
 cuerpo "$R" | python3 -c 'import json,sys
 for a in json.load(sys.stdin): print("    -", a["name"], "· activa" if a["is_active"] else "· inactiva")'
 

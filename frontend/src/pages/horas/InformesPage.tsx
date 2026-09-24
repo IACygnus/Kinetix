@@ -21,7 +21,8 @@ import {
   Descarga, FiltrosInforme, Informe, SECCIONES_INFORME,
   fechaLarga, horas, horasApi, hoyISO, mensajeDeError,
 } from '../../api/horasApi';
-import AvisoDesfase from '../../components/horas/AvisoDesfase';
+// ETAPA H8 (H-D103): el estado, con su color, tambien en la previa.
+import ChipEstado from '../../components/horas/EstadoProyecto';
 import { clientsAPI, usersAPI } from '../../services/api';
 
 interface Simple { id: string; name: string; is_active?: boolean }
@@ -412,8 +413,12 @@ function TablaProyectos({ d }: { d: Informe }) {
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-3">Consumido frente a estimado</h2>
         <table className="w-full" data-testid="tabla-inf-proyectos">
-          <Cabecera cols={['Cliente y proyecto', 'En el periodo', 'Estimadas', 'Consumidas',
-                           'Restantes', 'Estado']} />
+          {/* H-D102: en el INFORME queda una sola columna de estado, la última.
+              El consumo sale de aquí. En las pantallas de Proyectos y Consulta
+              siguen las dos (H-D105): el informe se lee de un vistazo y sin
+              poder preguntar. */}
+          <Cabecera cols={['Cliente y proyecto', 'En el periodo', 'Estimadas',
+                           'Consumidas', 'Restantes', 'Estado']} />
           <tbody>
             {d.proyectos.map((p) => (
               <tr key={p.project_id} className="border-b border-gray-100"
@@ -425,8 +430,16 @@ function TablaProyectos({ d }: { d: Informe }) {
                 <td className="py-3 px-4 text-right text-lg tabular-nums">{horas(p.hours_in_range)}</td>
                 <td className="py-3 px-4 text-right text-lg tabular-nums text-gray-600">{horas(p.estimated_hours)}</td>
                 <td className="py-3 px-4 text-right text-lg tabular-nums text-gray-600">{horas(p.consumed_hours)}</td>
-                <td className="py-3 px-4 text-right text-lg tabular-nums">{horas(p.remaining_hours)}</td>
-                <td className="py-3 px-4 text-right"><AvisoDesfase dato={p} siempre /></td>
+                {/* H-D106: sin la columna de consumo, el desfase se ve aquí. */}
+                <td className={`py-3 px-4 text-right text-lg tabular-nums ${
+                  parseFloat(String(p.remaining_hours)) < 0
+                    ? 'font-bold text-red-700' : ''}`}>
+                  {horas(p.remaining_hours)}
+                </td>
+                {/* H-D103: el estado, con su color, y el último. */}
+                <td className="py-3 px-4 text-right" data-proyecto-estado={p.status}>
+                  <ChipEstado estado={p.status} etiqueta={p.status_label} />
+                </td>
               </tr>
             ))}
             {d.proyectos.length === 0 && (
@@ -463,6 +476,15 @@ const COLOR_ESTADO: Record<string, string> = {
   ausencia: 'bg-purple-100', finde: 'bg-gray-100', vacio: 'bg-white',
 };
 
+// ETAPA H8 (H-D85): los mismos hexadecimales del documento, para la casilla
+// partida. Se usan solo ahí: una casilla entera sigue con su clase de Tailwind,
+// y la diferencia entre `bg-emerald-100` y `#dcfce7` no se aprecia al lado.
+const FONDO_MAPA: Record<string, string> = {
+  trabajado: '#dcfce7', incompleto: '#fef3c7', festivo: '#e0e7ff',
+  ausencia: '#f3e8ff', finde: '#f3f4f6', vacio: '#ffffff',
+};
+const FONDO_EXTRA = '#bfdbfe';
+
 function TablaMensual({ d }: { d: Informe }) {
   return (
     <div>
@@ -484,12 +506,31 @@ function TablaMensual({ d }: { d: Informe }) {
             {d.mapa.map((p) => (
               <tr key={p.user_id} data-persona={p.user_name}>
                 <td className="py-2 px-3 text-base text-gray-800 whitespace-nowrap">{p.user_name}</td>
-                {p.estados.map((e, i) => (
-                  <td key={i} data-estado={e}
-                    className={`py-2 px-0.5 text-center text-xs tabular-nums border border-white ${COLOR_ESTADO[e] || ''}`}>
-                    {parseFloat(String(p.por_dia[i])) > 0 ? horas(p.por_dia[i]).replace(' h', '') : ''}
-                  </td>
-                ))}
+                {p.estados.map((e, i) => {
+                  // ETAPA H8 (H-D85): un día con horas extra se pinta partido,
+                  // abajo las ordinarias y arriba las extra, en proporción. Los
+                  // colores son los mismos hexadecimales del documento
+                  // (`docs/diseno-informe-horas.md`), no una aproximación.
+                  const total = parseFloat(String(p.por_dia[i])) || 0;
+                  const extra = parseFloat(String(p.extra_por_dia?.[i] ?? 0)) || 0;
+                  const parte = extra > 0 && total > 0
+                    ? Math.round(((total - extra) / total) * 1000) / 10 : null;
+                  return (
+                    <td key={i} data-estado={e}
+                      data-extra={extra > 0 ? String(extra) : undefined}
+                      style={parte === null ? undefined : {
+                        // La forma clásica, el mismo porcentaje repetido: es la
+                        // que entiende WeasyPrint (la de doble posición la tira
+                        // sin avisar), y así pantalla y papel comparten sintaxis.
+                        background: `linear-gradient(to top,${FONDO_MAPA[e] || FONDO_MAPA.trabajado}`
+                          + ` ${parte}%,${FONDO_EXTRA} ${parte}%)`,
+                      }}
+                      className={`py-2 px-0.5 text-center text-xs tabular-nums border border-white ${
+                        parte === null ? (COLOR_ESTADO[e] || '') : ''}`}>
+                      {total > 0 ? horas(p.por_dia[i]).replace(' h', '') : ''}
+                    </td>
+                  );
+                })}
                 <td className="py-2 px-3 text-right text-base font-semibold tabular-nums">
                   {horas(p.total_hours)}
                 </td>

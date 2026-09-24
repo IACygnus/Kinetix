@@ -126,7 +126,7 @@ def main():
         page.goto(f"{WEB}/horas/consulta", wait_until="networkidle")
         page.wait_for_selector("[data-testid='filtro-desde']", timeout=25000)
         for t in ("filtro-desde", "filtro-hasta", "filtro-cliente",
-                  "filtro-proyecto", "filtro-persona", "incluir-cerrados"):
+                  "filtro-proyecto", "filtro-persona", "incluir-finalizados"):
             ok(page.locator(f"[data-testid='{t}']").count() == 1, f"está el filtro «{t}»")
 
         page.locator("[data-testid='filtro-desde']").fill(str(lunes))

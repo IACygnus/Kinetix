@@ -23,6 +23,8 @@ import {
   fechaLarga, horas, horasApi, hoyISO,
 } from '../../api/horasApi';
 import AvisoDesfase, { AvisoDesfasados, BarraConsumo } from '../../components/horas/AvisoDesfase';
+// ETAPA H8 (§3.1): el estado del proyecto, en su propia columna.
+import ChipEstado from '../../components/horas/EstadoProyecto';
 import { clientsAPI, usersAPI } from '../../services/api';
 
 interface Simple { id: string; name: string; is_active?: boolean }
@@ -43,8 +45,8 @@ export default function ConsultaPage() {
   const [fProyecto, setFProyecto] = useState('');
   const [fUsuario, setFUsuario] = useState('');
   const [soloDesfasados, setSoloDesfasados] = useState(false);
-  // H-D72: por defecto, solo los proyectos en marcha.
-  const [incluirCerrados, setIncluirCerrados] = useState(false);
+  // H-D84: por defecto, fuera los finalizados y los no viables.
+  const [incluirFinalizados, setIncluirFinalizados] = useState(false);
 
   const [clientes, setClientes] = useState<Simple[]>([]);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
@@ -67,7 +69,7 @@ export default function ConsultaPage() {
         project_id: fProyecto || undefined,
         user_id: fUsuario || undefined,
         solo_desfasados: soloDesfasados || undefined,
-        incluir_cerrados: incluirCerrados || undefined,
+        incluir_finalizados: incluirFinalizados || undefined,
       }));
       setError('');
     } catch (e: any) {
@@ -75,7 +77,7 @@ export default function ConsultaPage() {
       setDatos(null);
     }
     setCargando(false);
-  }, [desde, hasta, fCliente, fProyecto, fUsuario, soloDesfasados, incluirCerrados]);
+  }, [desde, hasta, fCliente, fProyecto, fUsuario, soloDesfasados, incluirFinalizados]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -172,12 +174,12 @@ export default function ConsultaPage() {
               {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
             </select>
           </label>
-          {/* H-D72: los cerrados se siguen consultando, pero hay que pedirlos. */}
+          {/* H-D84: se siguen consultando, pero hay que pedirlos. */}
           <label className="flex items-center gap-2 py-3">
-            <input type="checkbox" checked={incluirCerrados} data-testid="incluir-cerrados"
-              onChange={(e) => setIncluirCerrados(e.target.checked)}
+            <input type="checkbox" checked={incluirFinalizados} data-testid="incluir-finalizados"
+              onChange={(e) => setIncluirFinalizados(e.target.checked)}
               className="w-5 h-5 accent-[#f5a623]" />
-            <span className="text-lg text-gray-700">Incluir proyectos cerrados</span>
+            <span className="text-lg text-gray-700">Incluir finalizados y no viables</span>
           </label>
         </div>
       </div>
@@ -227,6 +229,10 @@ export default function ConsultaPage() {
               <tr className="text-sm uppercase text-gray-500">
                 <th className="py-3 px-4 text-left w-10"></th>
                 <th className="py-3 px-4 text-left">Cliente y proyecto</th>
+                {/* §5.1 (H-D82): «Estado» y «Consumo», dos columnas con dos
+                    títulos. Hasta H8 el estado era una etiqueta gris pegada al
+                    nombre del cliente, que es justo no tener columna. */}
+                <th className="py-3 px-4 text-center w-36">Estado</th>
                 <th className="py-3 px-4 text-right w-32">En el rango</th>
                 <th className="py-3 px-4 text-right w-32">Estimadas</th>
                 <th className="py-3 px-4 text-right w-32">Consumidas</th>
@@ -283,12 +289,10 @@ function FilaProyecto({ p, abierto, onAlternar, dias, onVerDias }: {
         </td>
         <td className="py-3 px-4">
           <div className="text-lg font-semibold text-gray-800">{p.project_name}</div>
-          <div className="text-base text-gray-500">
-            {p.client_name}
-            {p.status === 'cerrado' && (
-              <span className="ml-2 px-2 py-0.5 text-xs rounded bg-gray-200 text-gray-600">cerrado</span>
-            )}
-          </div>
+          <div className="text-base text-gray-500">{p.client_name}</div>
+        </td>
+        <td className="py-3 px-4 text-center" data-proyecto-estado={p.status}>
+          <ChipEstado estado={p.status} etiqueta={p.status_label} />
         </td>
         <td className="py-3 px-4 text-right">
           <div className="text-lg font-bold tabular-nums text-gray-800" data-testid="horas-rango">
@@ -353,7 +357,7 @@ function FilaPersona({ p, persona, dias, onVerDias }: {
           data-testid="horas-persona">
           {horas(persona.hours)}
         </td>
-        <td colSpan={4} className="py-2.5 px-4 text-base text-gray-500">
+        <td colSpan={5} className="py-2.5 px-4 text-base text-gray-500">
           {horas(persona.billable_hours)} h facturables
           {parseFloat(String(persona.overtime_hours)) > 0
             && ` · ${horas(persona.overtime_hours)} h extra`}
@@ -361,7 +365,7 @@ function FilaPersona({ p, persona, dias, onVerDias }: {
       </tr>
 
       {dias === 'cargando' && (
-        <tr><td colSpan={7} className="py-4 text-center text-gray-400 text-base">
+        <tr><td colSpan={8} className="py-4 text-center text-gray-400 text-base">
           <Loader2 className="w-5 h-5 animate-spin inline" /> Cargando los días…
         </td></tr>
       )}
@@ -369,7 +373,7 @@ function FilaPersona({ p, persona, dias, onVerDias }: {
       {Array.isArray(dias) && (
         <tr data-testid="dias-persona" data-clave={`${p.project_id}|${persona.user_id}`}>
           <td></td>
-          <td colSpan={6} className="py-3 px-4 pl-10 pb-5">
+          <td colSpan={7} className="py-3 px-4 pl-10 pb-5">
             <table className="w-full bg-white border border-gray-200 rounded-xl overflow-hidden">
               <thead className="bg-gray-100">
                 <tr className="text-xs uppercase text-gray-500 text-left">

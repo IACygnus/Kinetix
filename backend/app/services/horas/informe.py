@@ -269,20 +269,90 @@ def _sec_reparto(items, titulo_col: str) -> str:
 
 
 def _sec_proyectos(d: InformeDatos, para_pdf: bool = False) -> str:
+    """ETAPA H8 (H-D102): **en el informe queda UNA sola columna, «Estado»**, y
+    va la última.
+
+    Hasta v1.4 había una columna titulada «Estado» que enseñaba el consumo —por
+    eso el informe decía «En ejecución» de proyectos a los que nadie les había
+    puesto ese estado—. H8.3 las separó en dos; H8.3b retira la del consumo:
+    **el informe se lee de un vistazo y sin poder preguntar**, y dos columnas de
+    estado invitan a compararlas. En las pantallas siguen las dos (H-D105).
+
+    El estado lleva color, con su píldora de `docs/diseno-informe-horas.md`
+    (H-D103). Las clases son `est-<estado>` y no las `bien`/`ojo`/`mal` de
+    siempre: esas siguen significando «extra» y «desfase» en la sección 8, y
+    reusarlas aquí haría que dos cosas distintas se leyeran igual.
+
+    **Sin la columna de consumo, el desfase se ve en «Restantes» en negativo**,
+    en rojo (H-D106).
+    """
     filas = []
     for p in d.proyectos:
-        marca = {"desfasado": "mal", "por_agotarse": "ojo"}.get(p.overrun_status, "bien")
+        restantes = Decimal(str(p.remaining_hours or 0))
+        celda_restantes = horas(restantes)
+        if restantes < 0:
+            celda_restantes = f'<strong class="mal">{celda_restantes}</strong>'
         filas.append(
             f'<tr data-cliente="{esc(p.client_name)}" data-proyecto="{esc(p.project_name)}" '
-            f'class="{marca}">'
+            f'data-estado="{esc(p.status)}">'
             + _celdas([esc(p.client_name), esc(p.project_name),
                        horas(p.hours_in_range), horas(p.estimated_hours),
-                       horas(p.consumed_hours), horas(p.remaining_hours),
-                       f'<span class="pill {marca}">{esc(p.overrun_label)}</span>'],
+                       horas(p.consumed_hours), celda_restantes,
+                       f'<span class="pill est-{esc(p.status)}">{esc(p.status_label)}</span>'],
                       alineadas=(2, 3, 4, 5))
             + "</tr>")
-    return _tabla(["Cliente", "Proyecto", "En el periodo", "Estimadas", "Consumidas",
-                   "Restantes", "Estado"], filas, alineadas=(2, 3, 4, 5), ordenable=True)
+    return _tabla(["Cliente", "Proyecto", "En el periodo", "Estimadas",
+                   "Consumidas", "Restantes", "Estado"], filas,
+                  alineadas=(2, 3, 4, 5), ordenable=True)
+
+
+# ETAPA H8 (H-D85): los fondos del mapa, para poder partir una casilla sin
+# repetirlos. Son los de `docs/diseno-informe-horas.md` §1.2, que es donde se
+# deciden; el CSS de más abajo los vuelve a nombrar para las casillas enteras.
+FONDO_CASILLA = {
+    "trabajado": "#dcfce7",
+    "incompleto": "#fef3c7",
+    "festivo": "#e0e7ff",
+    "ausencia": "#f3e8ff",
+    "finde": "#f3f4f6",
+    "vacio": "#ffffff",
+}
+#: El azul de las horas extra (H-D85). Aprobado el 23 de septiembre de 2026.
+FONDO_EXTRA = "#bfdbfe"
+
+
+def _casilla_mapa(total, extra, estado: str, texto: str) -> str:
+    """Una casilla del mapa, partida si ese día tuvo horas extra (H-D85).
+
+    Abajo las ordinarias con el color del estado, arriba las extra en azul, **en
+    proporción a las horas de cada tipo**: 8,5 ordinarias y 2 extra dejan el azul
+    ocupando 2 de 10,5.
+
+    Es un `linear-gradient` de corte duro y no dos cajas apiladas porque la regla
+    11 prohíbe `flex` y `grid` en la rama de papel, y dos `div` con altura en
+    porcentaje dentro de un `<td>` no se comportan igual en los dos motores. El
+    gradiente sí, y está comprobado **rasterizando el PDF**, no leyendo el HTML.
+
+    > **Ojo a la sintaxis.** WeasyPrint 61.2 honra `linear-gradient`, pero **no
+    > la forma de doble posición** —`#dcfce7 0 81%`, que es CSS Images Level 4—:
+    > tira la declaración entera **sin avisar**, y la casilla se queda con el
+    > fondo de su clase, verde y sin partir. Con la forma clásica —el mismo
+    > porcentaje repetido en los dos colores— sale exacta. Medido en el PDF
+    > rasterizado: 21.714 píxeles verdes contra 5.313 azules en una prueba al
+    > 81 %, que es justo la proporción.
+    """
+    t = Decimal(str(total or 0))
+    e = Decimal(str(extra or 0))
+    if e <= 0 or t <= 0:
+        return f'<td class="casilla {estado}">{texto}</td>'
+    # El corte, en porcentaje de altura desde abajo. Se redondea a un decimal:
+    # más precisión no se ve en una casilla de tres milímetros.
+    ordinarias_pct = round(float((t - e) / t) * 100, 1)
+    fondo = FONDO_CASILLA.get(estado, FONDO_CASILLA["trabajado"])
+    estilo = (f"background:linear-gradient(to top,{fondo} {ordinarias_pct}%,"
+              f"{FONDO_EXTRA} {ordinarias_pct}%)")
+    return (f'<td class="casilla {estado} conextra" data-extra="{num(e)}" '
+            f'style="{estilo}">{texto}</td>')
 
 
 def _sec_mapa(d: InformeDatos, para_pdf: bool = False) -> str:
@@ -295,13 +365,17 @@ def _sec_mapa(d: InformeDatos, para_pdf: bool = False) -> str:
     filas = []
     for p in d.mapa:
         celdas = [f'<td class="izq">{esc(p.user_name)}</td>']
-        for h, estado in zip(p.por_dia, p.estados):
+        # `extra_por_dia` puede venir vacío si el informe lo generó una versión
+        # anterior: entonces no hay extras que pintar y la casilla es la de
+        # siempre. Nunca se desalinea con `por_dia`.
+        extras = p.extra_por_dia or [Decimal("0")] * len(p.por_dia)
+        for h, extra, estado in zip(p.por_dia, extras, p.estados):
             # En papel el mapa habla por color y no lleva cifras: con 31 columnas
             # en una hoja vertical, meter «8,5» obligaría a bajar de 8 pt, y por
             # debajo de eso no se lee. La leyenda dice lo que significa cada color
             # y las horas exactas están en la sección 9.
             texto = "" if para_pdf else (num(h) if h and float(h) > 0 else "")
-            celdas.append(f'<td class="casilla {estado}">{texto}</td>')
+            celdas.append(_casilla_mapa(h, extra, estado, texto))
         celdas.append(f'<td class="num">{horas(p.total_hours)}</td>')
         filas.append(f'<tr data-persona="{esc(p.user_name)}">{"".join(celdas)}</tr>')
 
@@ -309,13 +383,20 @@ def _sec_mapa(d: InformeDatos, para_pdf: bool = False) -> str:
     # `vacio` —un día laborable que todavía no ha llegado—, que sale en blanco:
     # sin su entrada, el lector no tenía forma de saber qué era una casilla
     # vacía, y es justo la que más se ve en un informe a mitad de mes.
+    # ETAPA H8 (H-D85): entra «horas extra», la séptima. Cada entrada va en su
+    # propio `span` que no parte: con seis cabían en una línea y con siete la
+    # última se rompía por la mitad —«horas» arriba y «extra» abajo—, que es
+    # justo la que hay que leer para entender una casilla partida.
+    entradas = [
+        ("trabajado", "trabajado"), ("incompleto", "incompleto"),
+        ("festivo", "festivo"), ("ausencia", "ausencia"),
+        ("finde", "fin de semana"), ("vacio", "aún no ha llegado"),
+        ("extra", "horas extra"),
+    ]
     leyenda = ('<p class="nota leyenda">'
-               '<span class="mini trabajado"></span> trabajado '
-               '<span class="mini incompleto"></span> incompleto '
-               '<span class="mini festivo"></span> festivo '
-               '<span class="mini ausencia"></span> ausencia '
-               '<span class="mini finde"></span> fin de semana '
-               '<span class="mini vacio"></span> aún no ha llegado</p>')
+               + "".join(f'<span class="lgd"><span class="mini {clave}"></span> '
+                         f"{texto}</span>" for clave, texto in entradas)
+               + "</p>")
     return (f'<table class="mapa"><thead><tr>{"".join(cab)}</tr></thead>'
             f'<tbody>{"".join(filas)}</tbody></table>{leyenda}')
 
@@ -450,21 +531,32 @@ def _intro_actividades(d: InformeDatos) -> str:
             "una de ejecución pesan lo mismo aquí.")
 
 
+# ETAPA H8.6 — estos dos párrafos se acortaron. H8.3b les añadió la explicación
+# del estado y H8.4 la de las horas extra, y con esas frases pasaron del límite
+# de tres líneas que fijó D1 y que Fredy aprobó sobre el informe de verdad (665
+# y 443 letras contra un máximo de 420). Lo que se ajusta es el texto, no el
+# límite: el límite es una decisión de diseño aprobada, y `d1_diseno.py` existe
+# justo para que no se cuele un párrafo que descuadra la página.
+#
+# Lo que NO se podía perder al recortar: que el estado **lo decide una persona**
+# —es lo que H8 vino a decir— y que las dos columnas de horas no miden lo mismo.
+
 def _intro_proyectos(d: InformeDatos) -> str:
-    return ("Los proyectos que tuvieron horas en el periodo, y cuánto llevan "
-            "gastado frente a lo estimado. Las dos columnas de horas no miden lo "
-            "mismo: en el periodo son las de estas fechas, y consumidas es todo lo "
-            "que lleva el proyecto desde que se abrió, que es contra lo que se mide "
-            "el desfase. Un proyecto sin estimación sale igual, pero su estado no "
-            "significa nada.")
+    return ("Los proyectos con horas en el periodo, y cuánto llevan gastado frente "
+            "a lo estimado. El estado —pendiente, en ejecución, detenido, no viable "
+            "o finalizado— lo decide una persona y no se deduce de las horas. Las "
+            "dos columnas de horas no miden lo mismo: en el periodo son las de "
+            "estas fechas, y consumidas, todo lo que lleva el proyecto desde que se "
+            "abrió. Restantes en rojo es que ya se pasó de lo estimado.")
 
 
 def _intro_mapa(d: InformeDatos) -> str:
     return ("Día a día, quién registró y quién no. El color dice en qué estado quedó "
-            "cada día y la leyenda de abajo los nombra uno a uno; las horas exactas "
-            "están en el detalle. Un día en ámbar tiene horas apuntadas, solo que "
-            "menos de su jornada, y los días que todavía no han llegado salen en "
-            "blanco y no se reclaman.")
+            "cada día y la leyenda los nombra; las horas exactas están en el "
+            "detalle. Un día en ámbar tiene horas, solo que menos de su jornada, y "
+            "los que todavía no han llegado salen en blanco y no se reclaman. Un "
+            "día con horas extra sale partido: abajo las ordinarias y arriba las "
+            "extra en azul, en proporción.")
 
 
 def _intro_detalle(d: InformeDatos) -> str:
@@ -685,14 +777,27 @@ th{background:var(--fondo-suave);color:var(--apagado);font-size:8.5pt;
 td{padding:1.8mm 2mm;border-bottom:.5pt solid var(--separador);font-size:9.5pt}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.izq{text-align:left}
-tr.mal td{background:#fef2f2}
-tr.ojo td{background:#fffbeb}
+/* ETAPA H8 (H-D102): `tr.mal` y `tr.ojo` teñían la fila del proyecto desfasado
+   en la sección 6, y eran lo único que los usaba. Con el consumo fuera de esa
+   tabla ya no hay de dónde sacar la marca, y una fila roja junto a una píldora
+   verde de «Finalizado» se contradiría. El aviso lo da «Restantes» en rojo
+   (H-D106). Si Fredy quiere recuperar el tinte, es esta regla y la marca en el
+   `<tr>` de `_sec_proyectos`. */
 .pill{display:inline-block;padding:.6mm 2mm;border-radius:3mm;font-size:8pt;
       font-weight:700}
 .pill.bien{background:#f3f4f6;color:#4b5563}
 .pill.ojo{background:#fef3c7;color:#92400e}
 .pill.mal{background:#fee2e2;color:#991b1b}
 strong.mal{color:#991b1b}
+/* ETAPA H8 (H-D103): el estado del proyecto, sección 6. Los valores son los de
+   `docs/diseno-informe-horas.md` §1.2, que es donde se deciden. Clases propias
+   —no `bien`/`ojo`/`mal`— porque esas significan «extra» y «desfase» en la
+   sección 8 y dos cosas distintas no pueden llevar la misma píldora. */
+.pill.est-pendiente{background:#f3f4f6;color:#4b5563}
+.pill.est-en_ejecucion{background:#bfdbfe;color:#03287D}
+.pill.est-detenido{background:#fef3c7;color:#92400e}
+.pill.est-no_viable{background:#e5e7eb;color:#991b1b}
+.pill.est-finalizado{background:#dcfce7;color:#166534}
 /* ===== LOS INDICADORES (D-D3) =====
    Rótulo pequeño arriba, cifra grande y de su color, y debajo una línea en gris
    con el desglose. La unidad va dentro de la cifra, en pequeño y en gris, para
@@ -747,6 +852,12 @@ td.casilla.finde{background:#f3f4f6}
 .mini.festivo{background:#e0e7ff}.mini.ausencia{background:#f3e8ff}
 .mini.vacio{background:#fff}
 .mini.finde{background:#f3f4f6}
+/* ETAPA H8 (H-D85): el azul de las horas extra. En la leyenda sale entero; en
+   la casilla va arriba, sobre el color del día, con un gradiente de corte duro
+   que escribe `_casilla_mapa`. */
+.mini.extra{background:#bfdbfe}
+/* Cada entrada de la leyenda, entera: ni «horas» arriba y «extra» abajo. */
+.leyenda .lgd{white-space:nowrap;margin-right:3mm;display:inline-block}
 """
 
 _PDF_CSS = """

@@ -11,9 +11,11 @@ from app.api.v1.endpoints import observabilidad
 # MODULO DE HORAS (ETAPA H1, H-D9): router propio bajo /time, separado del
 # modulo de analisis.
 from app.api.v1.endpoints import time_activities
+from app.api.v1.endpoints import time_borrado
 from app.api.v1.endpoints import time_consulta
 from app.api.v1.endpoints import time_entries
 from app.api.v1.endpoints import time_import
+from app.api.v1.endpoints import time_import_proyectos
 from app.api.v1.endpoints import time_informe
 from app.api.v1.endpoints import time_projects
 from app.api.v1.endpoints import upload
@@ -115,7 +117,14 @@ api_router.include_router(time_activities.router, prefix="/time/activities", tag
 api_router.include_router(time_projects.router, prefix="/time/projects", tags=["Horas — Proyectos"])
 api_router.include_router(time_consulta.router, prefix="/time/consulta", tags=["Horas — Consulta"])
 api_router.include_router(time_import.router, prefix="/time/import", tags=["Horas — Importación"])
+# ETAPA H8.5b (H-D94): el SEGUNDO importador, en su propio router. El de
+# registros no se toca.
+api_router.include_router(time_import_proyectos.router, prefix="/time/import/proyectos",
+                          tags=["Horas — Importación de proyectos"])
 api_router.include_router(time_informe.router, prefix="/time/informe", tags=["Horas — Informe"])
+# ETAPA H8.5 (§4.3): el borrado de un periodo. Solo admin, en su propio router
+# para que se vea de un vistazo qué endpoints pueden borrar en bloque.
+api_router.include_router(time_borrado.router, prefix="/time/borrado", tags=["Horas — Borrado"])
 # ETAPA H2: el registro cuelga de /time directamente porque sus rutas son
 # varias (/entries, /week, /pending-days, /projects/{id}/disponibilidad).
 api_router.include_router(time_entries.router, prefix="/time", tags=["Horas — Registro"])

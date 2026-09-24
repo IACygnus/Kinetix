@@ -33,9 +33,14 @@ from app.db.models.time_tracking import (
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.time_tracking import (
-    FilaImportacion, ProyectoAImportar, ProyectoCreado, ResumenImportacion,
-    VistaPreviaImportacion, validar_paso,
+    ActividadNueva, FilaImportacion, ProyectoAImportar, ProyectoCreado,
+    ProyectoNoEnEjecucion, ResumenImportacion, VistaPreviaImportacion, validar_paso,
 )
+# §4 (carga real): la definición única de qué texto del Excel es cuál de las
+# ocho actividades. La comparten los DOS importadores; aquí no se copia nada.
+from app.services.horas.sinonimos_actividad import traducir as traducir_actividad
+# ETAPA H8 (§6.2.8): la excepción de la importación vive aquí, no en `estados`.
+from app.services.horas import estados
 from app.services.horas.desfase import (
     DESFASADO, estado as estado_desfase, etiqueta as etiqueta_desfase, horas_de_desfase,
 )
@@ -127,11 +132,19 @@ async def _analizar(db: AsyncSession, datos: bytes, destino: User) -> _Plan:
             external_id=leer_id(celda(valores, "external_id")),
             client_name=limpiar_texto(celda(valores, "cliente")),
             project_name=limpiar_texto(celda(valores, "proyecto")),
-            activity_name=limpiar_texto(celda(valores, "actividad")),
             notes=limpiar_texto(celda(valores, "notas")),
             billable=leer_si_no(celda(valores, "facturable")),
             overtime=leer_si_no(celda(valores, "extra")),
         )
+        # §4: la actividad pasa por la tabla de sinónimos ANTES de compararse
+        # con el catálogo. Sin esto, «Diseño y generación de script» y «Diseño y
+        # configuración» crearían dos actividades distintas que ya no se pueden
+        # sumar. Se guarda lo que decía el archivo cuando la tabla lo cambió.
+        del_archivo = limpiar_texto(celda(valores, "actividad"))
+        f.activity_name = traducir_actividad(del_archivo)
+        if f.activity_name != del_archivo:
+            f.activity_original = del_archivo
+
         f.date = leer_fecha(celda(valores, "fecha"))
         f.hours = leer_horas(celda(valores, "horas"))
 
@@ -161,10 +174,17 @@ async def _analizar(db: AsyncSession, datos: bytes, destino: User) -> _Plan:
             f.crea_proyecto = True
         else:
             plan.id_proyecto[clave_proyecto] = proyecto.id
-            # H-D40: un proyecto cerrado no admite registros (H-D20).
-            if proyecto.status == "cerrado":
+            # ETAPA H8 (§6.2.8): **la excepción**. La importación entra en
+            # cualquier estado menos `no_viable`. Un Excel trae horas de hace
+            # semanas y el proyecto pudo cambiar de estado desde entonces;
+            # rechazarlas obligaría a reabrir el proyecto, importar y volver a
+            # cerrarlo. La previa avisa de las que caen fuera de ejecución.
+            f.project_status = estados.normalizar_legado(proyecto.status)
+            f.project_status_label = estados.texto(proyecto.status)
+            if not estados.admite_importacion(proyecto.status):
                 f.accion = INVALIDA
-                f.motivo = f"El proyecto «{f.project_name}» está cerrado"
+                f.motivo = (f"El proyecto «{f.project_name}» está "
+                            f"«{f.project_status_label}»")
                 plan.filas.append(f)
                 continue
 
@@ -239,8 +259,61 @@ async def _leer(archivo: UploadFile) -> bytes:
     return datos
 
 
+def _fuera_de_ejecucion(entran: List[FilaImportacion]) -> List[ProyectoNoEnEjecucion]:
+    """ETAPA H8 (§6.2.8): el aviso de la vista previa.
+
+    Dice **cuántas filas y en qué proyectos**, no solo que las hay: con el
+    total a secas no se puede decidir si confirmar. Se cuenta sobre las filas
+    que van a entrar de verdad —una fila inválida por otro motivo no cuenta— y
+    los proyectos que la importación va a **crear** tampoco aparecen aquí,
+    porque nacen en ejecución.
+    """
+    por_proyecto: Dict[tuple, ProyectoNoEnEjecucion] = {}
+    for f in entran:
+        if f.project_status == estados.EN_EJECUCION:
+            continue
+        clave = (f.client_name, f.project_name)
+        bloque = por_proyecto.get(clave)
+        if bloque is None:
+            bloque = por_proyecto[clave] = ProyectoNoEnEjecucion(
+                project_name=f.project_name, client_name=f.client_name,
+                status=f.project_status, status_label=f.project_status_label)
+        bloque.filas += 1
+        bloque.horas += (f.hours or CERO)
+    return sorted(por_proyecto.values(), key=lambda b: (b.client_name, b.project_name))
+
+
+def _actividades_nuevas(plan: _Plan, entran: List[FilaImportacion]) -> List[ActividadNueva]:
+    """§4: las actividades que el catálogo no tenía, con sus filas y sus horas.
+
+    **No es un error y no bloquea nada**: entran igual. Es el aviso que permite
+    decidir antes de confirmar si lo que falta es un sinónimo en
+    `services/horas/sinonimos_actividad.py` o si de verdad es una actividad
+    nueva. Una desconocida con 40 horas en 12 filas casi nunca es nueva: es una
+    variante de escritura de una de las ocho.
+
+    Se listan **todas** las que se van a crear, también si ninguna fila válida
+    las usa al final (filas 0, horas 0): que se cree una actividad que nadie usa
+    también hay que verlo.
+    """
+    bloques = {
+        clave: ActividadNueva(name=nombre)
+        for clave, nombre in plan.actividades_nuevas.items()
+    }
+    for f in entran:
+        if not f.crea_actividad:
+            continue
+        bloque = bloques.get(normalizar(f.activity_name))
+        if bloque is None:
+            continue
+        bloque.filas.append(f.numero)
+        bloque.horas += (f.hours or CERO)
+    return sorted(bloques.values(), key=lambda b: b.name.lower())
+
+
 def _a_vista_previa(plan: _Plan, destino: User) -> VistaPreviaImportacion:
     entran = [f for f in plan.filas if f.accion != INVALIDA]
+    fuera = _fuera_de_ejecucion(entran)
     return VistaPreviaImportacion(
         sheet=plan.hoja, sheets=plan.hojas,
         user_id=destino.id, user_name=(destino.full_name or destino.username),
@@ -251,9 +324,12 @@ def _a_vista_previa(plan: _Plan, destino: User) -> VistaPreviaImportacion:
         desfasadas=[f for f in entran if f.overrun_status == DESFASADO],
         clientes_a_crear=sorted(plan.clientes_nuevos.values()),
         actividades_a_crear=sorted(plan.actividades_nuevas.values()),
+        actividades_nuevas=_actividades_nuevas(plan, entran),
         proyectos_a_crear=[ProyectoAImportar(client_name=c, project_name=p)
                            for c, p in sorted(plan.proyectos_nuevos.values())],
         total_horas=sum((f.hours or CERO for f in entran), CERO),
+        proyectos_no_en_ejecucion=fuera,
+        filas_no_en_ejecucion=sum(b.filas for b in fuera),
     )
 
 
@@ -326,7 +402,7 @@ async def confirmar(
             # el proyecto y el resumen ofrece el enlace para ponérselas.
             p = Project(client_id=client_id, name=nombre_proyecto,
                         name_normalized=normalizar(nombre_proyecto),
-                        status="activo", created_by=current_user.id)
+                        status=estados.POR_DEFECTO, created_by=current_user.id)
             db.add(p)
             await db.flush()
             plan.id_proyecto[clave] = p.id
@@ -378,6 +454,10 @@ async def confirmar(
         total_horas=sum((f.hours or CERO for f in plan.filas if f.accion != INVALIDA), CERO),
         clientes_creados=sorted(clientes_creados),
         actividades_creadas=sorted(actividades_creadas),
+        # §4: el mismo bloque que enseñó la previa, repetido aquí para que siga
+        # a la vista después de confirmar. Se calcula del plan, que no se tocó.
+        actividades_nuevas=_actividades_nuevas(
+            plan, [f for f in plan.filas if f.accion != INVALIDA]),
         proyectos_creados=proyectos_creados,
         user_id=destino.id, user_name=(destino.full_name or destino.username),
     )

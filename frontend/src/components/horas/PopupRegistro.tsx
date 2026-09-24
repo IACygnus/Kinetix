@@ -75,10 +75,13 @@ export default function PopupRegistro({
       .catch(() => setError('No se pudo cargar la lista de clientes.'));
   }, []);
 
-  // Cliente → proyectos activos de ese cliente.
+  // Cliente → los proyectos de ese cliente **en los que se puede registrar**.
+  // ETAPA H8 (§3.1): ese es exactamente uno, `en_ejecucion`. Ofrecer un
+  // proyecto detenido solo serviría para que el guardado devolviera un 409
+  // después de haber rellenado el formulario entero.
   useEffect(() => {
     if (!fCliente) { setProyectos([]); return; }
-    horasApi.listarProyectos({ client_id: fCliente, estado: 'activo' })
+    horasApi.listarProyectos({ client_id: fCliente, estado: 'en_ejecucion' })
       .then(setProyectos).catch(() => setProyectos([]));
   }, [fCliente]);
 
