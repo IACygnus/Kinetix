@@ -142,6 +142,11 @@ Se añadió `scripts/d1_cifras.sh`: saca la referencia de git, la mete en el
 contenedor y lanza la comparación. Una orden en vez de dos rituales que había
 que recordar.
 
+Corrido ya con el tag creado: **962 de 962 cifras iguales**, las diez tablas, y
+las 980 del documento entero como conjunto. Que pase hoy es lo esperado —los dos
+generadores son el mismo—; lo que se ha comprobado es que **el mecanismo
+funciona con la referencia nueva**.
+
 > Por el camino, un detalle de Windows: `docker cp` de un archivo temporal del
 > anfitrión no funciona aquí. Git Bash traduce a ruta de Windows todo lo que
 > empiece por barra, y el temporal del anfitrión y el destino de dentro del
@@ -269,7 +274,14 @@ Y las que no corren dentro del contenedor:
 | | |
 |---|---|
 | **El laboratorio (O2a.3)** | `TODO PASA` — carga real contra el laboratorio: la CPU de la máquina sube de 11,70 % a 90,20 % durante la prueba y vuelve a bajar; la de la base, de 0,01 % a 612,52 %; PostgreSQL de 0,70 a 15,02 tx/s. `summary = 1244 in 00:02:03 = 10,1/s  Err: 0` |
-| **Las cifras del informe** | Se negó a correr, **y eso está bien**: `«v4.2.0» no es un commit de este repositorio`. El tag se crea con este mismo commit, así que hasta entonces no existe. El mensaje dice qué es y dónde mirarlo, en vez de soltar un error de git |
+| **Las cifras del informe** | En la pasada se negó a correr, **y estuvo bien**: `«v4.2.0» no es un commit de este repositorio` — el tag se crea con este mismo commit. Ya creado, **pasa: 962 de 962 cifras iguales**, las diez tablas, y las 980 del documento entero como conjunto |
+
+> Esa primera negativa destapó otro defecto suyo: con la sesión caducada
+> reventaba con un `ValidationError` de pydantic y dos «Field required», porque
+> lo que intentaba validar como informe era el `{"detail": "No se pudieron
+> validar las credenciales"}`. Ahora dice **«sesión caducada»**, como las demás.
+> Es el mismo arreglo del §3, encontrado por el mismo camino: lanzar una prueba
+> sin sus requisitos y mirar qué contesta.
 
 La huella de la base de Fredy es **idéntica antes y después**: mismo `md5` de los
 107 registros y los mismos 16 proyectos, 8 actividades, 15 clientes, 0
