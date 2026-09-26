@@ -11,7 +11,7 @@
  *
  * Regla 16: TODOS los hooks se declaran antes de cualquier return.
  */
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../../services/api';
 import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
@@ -223,8 +223,14 @@ function BloqueGraficasTx({ label, series, secciones, guardarSeccion, capas }: {
   return <ReportBody scope={{ kind: 'transaction', label }} ctx={ctx} />;
 }
 
+/** R1 (R-D1): dentro del informe integrado, `onGuardar` solo pasa el texto a la
+ *  pagina; quien lo guarda es ella, y es su barra la que sabe si el servidor lo
+ *  tiene. Aqui decir «Guardado» seria mentir, asi que la caja no se pronuncia. */
+const EnIntegrado = createContext(false);
+
 /** Texto editable con autoguardado (patron F3/R1/R2: debounce + indicador). */
 function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: boolean; onGuardar: (v: string) => Promise<void> }) {
+  const enIntegrado = useContext(EnIntegrado);
   const [local, setLocal] = useState(valor);
   const [estado, setEstado] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const timer = useRef<number | null>(null);
@@ -256,9 +262,9 @@ function TextoEditable({ valor, editado, onGuardar }: { valor: string; editado: 
         style={{ minHeight: '150px' }}
       />
       <div className="flex items-center gap-3 mt-1 text-sm">
-        <span className={estado === 'error' ? 'text-red-600' : estado === 'saving' ? 'text-gray-500' : estado === 'saved' ? 'text-emerald-700' : 'text-gray-400'}>
+        {enIntegrado ? <span className="text-gray-400">Se guarda con el informe integrado</span> : <span className={estado === 'error' ? 'text-red-600' : estado === 'saving' ? 'text-gray-500' : estado === 'saved' ? 'text-emerald-700' : 'text-gray-400'}>
           {estado === 'saving' ? 'Guardando...' : estado === 'saved' ? 'Guardado' : estado === 'error' ? 'Error al guardar' : 'Autoguardado activo'}
-        </span>
+        </span>}
         {estado === 'error' && (
           <button onClick={() => guardar(local)} className="px-2 py-0.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700">Reintentar</button>
         )}
@@ -299,7 +305,7 @@ function aplicarOverrides(secciones: Seccion[], label: string,
 }
 
 export default function TransactionReportSection({ executionId, byLabel = [], durationSeconds = 0, capas,
-                                                   onAnalysisEdit, analysisOverrides }: {
+                                                   onAnalysisEdit, analysisOverrides, soloTransacciones }: {
   executionId: string;
   /** ETAPA 2 (D15): las filas de by_label que Dashboard ya pidio a /charts. Se pasan
    *  en vez de volver a pedir el endpoint entero (850 KB) solo para una fila. */
@@ -314,8 +320,16 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
   onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
   /** ETAPA 7 (D58): los overrides ya guardados, para hidratar los textos. */
   analysisOverrides?: Record<string, string>;
+  /** R1 (R-D5): el selector del informe integrado. `null`/ausente = todas (lo de
+   *  siempre); una lista = solo esas. El informe individual no la pasa. */
+  soloTransacciones?: string[] | null;
 }) {
-  const [labels, setLabels] = useState<string[]>([]);
+  const [todas, setLabels] = useState<string[]>([]);
+  // R1: lo que se pinta —y lo que se carga— es lo elegido. Filtrar aqui y no al
+  // pedir la lista deja que cambiar la seleccion no vuelva a llamar al backend.
+  const labels = useMemo(
+    () => (soloTransacciones ? todas.filter((l) => soloTransacciones.includes(l)) : todas),
+    [todas, soloTransacciones]);
   const [abierta, setAbierta] = useState<string | null>(null);
   const [datos, setDatos] = useState<Record<string, Estado>>({});
   const [generando, setGenerando] = useState<string | null>(null);
@@ -498,6 +512,7 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
   // Lo unico que sobrevive de aquella barra es el boton de generar todas, que es
   // funcion y no encabezado.
   return (
+    <EnIntegrado.Provider value={!!onAnalysisEdit}>
     <div className="mb-8">
       <div>
         <div className="flex justify-end mb-4">
@@ -669,5 +684,6 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
         </div>
       </div>
     </div>
+    </EnIntegrado.Provider>
   );
 }

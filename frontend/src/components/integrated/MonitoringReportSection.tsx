@@ -25,9 +25,11 @@ interface Props {
   onImageAnalysisEdit?: (attachmentId: string, value: string) => void;
   // F4: analisis por imagen ya editados y guardados en el informe integrado
   imageOverrides?: Record<string, string>;
+  // R1 (R-D5): capturas elegidas en el selector (null/ausente = todas)
+  soloAdjuntos?: string[] | null;
 }
 
-export default function MonitoringReportSection({ executionId, attachmentType, sectionTitle, onImageAnalysisEdit, imageOverrides }: Props) {
+export default function MonitoringReportSection({ executionId, attachmentType, sectionTitle, onImageAnalysisEdit, imageOverrides, soloAdjuntos }: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
   // F4: arranca con lo guardado en el informe integrado (si lo hay)
@@ -48,7 +50,8 @@ export default function MonitoringReportSection({ executionId, attachmentType, s
   }, [executionId, attachmentType, apiBase]);
 
   if (loading) return null;
-  if (attachments.length === 0) return null;
+  const visibles = soloAdjuntos ? attachments.filter(a => soloAdjuntos.includes(a.id)) : attachments;
+  if (visibles.length === 0) return null;
 
   const handleEdit = (attId: string, value: string) => {
     setEditedAnalyses(prev => ({ ...prev, [attId]: value }));
@@ -59,7 +62,7 @@ export default function MonitoringReportSection({ executionId, attachmentType, s
     <div className="mt-6">
       <h3 className="text-3xl font-bold text-gray-800 mb-4 border-l-4 border-[#0a1628] pl-4">{sectionTitle}</h3>
       <div className="space-y-4">
-        {attachments.map(att => (
+        {visibles.map(att => (
           <div key={att.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6">
             <div className="border-l-4 border-[#0a1628] pl-4 mb-4">
               <h4 className="text-2xl font-bold text-gray-800">{att.title || att.filename}</h4>

@@ -3,7 +3,7 @@
  * Select executions, monitoring, evidence from history.
  * Reorder sections via drag. Generate unified report with AI conclusions.
  */
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
@@ -19,18 +19,70 @@ import { testAPI } from '../services/api';
 import DashboardEmbed from '../components/integrated/DashboardEmbed';
 import MonitoringReportSection from '../components/integrated/MonitoringReportSection';
 import ConsolidatedAnalysisSection from '../components/integrated/ConsolidatedAnalysisSection';
+import SelectorContenidoSeccion from '../components/integrated/SelectorContenidoSeccion';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+// R1 (R-D5/R-D6): que entra de la seccion. `tx` en carga/estres, `adjuntos` en
+// monitoreo/evidencias. null/ausente = todo (lo de siempre). Se guarda con el
+// informe, dentro de su entrada de `sections`.
+type Seleccion = { tx?: string[] | null; adjuntos?: string[] | null };
+
 interface ReportSection {
   id: string;
   type: 'load_test' | 'stress_test' | 'monitoring' | 'evidence';
   sourceId: string;
   sourceName: string;
   sourceDate: string;
+  seleccion?: Seleccion;
 }
+
+/** R1: una seccion tal como la reciben los endpoints. Una sola definicion para
+ *  generar, exportar, guardar y el consolidado: si cada uno armara la suya, la
+ *  seleccion se caeria por el camino en el que alguien se olvidara de ella. */
+const seccionApi = (s: ReportSection, idx: number) => ({
+  order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName, seleccion: s.seleccion || {},
+});
 
 // F3: retardo del autosave tras la ultima tecla.
 const SAVE_DEBOUNCE_MS = 1800;
+
+type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+
+// R1 (R-D3): lo que se envia al salir se guarda antes en el navegador y se
+// borra cuando el servidor confirma. Si al volver sigue ahi y la base no tiene
+// esos textos, la pagina lo dice y ofrece recuperarlo.
+type CopiaLocal = { sections?: any[]; consolidated_analysis?: Record<string, any>; ts: number };
+const claveCopia = (id: string) => `kx_integrado_pendiente_${id}`;
+function leerCopia(id: string): CopiaLocal | null {
+  try { const t = localStorage.getItem(claveCopia(id)); return t ? JSON.parse(t) : null; } catch { return null; }
+}
+function escribirCopia(id: string, payload: Record<string, any>) {
+  try { localStorage.setItem(claveCopia(id), JSON.stringify({ ...payload, ts: Date.now() })); } catch { /* sin almacenamiento: queda el envio */ }
+}
+function borrarCopia(id: string) {
+  try { localStorage.removeItem(claveCopia(id)); } catch { /* idem */ }
+}
+/** La copia ya esta en la base si cada texto que lleva coincide con el guardado. */
+function copiaYaGuardada(copia: CopiaLocal, server: any): boolean {
+  const ovServer: Record<string, any> = {};
+  (server.sections || []).forEach((s: any) => { if (s?.overrides) ovServer[s.source_id] = s.overrides; });
+  for (const s of copia.sections || []) {
+    const ov = s?.overrides;
+    if (!ov) continue;
+    for (const tipo of ['analysis', 'images'] as const) {
+      for (const [k, v] of Object.entries(ov[tipo] || {})) {
+        if ((ovServer[s.source_id]?.[tipo] || {})[k] !== v) return false;
+      }
+    }
+  }
+  const cs = server.consolidated_analysis || {};
+  for (const [tt, d] of Object.entries(copia.consolidated_analysis || {})) {
+    for (const campo of ['conclusions', 'recommendations']) {
+      if ((d as any)?.[campo] !== undefined && cs[tt]?.[campo] !== (d as any)[campo]) return false;
+    }
+  }
+  return true;
+}
 
 // F3: aplana el consolidado al texto plano que consumen los exports.
 function flattenConsolidated(data: Record<string, any>): string {
@@ -43,7 +95,9 @@ function flattenConsolidated(data: Record<string, any>): string {
 }
 
 // ─── Sortable Item ────────────────────────────────────────────────────────────
-function SortableItem({ section, onRemove }: { section: ReportSection; onRemove: () => void }) {
+function SortableItem({ section, onRemove, onSeleccion }: {
+  section: ReportSection; onRemove: () => void; onSeleccion: (s: Seleccion) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
@@ -63,6 +117,14 @@ function SortableItem({ section, onRemove }: { section: ReportSection; onRemove:
         </div>
         <div className="text-lg font-medium text-gray-800">{section.sourceName}</div>
         <div className="text-sm text-gray-400">{section.sourceDate}</div>
+        {/* R1 (R-D5): que entra de esta seccion */}
+        <SelectorContenidoSeccion
+          executionId={section.sourceId}
+          tipo={section.type}
+          seleccion={section.type === 'monitoring' || section.type === 'evidence' ? section.seleccion?.adjuntos : section.seleccion?.tx}
+          onCambiar={(nueva) => onSeleccion(section.type === 'monitoring' || section.type === 'evidence'
+            ? { adjuntos: nueva } : { tx: nueva })}
+        />
       </div>
       <button onClick={onRemove} className="text-red-400 hover:text-red-600 p-1 transition-colors" title="Quitar"><X className="w-5 h-5" /></button>
     </div>
@@ -89,14 +151,25 @@ export default function IntegratedReportPage() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [hydrating, setHydrating] = useState(!!urlReportId);
 
-  // F3: estado del indicador de guardado (solo cambia cuando se guarda de verdad)
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // R1 (R-D1): el indicador no miente. 'pending' = hay cambios que el servidor
+  // todavia no tiene; 'saved' solo se pone cuando el PATCH respondio 200.
+  const [saveState, setSaveState] = useState<SaveState>('idle');
   const [savedAt, setSavedAt] = useState('');
+  const [saveError, setSaveError] = useState('');   // R-D3: el aviso visible
+  // R1: copia local de una visita anterior que no llego al servidor (ver `enviarAlSalir`)
+  const [recuperable, setRecuperable] = useState<CopiaLocal | null>(null);
 
   // F3: todo lo que cambia por tecla vive en refs — nunca provoca re-render
   const saveTimerRef = useRef<number | null>(null);
   const pendingEditsRef = useRef<Record<string, Record<string, string>>>({});
-  const dirtyRef = useRef(false);
+  // R1: contador de ediciones en vez de un si/no. Cada edicion suma uno; un
+  // guardado solo da por guardado lo que llevaba al salir. Asi, una edicion que
+  // llega mientras un PATCH esta en vuelo no queda marcada como guardada.
+  const editSeqRef = useRef(0);
+  const savedSeqRef = useRef(0);
+  const saveStateRef = useRef<SaveState>('idle');
+  const hayPendiente = () => editSeqRef.current !== savedSeqRef.current;
+  const setEstado = (s: SaveState) => { saveStateRef.current = s; setSaveState(s); };
   const consolidatedRef = useRef<Record<string, any>>({});
   const persistedIdRef = useRef<string | null>(null);
   const reportNameRef = useRef('');
@@ -133,7 +206,7 @@ export default function IntegratedReportPage() {
   const buildSectionsPayload = useCallback(() => {
     const ov = sectionOverridesRef.current;
     return sectionsRef.current.map((s, idx) => {
-      const base: Record<string, any> = { order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName };
+      const base: Record<string, any> = seccionApi(s, idx);
       const o = ov[s.sourceId];
       if (o && (Object.keys(o.analysis).length || Object.keys(o.images).length)) {
         base.overrides = { analysis: o.analysis, images: o.images };
@@ -154,53 +227,78 @@ export default function IntegratedReportPage() {
     return merged;
   }, []);
 
-  // HF9.1 / F3: Persist edits to DB — ahora con indicador de estado
-  const persistEdit = useCallback(async (updates: Record<string, any>) => {
-    if (!persistedIdRef.current) return false;
-    setSaveState('saving');
+  // HF9.1 / F3: Persist edits to DB — ahora con indicador de estado.
+  // R1: `seq` es la ultima edicion que lleva este PATCH; `null` = no lleva
+  // ediciones (renombrar) y no cambia lo pendiente.
+  const persistEdit = useCallback(async (updates: Record<string, any>, seq: number | null) => {
+    const id = persistedIdRef.current;
+    if (!id) return false;
+    setEstado('saving');
     try {
-      const res = await fetch(`${apiBase}/reports/integrated-reports/${persistedIdRef.current}`, {
+      const res = await fetch(`${apiBase}/reports/integrated-reports/${id}`, {
         method: 'PATCH', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(updates),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      dirtyRef.current = false;
-      setSaveState('saved');
-      setSavedAt(new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }));
+      if (seq !== null) savedSeqRef.current = Math.max(savedSeqRef.current, seq);
+      setSaveError('');
+      if (hayPendiente()) {
+        // Llego otra edicion mientras este PATCH viajaba: sigue sin guardar.
+        setEstado('pending');
+      } else {
+        borrarCopia(id);
+        setEstado('saved');
+        setSavedAt(new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }));
+      }
       return true;
     } catch (e) {
       console.error('Error persisting edit:', e);
-      setSaveState('error');
+      setEstado('error');
+      setSaveError('No se pudieron guardar los cambios. Siguen en esta página: pulse «Reintentar» antes de salir.');
       return false;
     }
   }, [apiBase]);
+
+  // R1: lo que se manda al servidor, en un solo sitio: el guardado normal y el
+  // envio al salir no pueden armar payloads distintos.
+  const buildSavePayload = useCallback((includeName = false) => {
+    const payload: Record<string, any> = { consolidated_analysis: buildMergedConsolidated() };
+    // Guarda: nunca mandar una lista vacia — borraria las secciones guardadas.
+    const secs = buildSectionsPayload();
+    if (secs.length) payload.sections = secs;
+    if (includeName) payload.name = reportNameRef.current;
+    return payload;
+  }, [buildMergedConsolidated, buildSectionsPayload]);
 
   // F3 + F4: guardado efectivo — consolidado Y overrides de seccion en el mismo
   // PATCH (cancela cualquier debounce en vuelo)
   const saveNow = useCallback(async (includeName = false) => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-    const merged = buildMergedConsolidated();
-    const payload: Record<string, any> = { consolidated_analysis: merged };
-    // Guarda: nunca mandar una lista vacia — borraria las secciones guardadas.
-    const secs = buildSectionsPayload();
-    if (secs.length) payload.sections = secs;
-    if (includeName) payload.name = reportNameRef.current;
-    const ok = await persistEdit(payload);
+    const seq = editSeqRef.current;
+    const payload = buildSavePayload(includeName);
+    const ok = await persistEdit(payload, seq);
     // El texto plano de los exports se sincroniza con lo que quedo guardado.
-    if (ok) setConclusions(flattenConsolidated(merged));
+    if (ok) setConclusions(flattenConsolidated(payload.consolidated_analysis));
     return ok;
-  }, [buildMergedConsolidated, buildSectionsPayload, persistEdit]);
+  }, [buildSavePayload, persistEdit]);
+
+  // R1 (R-D1): una edicion. Solo cambia el estado al pasar a 'pending', no por
+  // tecla: el arbol de secciones esta memoizado y no se repinta.
+  const marcarEdicion = useCallback(() => {
+    editSeqRef.current += 1;
+    if (saveStateRef.current !== 'pending' && saveStateRef.current !== 'saving') setEstado('pending');
+  }, []);
 
   // F3 + F4: rearma el debounce. Lo comparten el consolidado y las secciones.
   const scheduleSave = useCallback(() => {
-    dirtyRef.current = true;
+    marcarEdicion();
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
-      if (dirtyRef.current) saveNow();
+      if (hayPendiente()) saveNow();
     }, SAVE_DEBOUNCE_MS);
-  }, [saveNow]);
+  }, [marcarEdicion, saveNow]);
 
   // F3: una tecla — solo refs y rearme del timer, CERO setState
   const handleDraftChange = useCallback((testType: string, field: string, value: string) => {
@@ -221,28 +319,77 @@ export default function IntegratedReportPage() {
     scheduleSave();
   }, [touchSection, scheduleSave]);
 
+  // R1 (R-D5/R-D6): la seleccion es parte del informe y se guarda con el, por el
+  // mismo camino que una edicion (y con el mismo indicador).
+  const cambiarSeleccion = useCallback((id: string, sel: Seleccion) => {
+    setSections(prev => prev.map(x => (x.id === id ? { ...x, seleccion: { ...(x.seleccion || {}), ...sel } } : x)));
+    if (persistedIdRef.current) scheduleSave();
+  }, [scheduleSave]);
+
   // F3: vacia el debounce pendiente antes de acciones que leen lo guardado
   const flushPending = useCallback(async () => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-    if (dirtyRef.current) await saveNow();
+    if (hayPendiente()) await saveNow();
   }, [saveNow]);
 
-  // F3: descarga de la pagina — intento best-effort con keepalive + limpieza del timer
+  // R1 (R-D2): salir ENVIA lo pendiente en vez de cancelarlo. Vale para salir
+  // por el menu (desmontaje), recargar y cerrar la pestaña (beforeunload).
+  //  1. Se quita el foco de la caja activa: su onBlur vuelca el texto al ref por
+  //     el camino de siempre. Sin esto, escribir y pulsar F5 perdia la caja.
+  //  2. Se guarda una copia local ANTES de enviar (R-D3): si el envio no llega,
+  //     la pagina lo recupera al volver.
+  //  3. `keepalive` para que el navegador termine el envio aunque la pagina se
+  //     cierre. Tiene un tope de 64 KB; por encima se envia sin el (sale igual
+  //     al navegar por el menu, y si se cierra la pestaña queda la copia).
+  const enviarAlSalir = useCallback(() => {
+    const activo = document.activeElement as HTMLElement | null;
+    if (activo && typeof activo.blur === 'function') activo.blur();
+    const id = persistedIdRef.current;
+    if (!id || !hayPendiente()) return;
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    const body = JSON.stringify(buildSavePayload());
+    escribirCopia(id, JSON.parse(body));
+    fetch(`${apiBase}/reports/integrated-reports/${id}`, {
+      method: 'PATCH', credentials: 'include', keepalive: body.length < 60000,
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      body,
+    }).then((r) => { if (r.ok) borrarCopia(id); }).catch(() => {});
+  }, [apiBase, buildSavePayload]);
+
+  // R1 (R-D3): aplica la copia local encima de lo guardado, la guarda y recarga
+  // para que cada caja se pinte con el texto recuperado.
+  const recuperarCopia = useCallback(async () => {
+    const copia = recuperable;
+    if (!copia) return;
+    (copia.sections || []).forEach((s: any) => {
+      const ov = s?.overrides;
+      if (!ov) return;
+      const dst = touchSection(s.source_id);
+      Object.assign(dst.analysis, ov.analysis || {});
+      Object.assign(dst.images, ov.images || {});
+    });
+    Object.entries(copia.consolidated_analysis || {}).forEach(([tt, d]: [string, any]) => {
+      if (d && typeof d === 'object') {
+        pendingEditsRef.current[tt] = { conclusions: d.conclusions ?? '', recommendations: d.recommendations ?? '' };
+      }
+    });
+    marcarEdicion();
+    if (await saveNow()) window.location.reload();
+  }, [recuperable, touchSection, marcarEdicion, saveNow]);
+
+  const enviarAlSalirRef = useRef(enviarAlSalir);
+  enviarAlSalirRef.current = enviarAlSalir;
+
   useEffect(() => {
-    const onBeforeUnload = () => {
-      if (!dirtyRef.current || !persistedIdRef.current) return;
-      fetch(`${apiBase}/reports/integrated-reports/${persistedIdRef.current}`, {
-        method: 'PATCH', credentials: 'include', keepalive: true,
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-        body: JSON.stringify({ consolidated_analysis: buildMergedConsolidated() }),
-      }).catch(() => {});
-    };
+    const onBeforeUnload = () => enviarAlSalirRef.current();
     window.addEventListener('beforeunload', onBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
-  }, [apiBase, buildMergedConsolidated]);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
+  // Salir por el menu desmonta la pagina. Es un efecto de LAYOUT a proposito:
+  // su limpieza corre antes de que React quite el DOM, asi que la caja con el
+  // foco todavia existe y su onBlur llega a volcar el texto.
+  useLayoutEffect(() => () => enviarAlSalirRef.current(), []);
 
   // HF9.1: Hydrate from DB when URL has reportId
   useEffect(() => {
@@ -261,6 +408,7 @@ export default function IntegratedReportPage() {
             sourceId: s.source_id,
             sourceName: s.source_name,
             sourceDate: '',
+            seleccion: s.seleccion || undefined,   // R1 (R-D6)
           }));
           setSections(savedSections);
           // F4: recuperar los overrides guardados. Los informes anteriores a F4
@@ -283,6 +431,12 @@ export default function IntegratedReportPage() {
               return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
             }).join('\n\n---\n\n');
             setConclusions(allText);
+          }
+          // R1 (R-D3): ¿quedo algo de la visita anterior sin llegar al servidor?
+          const copia = leerCopia(data.id);
+          if (copia) {
+            if (copiaYaGuardada(copia, data)) borrarCopia(data.id);
+            else setRecuperable(copia);
           }
         })
         .catch(e => console.error('Error hydrating integrated report:', e))
@@ -356,7 +510,7 @@ export default function IntegratedReportPage() {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
-          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          sections: sections.map(seccionApi),
           // F1: si el informe se reabrio del historial ya tiene id — no crear duplicado
           report_id: persistedId,
           name: reportName || null,
@@ -397,7 +551,7 @@ export default function IntegratedReportPage() {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
-          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          sections: sections.map(seccionApi),
           unified_conclusions: conclusions,
           report_id: persistedId,   // F6: el backend lee los overrides de este registro
         }),
@@ -421,7 +575,7 @@ export default function IntegratedReportPage() {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
-          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+          sections: sections.map(seccionApi),
           unified_conclusions: conclusions,
           report_id: persistedId,   // F6: el backend lee los overrides de este registro
         }),
@@ -451,23 +605,20 @@ export default function IntegratedReportPage() {
           sectionTitle={s.type === 'monitoring' ? 'Metricas de Monitoreo' : 'Evidencias y Hallazgos'}
           onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
           imageOverrides={sectionOverrides[s.sourceId]?.images}
+          soloAdjuntos={s.seleccion?.adjuntos}
         />
       );
     }
-    // For load_test/stress_test: only render monitoring/evidence if NOT already added as standalone sections
-    const hasMonitoring = sections.some(x => x.type === 'monitoring' && x.sourceId === s.sourceId);
-    const hasEvidence = sections.some(x => x.type === 'evidence' && x.sourceId === s.sourceId);
+    // R1 (opcion (a) de Fredy): una seccion de carga/estres ya NO pinta dentro su
+    // monitoreo ni sus evidencias. Entran solo como seccion propia, igual que en el
+    // PDF y el HTML, que nunca las incluyeron ahi: la pantalla y el exportado
+    // decian cosas distintas.
     return (
       <div key={s.id}>
         {idx > 0 && <hr className="my-6 border-2 border-[#0a1628]" />}
         <DashboardEmbed executionId={s.sourceId} onAnalysisEdit={handleSectionAnalysisEdit}
-          analysisOverrides={sectionOverrides[s.sourceId]?.analysis} />
-        {!hasMonitoring && <MonitoringReportSection executionId={s.sourceId} attachmentType="monitoring" sectionTitle="Metricas de Monitoreo"
-          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
-          imageOverrides={sectionOverrides[s.sourceId]?.images} />}
-        {!hasEvidence && <MonitoringReportSection executionId={s.sourceId} attachmentType="evidence" sectionTitle="Evidencias y Hallazgos"
-          onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
-          imageOverrides={sectionOverrides[s.sourceId]?.images} />}
+          analysisOverrides={sectionOverrides[s.sourceId]?.analysis}
+          soloTransacciones={s.seleccion?.tx} />
       </div>
     );
   }), [sections, sectionOverrides, handleSectionAnalysisEdit, handleSectionImageEdit]);
@@ -502,6 +653,20 @@ export default function IntegratedReportPage() {
         {hydrating ? 'Cargando informe...' : 'Seleccione las ejecuciones, metricas de monitoreo y evidencias que desea integrar. Arrastre para reordenar.'}
       </p>
 
+      {/* R1 (R-D3): lo que se envio al salir y no consta en la base */}
+      {recuperable && (
+        <div role="alert" data-testid="aviso-recuperar"
+          className="mb-6 flex flex-wrap items-center gap-4 bg-amber-50 border-2 border-amber-300 text-amber-900 rounded-2xl px-5 py-4">
+          <span className="flex-1 text-base font-medium">
+            Hay cambios de su última visita ({new Date(recuperable.ts).toLocaleString('es-CO')}) que no llegaron a guardarse.
+          </span>
+          <button onClick={recuperarCopia}
+            className="px-4 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700">Recuperar y guardar</button>
+          <button onClick={() => { if (persistedId) borrarCopia(persistedId); setRecuperable(null); }}
+            className="px-4 py-2 text-amber-800 font-semibold rounded-xl hover:bg-amber-100">Descartar</button>
+        </div>
+      )}
+
       {/* HF9.1: Rename modal */}
       {renameOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -516,7 +681,7 @@ export default function IntegratedReportPage() {
                 const newName = input?.value?.trim();
                 if (newName) {
                   setReportName(newName);
-                  await persistEdit({ name: newName });
+                  await persistEdit({ name: newName }, null);
                 }
                 setRenameOpen(false);
               }} className="px-4 py-2 bg-[#0a1628] text-white rounded-lg hover:bg-[#1a2638]">Guardar</button>
@@ -575,7 +740,8 @@ export default function IntegratedReportPage() {
               <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
                 <div className="space-y-2">
                   {sections.map(s => (
-                    <SortableItem key={s.id} section={s} onRemove={() => setSections(prev => prev.filter(x => x.id !== s.id))} />
+                    <SortableItem key={s.id} section={s} onRemove={() => setSections(prev => prev.filter(x => x.id !== s.id))}
+                      onSeleccion={(sel) => cambiarSeleccion(s.id, sel)} />
                   ))}
                 </div>
               </SortableContext>
@@ -613,7 +779,7 @@ export default function IntegratedReportPage() {
           <ConsolidatedAnalysisSection
             consolidatedAnalysis={consolidatedAnalysis}
             sections={[
-              ...sections.map(s => ({ type: s.type, source_id: s.sourceId, source_name: s.sourceName })),
+              ...sections.map(s => ({ type: s.type, source_id: s.sourceId, source_name: s.sourceName, seleccion: s.seleccion || {} })),
               ...(persistedId ? [{ type: '__meta', source_id: persistedId, source_name: reportName || '' }] : []),
             ]}
             onGenerated={(rawData) => {
@@ -622,7 +788,6 @@ export default function IntegratedReportPage() {
               // dispararse pisarian el texto recien regenerado con el viejo.
               if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
               pendingEditsRef.current = {};
-              dirtyRef.current = false;
               // HF9.1: Extract embedded __report_id and __report_name from response
               const rid = (rawData as any).__report_id;
               const rname = (rawData as any).__report_name;
@@ -631,6 +796,13 @@ export default function IntegratedReportPage() {
               delete (cleanData as any).__report_name;
 
               setConsolidatedAnalysis(cleanData);
+              // R1: el consolidado nuevo ya esta en la base. Si quedan ediciones
+              // de SECCION sin guardar, se envian ya, con el consolidado nuevo (el
+              // ref se pone a mano: el efecto espejo aun no ha corrido y mandaria
+              // el viejo). Antes se daban por guardadas sin estarlo.
+              consolidatedRef.current = cleanData;
+              if (hayPendiente()) saveNow();
+              else setEstado('saved');
               if (rid && !persistedId) {
                 setPersistedId(rid);
                 if (rname) setReportName(rname);
@@ -655,7 +827,7 @@ export default function IntegratedReportPage() {
               // pisa lo que el autosave ya guardo de la otra.
               const pend = pendingEditsRef.current;
               pend[testType] = { ...(pend[testType] || {}), [field]: value };
-              dirtyRef.current = true;
+              marcarEdicion();
               setConsolidatedAnalysis(buildMergedConsolidated());
               saveNow();
             }}
@@ -673,26 +845,41 @@ export default function IntegratedReportPage() {
             </button>
           </div>
 
-          {/* F3: barra fija de guardado — visible con cualquier scroll */}
-          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
-            <span className={`text-sm font-medium ${
-              saveState === 'error' ? 'text-red-600'
-              : saveState === 'saving' ? 'text-gray-500'
-              : saveState === 'saved' ? 'text-emerald-700'
-              : 'text-gray-400'}`}>
-              {!persistedId ? 'Sin registro — genere el informe'
-                : saveState === 'saving' ? 'Guardando...'
-                : saveState === 'saved' ? `Guardado ${savedAt}`
-                : saveState === 'error' ? 'Error al guardar'
-                : 'Autoguardado activo'}
-            </span>
-            <button
-              onClick={() => saveNow(true)}
-              disabled={!persistedId || saveState === 'saving'}
-              className={`px-5 py-2 rounded-xl font-bold text-white transition-colors disabled:opacity-50 ${
-                saveState === 'error' ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-700 hover:bg-emerald-800'}`}>
-              {saveState === 'error' ? 'Reintentar' : 'Guardar cambios'}
-            </button>
+          {/* F3: barra fija de guardado — visible con cualquier scroll.
+              R1 (R-D1/R-D3/R-D4): dice «Guardado» solo con la confirmacion del
+              servidor; con cambios pendientes lo dice con esas palabras, y un
+              fallo sale como mensaje, no solo como color. */}
+          <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2" data-testid="barra-guardado">
+            {saveError && (
+              <div role="alert" data-testid="aviso-guardado"
+                className="max-w-md bg-red-50 border-2 border-red-300 text-red-800 text-sm font-medium rounded-xl px-4 py-3 shadow-xl">
+                {saveError}
+              </div>
+            )}
+            <div className="flex items-center gap-3 bg-white/95 backdrop-blur border border-gray-200 shadow-xl rounded-2xl px-4 py-3">
+              <span data-testid="estado-guardado" className={`text-sm font-medium ${
+                saveState === 'error' ? 'text-red-600'
+                : saveState === 'pending' ? 'text-amber-700'
+                : saveState === 'saving' ? 'text-gray-500'
+                : saveState === 'saved' ? 'text-emerald-700'
+                : 'text-gray-400'}`}>
+                {!persistedId ? 'Sin registro — genere el informe'
+                  : saveState === 'pending' ? 'Cambios sin guardar'
+                  : saveState === 'saving' ? 'Guardando...'
+                  : saveState === 'saved' ? `Guardado ${savedAt}`
+                  : saveState === 'error' ? 'No se guardó'
+                  : 'Sin cambios pendientes'}
+              </span>
+              <button
+                onClick={() => saveNow(true)}
+                disabled={!persistedId || saveState === 'saving'}
+                className={`px-5 py-2 rounded-xl font-bold text-white transition-colors disabled:opacity-50 ${
+                  saveState === 'error' ? 'bg-red-600 hover:bg-red-700'
+                  : saveState === 'pending' ? 'bg-amber-600 hover:bg-amber-700 ring-4 ring-amber-200'
+                  : 'bg-emerald-700 hover:bg-emerald-800'}`}>
+                {saveState === 'error' ? 'Reintentar' : 'Guardar cambios'}
+              </button>
+            </div>
           </div>
 
           {/* HF9.2: Footer SQA — LAST element of the report */}

@@ -454,6 +454,10 @@ export interface IntegratedReportSummary {
   created_at: string;
   updated_at: string;
   created_by?: string | null;
+  // R1.3: el trabajo guardado encima del informe, para verlo sin abrirlo
+  ediciones_seccion?: number;
+  consolidado_editado?: boolean;
+  seleccion?: { seccion: string; tipo: string; elegidas: number }[];
 }
 
 export interface IntegratedReportDetail extends IntegratedReportSummary {

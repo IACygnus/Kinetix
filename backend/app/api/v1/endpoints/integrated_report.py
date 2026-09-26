@@ -99,7 +99,7 @@ def _build_codes_series(dataframes):
     return series
 
 
-async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrides=None) -> str:
+async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrides=None, seleccion_tx=None) -> str:
     """Generate FULL PDF HTML for one execution — same quality as individual export.
 
     F6: `overrides` trae el texto editado en el informe integrado y pisa al de la IA.
@@ -221,7 +221,8 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
         from app.api.v1.endpoints.export_pdf import _build_transaction_reports
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
         meta['transaction_reports'] = _aplicar_overrides_tx(
-            await _build_transaction_reports(db, execution, _df_tx, statistics),
+            await _build_transaction_reports(db, execution, _df_tx, statistics,
+                                             seleccion=seleccion_tx),   # R1 (R-D5)
             overrides)   # ETAPA 7 (D59)
 
         # Generate the full PDF HTML using report_generator's build_pdf_html
@@ -816,7 +817,7 @@ Plotly.newPlot('{id_pie}', [{{
 '''
 
 
-async def _generate_full_execution_plotly_html(execution, db: AsyncSession, prefix: str = "", overrides=None) -> str:
+async def _generate_full_execution_plotly_html(execution, db: AsyncSession, prefix: str = "", overrides=None, seleccion_tx=None) -> str:
     """HF10h: Generate interactive Plotly HTML fragment for ONE execution.
     Mirrors _generate_full_execution_pdf_html but builds Plotly traces instead of matplotlib base64.
     Returns a body fragment (no <html>/<head>) ready to be concatenated in an integrated report."""
@@ -1002,7 +1003,8 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
         from app.api.v1.endpoints.export_html import build_transaction_reports_plotly
         _df_tx = parser.df_main if getattr(parser, 'df_main', None) is not None and len(parser.df_main) > 0 else df
         _tx_reports = _aplicar_overrides_tx(
-            await build_transaction_reports_plotly(db, execution, _df_tx, statistics),
+            await build_transaction_reports_plotly(db, execution, _df_tx, statistics,
+                                                   seleccion=seleccion_tx),   # R1 (R-D5)
             overrides)   # ETAPA 7 (D59)
 
         execution_data = {
@@ -1034,6 +1036,57 @@ class SectionInput(BaseModel):
     type: str
     source_id: str
     source_name: str
+    # R1 (R-D5/R-D6): que entra de la seccion. {"tx": [...]} en carga/estres,
+    # {"adjuntos": [ids]} en monitoreo/evidencias. None/ausente/{} = todo, que es
+    # lo de siempre y lo que traen los integrados anteriores a R1.
+    seleccion: Optional[dict] = None
+
+
+def _sel(section, clave: str):
+    """R1: la lista elegida para `clave`, o None si se quiere todo."""
+    sel = getattr(section, "seleccion", None)
+    if not isinstance(sel, dict):
+        return None
+    v = sel.get(clave)
+    return [str(x) for x in v] if isinstance(v, list) else None
+
+
+async def _tx_con_informe(db: AsyncSession, execution_id) -> list:
+    """Las transacciones con texto en `transaction_chart_analyses`: las unicas que
+    los constructores del PDF y del HTML saben pintar."""
+    from app.db.models.transaction_chart_analysis import (
+        TransactionChartAnalysis, SECTIONS_GENERADAS)
+    filas = (await db.execute(
+        select(TransactionChartAnalysis.label, TransactionChartAnalysis.ai_analysis)
+        .where(TransactionChartAnalysis.execution_id == execution_id,
+               TransactionChartAnalysis.section.in_(SECTIONS_GENERADAS))
+    )).all()
+    return sorted({lb for lb, texto in filas if texto})
+
+
+async def _tx_del_documento(db: AsyncSession, section, execution_id) -> list:
+    """R1: las transacciones con informe propio que el documento va a llevar —las
+    elegidas, o todas las que tienen informe si no se eligio nada—."""
+    elegidas = await _seleccion_tx(db, section, execution_id)
+    return elegidas if elegidas is not None else await _tx_con_informe(db, execution_id)
+
+
+async def _seleccion_tx(db: AsyncSession, section, execution_id):
+    """R1: la seleccion de transacciones, TOLERANTE.
+
+    `seleccion.filtrar_transacciones` responde 400 ante una transaccion sin
+    informe, y en el individual eso es lo correcto (D51): se pidio en ese mismo
+    momento. En el integrado la seleccion esta GUARDADA y puede haberse quedado
+    vieja; un 400 tumbaria el documento entero. Aqui se descarta y se anota.
+    """
+    pedidas = _sel(section, "tx")
+    if pedidas is None:
+        return None
+    conocidas = set(await _tx_con_informe(db, execution_id))
+    fuera = [t for t in pedidas if t not in conocidas]
+    if fuera:
+        logger.info(f"R1: seleccion de {execution_id} sin informe, se omite: {fuera}")
+    return [t for t in pedidas if t in conocidas]
 
 
 class IntegratedReportRequest(BaseModel):
@@ -1224,22 +1277,38 @@ def _merge_overrides(prev_sections, new_sections):
         for s in (prev_sections or [])
         if isinstance(s, dict) and s.get("overrides")
     }
-    if not prev:
+    # R1 (R-D6): la seleccion es de CADA seccion —monitoreo y carga comparten
+    # ejecucion—, asi que va por (tipo, ejecucion). Una peticion que no la trae
+    # (None) conserva la guardada; `{}` es una decision: todo.
+    prev_sel = {
+        (s.get("type"), s.get("source_id")): s.get("seleccion")
+        for s in (prev_sections or [])
+        if isinstance(s, dict) and s.get("seleccion") is not None
+    }
+    if not prev and not prev_sel:
         return new_sections
     for s in new_sections:
         ov = prev.get(s.get("source_id"))
         if ov and not s.get("overrides"):
             s["overrides"] = ov
+        clave = (s.get("type"), s.get("source_id"))
+        if s.get("seleccion") is None and clave in prev_sel:
+            s["seleccion"] = prev_sel[clave]
     return new_sections
 
 
-async def _get_attachments(db: AsyncSession, execution_id: uuid.UUID, att_type: str):
+async def _get_attachments(db: AsyncSession, execution_id: uuid.UUID, att_type: str, ids=None):
+    """R1 (R-D5): `ids` es la seleccion de la seccion; None = todas."""
     result = await db.execute(
         select(ExecutionAttachment)
         .where(ExecutionAttachment.execution_id == execution_id, ExecutionAttachment.attachment_type == att_type)
         .order_by(ExecutionAttachment.sort_order)
     )
-    return result.scalars().all()
+    atts = result.scalars().all()
+    if ids is None:
+        return atts
+    elegidas = set(ids)
+    return [a for a in atts if str(a.id) in elegidas]
 
 
 def _img_to_b64(filepath: str, file_type: str) -> str:
@@ -1578,7 +1647,7 @@ async def generate_integrated_report(
                 all_conclusions.append(f"[{section.source_name}]: {execution.ai_conclusions}")
 
         elif section.type == "monitoring":
-            atts = await _get_attachments(db, exec_id, "monitoring")
+            atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("monitoring_ai_analysis", "")
             # Monitoring section: show images + per-image AI. Global analysis goes to conclusions only.
@@ -1591,7 +1660,7 @@ async def generate_integrated_report(
                 all_conclusions.append(f"[Analisis Global Monitoreo — {section.source_name}]: {global_ai}")
 
         elif section.type == "evidence":
-            atts = await _get_attachments(db, exec_id, "evidence")
+            atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("evidence_ai_analysis", "")
             # Evidence section: show images + per-image AI. Global analysis goes to conclusions only.
@@ -1728,7 +1797,9 @@ async def export_integrated_pdf(
                 'test_type': (execution.test_type or 'load').upper(),
                 'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
-            full_html = await _generate_full_execution_pdf_html(execution, db, overrides_by_exec.get(section.source_id))
+            full_html = await _generate_full_execution_pdf_html(
+                execution, db, overrides_by_exec.get(section.source_id),
+                seleccion_tx=await _seleccion_tx(db, section, exec_id))   # R1 (R-D5)
             # HF10g: extract <style> ONCE from first individual report
             if not extracted_style:
                 extracted_style = _extract_style_from_individual_report(full_html)
@@ -1741,14 +1812,16 @@ async def export_integrated_pdf(
             html_parts.append(f'<div style="page-break-before:always">{body_content}</div>')
 
         elif section.type == "monitoring":
-            atts = await _get_attachments(db, exec_id, "monitoring")
+            atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(_build_att_html(section, atts, "", "Métricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
+            if atts:   # R1: una seccion con todas sus capturas quitadas no sale
+                html_parts.append(_build_att_html(section, atts, "", "Métricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
 
         elif section.type == "evidence":
-            atts = await _get_attachments(db, exec_id, "evidence")
+            atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(_build_att_html(section, atts, "", "Evidencias y Hallazgos", for_pdf=True, image_overrides=_imgs))
+            if atts:
+                html_parts.append(_build_att_html(section, atts, "", "Evidencias y Hallazgos", for_pdf=True, image_overrides=_imgs))
 
     # B2: integrated PDF header removed. PDF starts directly with the first
     # execution's compact cover (from build_pdf_html via _generate_full_execution_pdf_html).
@@ -1830,16 +1903,20 @@ async def export_integrated_html(
                 'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
             # HF10h: Use Plotly interactive fragment with unique prefix per execution
-            fragment = await _generate_full_execution_plotly_html(execution, db, prefix=f"sec{idx}_", overrides=overrides_by_exec.get(section.source_id))
+            fragment = await _generate_full_execution_plotly_html(
+                execution, db, prefix=f"sec{idx}_", overrides=overrides_by_exec.get(section.source_id),
+                seleccion_tx=await _seleccion_tx(db, section, exec_id))   # R1 (R-D5)
             html_parts.append(f'<div style="border-top:3px solid #f5a623;margin-top:40px;padding-top:20px">{fragment}</div>')
         elif section.type == "monitoring":
-            atts = await _get_attachments(db, exec_id, "monitoring")
+            atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Métricas de Monitoreo", image_overrides=_imgs)}</div>')
+            if atts:   # R1: una seccion con todas sus capturas quitadas no sale
+                html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Métricas de Monitoreo", image_overrides=_imgs)}</div>')
         elif section.type == "evidence":
-            atts = await _get_attachments(db, exec_id, "evidence")
+            atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
-            html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Evidencias y Hallazgos", image_overrides=_imgs)}</div>')
+            if atts:
+                html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Evidencias y Hallazgos", image_overrides=_imgs)}</div>')
 
     # HF10h BLOQUE A.1: Integrated header removed. Report starts directly with
     # the yellow separator + individual execution cover (restored in _build_plotly_html_isolated).
@@ -1973,10 +2050,14 @@ async def generate_consolidated_analysis(
                 # F5.2: los analisis de seccion (resumen, errores y graficas) tambien
                 # alimentan el consolidado, con los overrides ya aplicados.
                 "section_analyses": _section_analyses_for_prompt(execution, _ov),
+                # R1 (Fredy, pregunta 3): que transacciones detalla el documento,
+                # para que las conclusiones no prometan un detalle que no esta.
+                "tx_detalladas": await _tx_del_documento(db, section, exec_id),
             })
 
         elif section.type == "monitoring":
-            atts = await _get_attachments(db, exec_id, "monitoring")
+            # R1 (R-D7): lo que no entra en el documento no entra en sus conclusiones
+            atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("monitoring_ai_analysis", "")
             # Determine which test_type this execution belongs to
@@ -1984,9 +2065,14 @@ async def generate_consolidated_analysis(
             if tt not in executions_by_type:
                 executions_by_type[tt] = []
             monitoring_texts = []
+            # R1.4: el texto EDITADO de la captura, el mismo que ya imprimen el PDF y
+            # el HTML. Antes entraba el original y el consolidado podia contradecir
+            # al documento en el que va.
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images") or {}
             for att in atts:
-                if att.ai_analysis:
-                    monitoring_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {att.ai_analysis}")
+                _texto = _imgs.get(str(att.id)) or att.ai_analysis
+                if _texto:
+                    monitoring_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {_texto}")
             if global_ai:
                 monitoring_texts.append(f"[Global]: {global_ai}")
             if monitoring_texts:
@@ -1999,16 +2085,21 @@ async def generate_consolidated_analysis(
                     executions_by_type[tt].append({"monitoring_analysis": "\n".join(monitoring_texts)})
 
         elif section.type == "evidence":
-            atts = await _get_attachments(db, exec_id, "evidence")
+            atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1 (R-D7)
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("evidence_ai_analysis", "")
             tt = "stress" if (execution.test_type or "").lower() in ("stress", "spike") else "load"
             if tt not in executions_by_type:
                 executions_by_type[tt] = []
             evidence_texts = []
+            # R1.4: el texto EDITADO de la captura, el mismo que ya imprimen el PDF y
+            # el HTML. Antes entraba el original y el consolidado podia contradecir
+            # al documento en el que va.
+            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images") or {}
             for att in atts:
-                if att.ai_analysis:
-                    evidence_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {att.ai_analysis}")
+                _texto = _imgs.get(str(att.id)) or att.ai_analysis
+                if _texto:
+                    evidence_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {_texto}")
             if global_ai:
                 evidence_texts.append(f"[Global]: {global_ai}")
             if evidence_texts:
@@ -2043,6 +2134,11 @@ async def generate_consolidated_analysis(
         all_monitoring = "\n".join(e.get("monitoring_analysis", "") for e in entries if e.get("monitoring_analysis"))
         all_evidence = "\n".join(e.get("evidence_analysis", "") for e in entries if e.get("evidence_analysis"))
         all_sections = "\n".join(e.get("section_analyses", "") for e in entries if e.get("section_analyses"))   # F5.2
+        # R1: una linea por ejecucion con lo que el lector encontrara detallado.
+        tx_documento = "\n".join(
+            f"- {e['name']}: " + (", ".join(e["tx_detalladas"]) if e["tx_detalladas"]
+                                  else "ninguna (solo el informe general)")
+            for e in entries if "tx_detalladas" in e)
 
         # ETAPA 3 (D30/D34): el consolidado SI dictamina; el estilo lo pone
         # `_generate` una sola vez.
@@ -2066,6 +2162,11 @@ Analisis de las secciones del reporte (los marcados como CORREGIDO POR EL USUARI
 son correcciones suyas: tienen prioridad sobre cualquier otro texto y sobre tu
 propio criterio; los demas van recortados y solo dan contexto):
 {all_sections or 'Sin analisis de secciones disponible.'}
+
+Informes por transaccion que incluye el documento (el lector solo encontrara
+detalle propio de estas; de las demas, solo su fila en la tabla resumen general.
+No remitas a un informe por transaccion que no este en esta lista):
+{tx_documento or 'Ninguno.'}
 
 Analisis del monitoreo de infraestructura:
 {all_monitoring or 'Sin analisis de monitoreo disponible.'}
@@ -2129,6 +2230,10 @@ INSTRUCCIONES:
         # Update existing
         existing = await db.get(IntegratedReport, uuid.UUID(request.report_id))
         if existing:
+            # R1: `db.get` devuelve el objeto que `_load_section_overrides` cargo
+            # ANTES de llamar a la IA. Lo que se guardo mientras la IA redactaba no
+            # estaria en el y se pisaria. Se relee de la base.
+            await db.refresh(existing)
             # F4: idem — el consolidado tampoco puede llevarse los overrides
             existing.sections = _merge_overrides(existing.sections, sections_json)
             existing.consolidated_analysis = consolidated
@@ -2181,9 +2286,50 @@ async def list_integrated_reports(
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             "has_consolidated": bool(r.consolidated_analysis and len(r.consolidated_analysis) > 0),
             "section_count": len(r.sections or []),
+            **_resumen_trabajo(r),   # R1.3
         }
         for r in reports
     ]
+
+
+_ETIQUETA_TIPO = {"load_test": "Carga", "stress_test": "Estrés", "monitoring": "Monitoreo", "evidence": "Evidencias"}
+
+
+def _resumen_trabajo(report) -> dict:
+    """R1.3 (R-D6 + el apunte de Fredy): lo que el historial necesita para saber,
+    sin abrir el informe, si tiene trabajo del usuario encima.
+
+    - `ediciones_seccion`: textos de seccion editados y GUARDADOS. Los overrides
+      de una ejecucion viajan en cada una de sus secciones (carga y monitoreo
+      comparten ejecucion), asi que se cuentan una vez por (ejecucion, clave).
+    - `consolidado_editado`: si alguna caja del consolidado se corrigio a mano.
+    - `seleccion`: las secciones con contenido ELEGIDO (las de «todo» no salen),
+      con cuantos elementos se eligieron. Sin totales: darlos costaria consultar
+      cada ejecucion por cada informe de la lista.
+    Todo sale del propio registro: ni una consulta mas por informe.
+    """
+    editadas = set()
+    seleccion = []
+    for s in report.sections or []:
+        if not isinstance(s, dict):
+            continue
+        ov = s.get("overrides") or {}
+        for tipo in ("analysis", "images"):
+            for clave, texto in (ov.get(tipo) or {}).items():
+                if texto is not None:
+                    editadas.add((s.get("source_id"), tipo, clave))
+        sel = s.get("seleccion") or {}
+        clave = "tx" if s.get("type") in ("load_test", "stress_test") else "adjuntos"
+        if isinstance(sel.get(clave), list):
+            seleccion.append({
+                "seccion": s.get("source_name") or _ETIQUETA_TIPO.get(s.get("type"), s.get("type")),
+                "tipo": s.get("type"),
+                "elegidas": len(sel[clave]),
+            })
+    consolidado_editado = any(
+        isinstance(d, dict) and d.get("edited") for d in (report.consolidated_analysis or {}).values())
+    return {"ediciones_seccion": len(editadas), "consolidado_editado": consolidado_editado,
+            "seleccion": seleccion}
 
 
 @router.get("/integrated-reports/{report_id}")

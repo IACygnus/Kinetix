@@ -18,7 +18,14 @@ import {
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-type SortKey = 'name' | 'created_at' | 'updated_at' | 'section_count';
+type SortKey = 'name' | 'created_at' | 'updated_at' | 'section_count' | 'ediciones';
+
+// R1.3: cuanto trabajo del usuario lleva guardado un informe
+const trabajo = (r: IntegratedReportSummary) => (r.ediciones_seccion || 0) + (r.consolidado_editado ? 1 : 0);
+const nombreElemento = (tipo: string, n: number) =>
+  tipo === 'load_test' || tipo === 'stress_test'
+    ? (n === 0 ? 'solo el informe general' : `${n} ${n === 1 ? 'transacción' : 'transacciones'}`)
+    : (n === 0 ? 'ninguna captura' : `${n} ${n === 1 ? 'captura' : 'capturas'}`);
 type SortDir = 'asc' | 'desc';
 
 export default function IntegratedReportsHistory() {
@@ -33,7 +40,7 @@ export default function IntegratedReportsHistory() {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'consolidated' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'consolidated' | 'draft' | 'editados'>('all');
 
   // Ordenamiento
   const [sortKey, setSortKey] = useState<SortKey>('updated_at');
@@ -83,7 +90,9 @@ export default function IntegratedReportsHistory() {
       result = result.filter((r) => new Date(r.updated_at).getTime() < toTs);
     }
 
-    if (statusFilter !== 'all') {
+    if (statusFilter === 'editados') {
+      result = result.filter((r) => trabajo(r) > 0);   // R1.3
+    } else if (statusFilter !== 'all') {
       result = result.filter((r) =>
         statusFilter === 'consolidated' ? r.has_consolidated : !r.has_consolidated
       );
@@ -95,6 +104,8 @@ export default function IntegratedReportsHistory() {
         cmp = a.name.localeCompare(b.name);
       } else if (sortKey === 'section_count') {
         cmp = a.section_count - b.section_count;
+      } else if (sortKey === 'ediciones') {
+        cmp = trabajo(a) - trabajo(b);
       } else {
         cmp = new Date(a[sortKey]).getTime() - new Date(b[sortKey]).getTime();
       }
@@ -236,6 +247,7 @@ export default function IntegratedReportsHistory() {
               <option value="all">Todos</option>
               <option value="consolidated">Consolidados</option>
               <option value="draft">Sin consolidar</option>
+              <option value="editados">Con ediciones guardadas</option>
             </select>
             <button
               onClick={clearFilters}
@@ -289,6 +301,13 @@ export default function IntegratedReportsHistory() {
                   Secciones {sortKey === 'section_count' && (sortDir === 'asc' ? '↑' : '↓')}
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
+                <th
+                  className="text-left px-4 py-3 font-medium text-gray-700 cursor-pointer hover:bg-gray-100"
+                  onClick={() => toggleSort('ediciones')}
+                >
+                  Trabajo guardado {sortKey === 'ediciones' && (sortDir === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Contenido</th>
                 <th
                   className="text-left px-4 py-3 font-medium text-gray-700 cursor-pointer hover:bg-gray-100"
                   onClick={() => toggleSort('created_at')}
@@ -351,6 +370,34 @@ export default function IntegratedReportsHistory() {
                         Borrador
                       </span>
                     )}
+                  </td>
+                  {/* R1.3: ¿tiene trabajo mio encima? — lo primero que hay que poder ver */}
+                  <td className="px-4 py-3" data-testid="trabajo-guardado">
+                    {trabajo(report) === 0 ? (
+                      <span className="text-xs text-gray-400">Sin ediciones</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {(report.ediciones_seccion || 0) > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
+                            <Pencil className="w-3 h-3" />
+                            {report.ediciones_seccion} {report.ediciones_seccion === 1 ? 'texto editado' : 'textos editados'}
+                          </span>
+                        )}
+                        {report.consolidado_editado && (
+                          <span className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-800 text-xs rounded-full border border-amber-200">
+                            consolidado corregido
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-600" data-testid="contenido-elegido"
+                    title={(report.seleccion || []).map((x) => `${x.seccion}: ${nombreElemento(x.tipo, x.elegidas)}`).join(' · ')}>
+                    {(report.seleccion || []).length === 0
+                      ? 'Todo'
+                      : (report.seleccion || []).map((x) => (
+                          <div key={x.seccion + x.tipo}>{x.seccion}: {nombreElemento(x.tipo, x.elegidas)}</div>
+                        ))}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{formatDate(report.created_at)}</td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{formatDate(report.updated_at)}</td>

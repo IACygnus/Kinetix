@@ -30,6 +30,7 @@ interface DashboardProps {
   // F4: texto editado guardado en el informe integrado. Se aplica encima de lo
   // que trae la DB. El reporte individual no la pasa y no se ve afectado.
   analysisOverrides?: Record<string, string>;
+  soloTransacciones?: string[] | null;   // R1 (R-D5): selector del integrado
 }
 
 // GRAF1-B: sufijo de la serie de maximos (solo Response Times por Transaccion)
@@ -76,7 +77,7 @@ const EditableTextArea = memo(function EditableTextArea({
   );
 });
 
-export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false, onAnalysisEdit, analysisOverrides }: DashboardProps) {
+export default function Dashboard({ executionId, onLogout: _onLogout, onBack, embedded = false, onAnalysisEdit, analysisOverrides, soloTransacciones }: DashboardProps) {
   const [execution, setExecution] = useState<any>(null);
   const [charts, setCharts] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -942,6 +943,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           capas={capas}
           onAnalysisEdit={embedded ? onAnalysisEdit : undefined}
           analysisOverrides={embedded ? analysisOverrides : undefined}
+          soloTransacciones={embedded ? soloTransacciones : undefined}
         />
 
         {/* CONCLUSIONES Y RECOMENDACIONES — hidden when embedded in integrated report */}

@@ -83,6 +83,15 @@ def _abrir(page):
     page.wait_for_timeout(5000)
 
 
+def _esperar_guardado(page):
+    """R1: la barra solo dice «Guardado» cuando el servidor lo confirmo, asi que se
+    espera a ESO y no a un tiempo fijo. Los 6 s de antes no bastaban: el PATCH hace
+    cola detras de las peticiones de graficas por transaccion, que parsean el JTL."""
+    page.wait_for_function(
+        "() => (document.querySelector('[data-testid=estado-guardado]')?.textContent || '').startsWith('Guardado')",
+        timeout=90000)
+
+
 def _caja(page):
     return page.locator("h3", has_text=GRAFICA).first.locator("xpath=following::textarea[1]")
 
@@ -90,7 +99,12 @@ def _caja(page):
 def main():
     marca = f"[c2-integrado {int(time.time())}]"
     with sync_playwright() as p:
-        nav = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        args = ["--no-sandbox", "--disable-dev-shm-usage"]
+        # R1: contra la base de PRUEBAS (regla 34), el navegador resuelve el 8001
+        # al puerto de pruebas. Sin interceptar: ver r1_integrado.py.
+        if os.environ.get("KX_API_PUERTO"):
+            args.append(f"--host-resolver-rules=MAP localhost:8001 127.0.0.1:{os.environ['KX_API_PUERTO']}")
+        nav = p.chromium.launch(args=args)
         ctx = nav.new_context(viewport={"width": 1600, "height": 1200},
                               storage_state=SESION if os.path.exists(SESION) else None)
         page = ctx.new_page()
@@ -123,7 +137,7 @@ def main():
             caja.click()
             caja.fill(nuevo)
             caja.blur()
-            page.wait_for_timeout(ESPERA_MS)
+            _esperar_guardado(page)
 
             rep2 = _informe(page)
             comprobar(marca in (_override(rep2, exec_id) or ""),
@@ -140,7 +154,7 @@ def main():
             caja.click()
             caja.fill(original_ov or original_exec)
             caja.blur()
-            page.wait_for_timeout(ESPERA_MS)
+            _esperar_guardado(page)
             fin_ov = _override(_informe(page), exec_id) or ""
             comprobar(marca not in fin_ov, "el texto del integrado queda sin la marca")
             comprobar(_campo_ejecucion(page, exec_id) == original_exec,

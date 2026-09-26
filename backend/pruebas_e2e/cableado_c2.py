@@ -84,7 +84,12 @@ def _escribir(caja, texto):
 def main():
     marca = f"[cableado {int(time.time())}]"
     with sync_playwright() as p:
-        nav = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        args = ["--no-sandbox", "--disable-dev-shm-usage"]
+        # R1: contra la base de PRUEBAS (regla 34), el navegador resuelve el 8001
+        # al puerto de pruebas. Sin interceptar: ver r1_integrado.py.
+        if os.environ.get("KX_API_PUERTO"):
+            args.append(f"--host-resolver-rules=MAP localhost:8001 127.0.0.1:{os.environ['KX_API_PUERTO']}")
+        nav = p.chromium.launch(args=args)
         ctx = nav.new_context(viewport={"width": 1600, "height": 1200},
                               storage_state=SESION if os.path.exists(SESION) else None)
         page = ctx.new_page()

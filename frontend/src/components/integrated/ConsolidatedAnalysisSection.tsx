@@ -13,7 +13,9 @@ interface ConsolidatedData {
 
 interface Props {
   consolidatedAnalysis: Record<string, ConsolidatedData>;
-  sections: Array<{ type: string; source_id: string; source_name: string }>;
+  // R1 (R-D7): la seleccion de cada seccion viaja al consolidado: lo que no entra
+  // en el documento no entra en sus conclusiones.
+  sections: Array<{ type: string; source_id: string; source_name: string; seleccion?: Record<string, any> }>;
   onGenerated: (data: Record<string, ConsolidatedData>) => void;
   onEdit: (testType: string, field: 'conclusions' | 'recommendations', value: string) => void;
   // F3: notifica cada tecla al padre para el autosave con debounce. Opcional:
@@ -63,7 +65,7 @@ export default function ConsolidatedAnalysisSection({
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
-          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.source_id, source_name: s.source_name })),
+          sections: sections.map((s, idx) => ({ order: idx, type: s.type, source_id: s.source_id, source_name: s.source_name, seleccion: s.seleccion || {} })),
         }),
       });
       if (res.ok) {

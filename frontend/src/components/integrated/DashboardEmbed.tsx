@@ -11,9 +11,11 @@ interface DashboardEmbedProps {
   onAnalysisEdit?: (executionId: string, field: string, value: string) => void;
   // F4: texto ya guardado en el informe integrado
   analysisOverrides?: Record<string, string>;
+  // R1 (R-D5): transacciones elegidas en el selector (null = todas)
+  soloTransacciones?: string[] | null;
 }
 
-export default function DashboardEmbed({ executionId, onAnalysisEdit, analysisOverrides }: DashboardEmbedProps) {
+export default function DashboardEmbed({ executionId, onAnalysisEdit, analysisOverrides, soloTransacciones }: DashboardEmbedProps) {
   return (
     <div className="border-b-2 pb-4 mb-4" style={{ borderColor: '#f5a623' }}>
       <Dashboard
@@ -23,6 +25,7 @@ export default function DashboardEmbed({ executionId, onAnalysisEdit, analysisOv
         embedded={true}
         onAnalysisEdit={onAnalysisEdit}
         analysisOverrides={analysisOverrides}
+        soloTransacciones={soloTransacciones}
       />
     </div>
   );
