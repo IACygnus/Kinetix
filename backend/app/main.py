@@ -41,6 +41,8 @@ from app.db.models.monitoring_session import (   # noqa: F401
 )
 # F1 (aviso de respaldo): de donde salio cada texto de un informe. Tabla nueva.
 from app.db.models.ai_origen import AISectionOrigin   # noqa: F401
+# ETAPA O2e (O-D49): los tokens de ingesta del agente. Tabla nueva.
+from app.db.models.ingest_token import IngestToken   # noqa: F401
 from app.core.security import get_password_hash
 
 # Configurar logging
@@ -86,6 +88,12 @@ async def csrf_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
         # Skip CSRF for login (no cookie yet) and OpenAPI docs
         if request.url.path.endswith("/auth/login") or request.url.path in ("/docs", "/redoc", "/openapi.json"):
+            return await call_next(request)
+        # ETAPA O2e: el agente escribe con su token de ingesta, sin cookie. La
+        # exencion es por la ruta EXACTA y solo para POST, nunca por prefijo:
+        # cualquier otra ruta o metodo de /api/v1/ingesta/ sigue pidiendo CSRF
+        # (lo comprueba o2e2b_ingesta.py).
+        if request.method == "POST" and request.url.path == "/api/v1/ingesta/api/v2/write":
             return await call_next(request)
         cookie_token = request.cookies.get("csrf_token")
         header_token = request.headers.get("x-csrf-token")

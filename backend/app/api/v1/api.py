@@ -139,3 +139,9 @@ api_router.include_router(
 # son la misma seccion de la pantalla.
 api_router.include_router(
     sesiones.router, prefix="/observabilidad", tags=["Observabilidad — Sesiones"])
+
+# ETAPA O2e: la ingesta del agente. Cuelga de /ingesta, y no de
+# /observabilidad, porque su ruta de escritura es la unica sin CSRF (main.py) y
+# tiene que distinguirse de un vistazo de las de la pantalla.
+from app.api.v1.endpoints import ingesta
+api_router.include_router(ingesta.router, prefix="/ingesta", tags=["Observabilidad — Ingesta"])
