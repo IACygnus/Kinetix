@@ -616,7 +616,7 @@ export default function IntegratedReportPage() {
           key={s.id}
           executionId={s.sourceId}
           attachmentType={s.type === 'monitoring' ? 'monitoring' : 'evidence'}
-          sectionTitle={s.type === 'monitoring' ? 'Metricas de Monitoreo' : 'Evidencias y Hallazgos'}
+          sectionTitle={s.type === 'monitoring' ? 'Capturas de infraestructura' : 'Evidencias y Hallazgos'}
           onImageAnalysisEdit={(attId, value) => handleSectionImageEdit(s.sourceId, attId, value)}
           imageOverrides={sectionOverrides[s.sourceId]?.images}
           soloAdjuntos={s.seleccion?.adjuntos}

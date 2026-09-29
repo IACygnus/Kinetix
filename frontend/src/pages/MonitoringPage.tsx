@@ -165,7 +165,7 @@ export default function MonitoringPage() {
     <div className="w-full p-6">
       <div className="flex items-center gap-3 mb-2">
         <Cpu className="w-8 h-8 text-[#f5a623]" />
-        <h1 className="text-4xl font-bold text-gray-800">Metricas de Monitoreo</h1>
+        <h1 className="text-4xl font-bold text-gray-800">Capturas de infraestructura</h1>
       </div>
       <p className="text-lg text-gray-500 mb-6">
         Adjunte capturas de dashboards APM, graficas de infraestructura o archivos CSV. Genere analisis AI por imagen.
