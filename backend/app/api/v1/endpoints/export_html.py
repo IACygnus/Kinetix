@@ -27,6 +27,7 @@ from app.services.export.high_cardinality_strategy import apply_top_n_aggregatio
 from app.services.export.report_generator import MAX_SERIES_SUFFIX   # GRAF1-C
 from app.services.export.report_generator import TRANSACTION_CHARTS   # N4.8/N4.9
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
+from app.services.export.origen_marca import con_marca   # F1
 # ETAPA 6 (D50/D51): mismo lector de parametros que el PDF — una sola definicion
 # de que significa `?tx=` para las dos salidas individuales.
 from app.services.export.seleccion import (
@@ -867,6 +868,7 @@ async def export_html(
         _now = datetime.now(ZoneInfo("America/Bogota"))
         filename = f"{client_part}_{project_part}_{_now.strftime('%Y-%m-%d')}_{_now.strftime('%H%M')}.html"
 
+        html_content = await con_marca(db, execution, html_content)   # F1: marca invisible
         return HTMLResponse(
             content=html_content,
             headers={'Content-Disposition': f'attachment; filename="{filename}"'},

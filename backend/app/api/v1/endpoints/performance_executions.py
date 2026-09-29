@@ -297,9 +297,20 @@ async def analyze_execution_with_ai(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en pipeline IA: {e}")
 
+    origenes_ia = getattr(test_execution, "_origenes_ia", None) or {}
     db.add(test_execution)
     await db.commit()
     await db.refresh(test_execution)
+    # F1 (aviso de respaldo): de donde salio cada texto. Nunca tumba la respuesta.
+    try:
+        from app.services.ai.origen import guardar_general
+        await guardar_general(db, test_execution.id, origenes_ia)
+        await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"F1: no se pudo guardar el origen de los textos de {test_execution.id}: {e}")
+        await db.rollback()
 
     return {
         "test_execution_id": str(test_execution.id),

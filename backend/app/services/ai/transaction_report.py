@@ -49,6 +49,8 @@ from app.services.ai.criterios import bloque_de_transaccion
 # ETAPA R2: la serie resumida (R-D10) y la lectura base (R-D17).
 from app.services.ai import resumen_serie
 from app.services.ai.gemini import bloque_lectura_base
+# F1 (aviso de respaldo): de donde sale cada texto, y por que.
+from app.services.ai import origen
 
 logger = logging.getLogger(__name__)
 
@@ -211,9 +213,13 @@ del informe, no en el bloque de una transaccion."""
     return prompts
 
 
-async def _upsert(db, execution_id, label: str, section: str, texto: Optional[str], orden: int) -> None:
+async def _upsert(db, execution_id, label: str, section: str, texto: Optional[str], orden: int,
+                  origen_reg: Optional[Dict[str, Any]] = None) -> None:
     """Guarda una seccion. UPDATE si ya existia (UNIQUE de N4.5), INSERT si no.
-    Commit por seccion: es lo que hace legible el progreso desde la base."""
+    Commit por seccion: es lo que hace legible el progreso desde la base.
+
+    F1: `origen_reg` es de donde salio el texto (o por que no lo hay). Va en el
+    MISMO commit que el texto: no puede haber texto sin su origen."""
     row = (await db.execute(
         select(TransactionChartAnalysis).where(
             TransactionChartAnalysis.execution_id == execution_id,
@@ -234,6 +240,8 @@ async def _upsert(db, execution_id, label: str, section: str, texto: Optional[st
         # Regenerar produce texto de IA nuevo: la marca de edicion manual se cae.
         row.is_edited = False
         row.ai_analysis_updated_at = None
+    if origen_reg is not None:
+        await origen.guardar(db, execution_id, label, section, origen_reg)
     await db.commit()
 
 
@@ -276,9 +284,12 @@ async def generate_transaction_report(
         prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria,
                                         df_tx, lectura_base)
 
+    fallo_sin_ia: Dict[str, str] = {}   # F1: por que no hay analizador, si no lo hay
     if analyzer is None:
         try:
             conf = await load_ai_config_from_db(db)
+            if conf.get("limit_reached"):
+                raise RuntimeError(f"AI {conf['limit_reached']} limit reached")
             analyzer = get_gemini_analyzer(
                 provider=conf.get("provider", ""), model_name=conf.get("model_name", ""),
                 api_key=conf.get("api_key", ""),
@@ -287,10 +298,12 @@ async def generate_transaction_report(
         except Exception as e:
             logger.error(f"N4.6: sin analizador disponible ({e}); las 8 secciones quedan sin texto")
             analyzer = None
+            fallo_sin_ia = origen.fallo_global(str(e))
 
     for section in objetivo:
         orden = SECTIONS.index(section)   # el orden no depende de que se regenere
         texto = None
+        fallo: Dict[str, str] = dict(fallo_sin_ia)
         if analyzer is not None:
             try:
                 # N4.10: `_generate` es SINCRONO. Invocado tal cual desde una
@@ -298,7 +311,7 @@ async def generate_transaction_report(
                 # significa que el backend no atiende nada durante los ~90 s —
                 # incluido el sondeo del progreso, que es justo lo que la
                 # pantalla necesita. Misma adaptacion que hizo F3.1 con _call_ai.
-                texto = await asyncio.to_thread(
+                texto, fallo = await origen.llamar(   # F1: con su buzon de fallo
                     analyzer._generate, prompts[section], section_name=f"txreport_{section}"
                 )
                 if texto:
@@ -312,8 +325,12 @@ async def generate_transaction_report(
             except Exception as e:
                 # Tolerancia por seccion: se registra vacia y el resto sigue.
                 logger.error(f"N4.6: fallo la seccion '{section}' de '{label}': {e}")
+                fallo = fallo or {"tipo": "error", "detalle": str(e)[:400]}
+        # F1: aqui no hay respaldo — una seccion sin IA queda vacia, y se dice por que.
+        reg = origen.registro("ia" if texto else "sin_texto", fallo,
+                              getattr(analyzer, "provider", None), getattr(analyzer, "model_name", None))
         try:
-            await _upsert(db, execution_id, label, section, texto, orden)
+            await _upsert(db, execution_id, label, section, texto, orden, origen_reg=reg)
         except Exception as e:
             logger.error(f"N4.6: no se pudo persistir '{section}' de '{label}': {e}")
             await db.rollback()

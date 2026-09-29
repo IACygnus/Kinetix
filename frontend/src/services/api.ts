@@ -364,6 +364,12 @@ export const clientsAPI = {
 
 // ============ AI CONFIG ============
 export const aiConfigAPI = {
+  /** F2: ¿sirve la IA ahora? Sin generar nada (models.retrieve). Cache de 60 s en el backend. */
+  estado: async (forzar = false) => {
+    const response = await api.get('/ai-config/estado', { params: forzar ? { forzar: true } : {} });
+    return response.data;
+  },
+
   get: async (): Promise<AIConfigInfo> => {
     const response = await api.get('/ai-config');
     return response.data;

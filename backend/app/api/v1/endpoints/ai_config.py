@@ -26,7 +26,7 @@ from app.services.ai.gemini import (   # ETAPA 2 (D13)
 from app.schemas.ai_config import (
     AIConfigRead, AIConfigCreate, AIProviderInfo, AITestResult, LiveModelsResponse,
 )
-from app.core.security import require_role
+from app.core.security import require_role, get_current_active_user   # F1: /estado
 from app.core.config import settings
 from app.db.models.user import User
 
@@ -288,9 +288,34 @@ async def create_or_update_ai_config(
     # Antes solo se cerraba al reiniciar el proceso.
     from app.services.ai.gemini import reset_circuit_breaker
     reset_circuit_breaker()
+    # F1: la comprobacion de /estado se hizo con la clave vieja; no vale.
+    from app.services.ai import estado_ia
+    estado_ia.olvidar()
 
     logger.info(f"AI config updated by {_current_user.username}: provider={config.provider}, model={config.model_name}")
     return _config_to_read(config)
+
+
+@router.get("/estado")
+async def ai_estado(
+    forzar: bool = False,
+    _current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """F1 (aviso de respaldo): ¿sirve la IA ahora mismo? Sin generar nada.
+
+    Lo consulta la pantalla de subida ANTES de subir: si la clave no sirve, se
+    dice ahi y no al final de un informe entero. Para cualquier usuario activo,
+    no solo admin: el que sube el JTL es el que necesita saberlo. No escribe:
+    `load_ai_config_from_db` reinicia contadores en memoria y aqui se descartan.
+    """
+    from app.services.ai import estado_ia
+    from app.services.ai.gemini import load_ai_config_from_db
+    try:
+        conf = await load_ai_config_from_db(db)
+    finally:
+        await db.rollback()
+    return await asyncio.to_thread(estado_ia.comprobar, conf, forzar)
 
 
 @router.get("/models", response_model=list[AIProviderInfo])

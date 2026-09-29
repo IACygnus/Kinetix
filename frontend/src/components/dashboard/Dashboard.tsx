@@ -11,6 +11,7 @@ import ReportBody from './ReportBody';   // ETAPA 2 (D21): el cuerpo del informe
 import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
+import { FranjaRespaldo } from '../common/AvisoRespaldo';   // F2
 import { useChartLayers, capasComoParams } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
 import ExportScopeDialog, { FormatoExport, SeleccionExport } from './ExportScopeDialog';   // ETAPA 6 (D50)
 import {
@@ -620,6 +621,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
           </div>
         </div>
 
+        <FranjaRespaldo executionId={executionId} />{/* F2: arriba, bajo la cabecera */}
         {/* RESUMEN EJECUTIVO — KNX-10: Extended KPI Dashboard */}
         <div className="mb-8">
           <h2 className="text-4xl font-bold text-gray-800 mb-5">Dashboard de KPIs</h2>

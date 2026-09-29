@@ -57,7 +57,8 @@ G.GeminiAnalyzer._generate = _contado
 TRANSACCIONES = {}
 
 
-async def _colector(db, execution_id, label, section, texto, orden):
+async def _colector(db, execution_id, label, section, texto, orden, **kw):
+    # **kw: desde F1, `_upsert` recibe tambien el origen del texto; aqui no se guarda.
     TRANSACCIONES.setdefault(label, {})[section] = texto
 
 

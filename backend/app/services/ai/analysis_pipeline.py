@@ -37,6 +37,8 @@ from app.services.ai.gemini import (
 from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
 # ETAPA R2 (R-D9/R-D10): cada seccion de grafica recibe SU serie, resumida.
 from app.services.ai import resumen_serie
+# F1 (aviso de respaldo): de donde sale cada texto, y por que.
+from app.services.ai import origen
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,9 @@ class AIAnalysisResult:
     ai_conclusions: str = ""
     ai_recommendations: str = ""
     ai_status: Dict[str, Any] = field(default_factory=dict)
+    # F1: columna ai_* -> registro de `origen.registro()`. Lo persiste quien
+    # crea la ejecucion (aqui todavia no hay id).
+    origenes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 async def run_ai_and_verdict(
@@ -105,6 +110,23 @@ async def run_ai_and_verdict(
     ai_analysis_redirects = ""
     ai_conclusions = ""
     ai_recommendations = ""
+
+    summary_df = None   # F1: el veredicto la necesita aunque la IA no llegue a empezar
+
+    # ===== F1: el origen de cada seccion =====
+    origenes: Dict[str, Dict[str, Any]] = {}
+
+    def _anota(columna: str, texto_ia: Optional[str], fallo: Dict[str, str]) -> None:
+        """texto_ia es lo que devolvio la IA ANTES de caer al respaldo."""
+        if texto_ia is None:
+            reg = origen.registro("respaldo", fallo, ai_status.get("provider"), ai_status.get("model"))
+        elif columna == "ai_analysis_errors" and not fallo and not errores_hubo["si"]:
+            reg = origen.registro("fijo", None, ai_status.get("provider"), ai_status.get("model"))
+        else:
+            reg = origen.registro("ia", None, ai_status.get("provider"), ai_status.get("model"))
+        origenes[columna] = reg
+
+    errores_hubo = {"si": False}   # sin errores, esa seccion es una frase fija
 
     # ===== ANALISIS IA (non-fatal) =====
     # If anything here crashes, we still save the execution with empty AI fields.
@@ -173,12 +195,13 @@ async def run_ai_and_verdict(
         # 1. Tabla resumen — es la primera y fija la LECTURA BASE (R-D17): su
         # texto llega a todas las secciones que vienen detras.
         logger.info("[1/10] Analizando tabla resumen...")
-        ai_analysis_summary = await asyncio.to_thread(
+        ai_analysis_summary, _fallo = await origen.llamar(
             gemini.analyze_summary_table,
             summary_df, metrics, test_type=test_type,
             acceptance_criteria=acceptance_criteria_dict, insights=insights,
             test_date=test_date, metric_unit=metric_unit, hechos=hechos,
         )
+        _anota('ai_analysis_summary', ai_analysis_summary, _fallo)   # F1
         if ai_analysis_summary is None:
             logger.info("Using FALLBACK for summary_table")
             ai_analysis_summary = fallback.analyze_summary_table(summary_df, insights)
@@ -211,13 +234,15 @@ async def run_ai_and_verdict(
                                f"al {resumen_serie.momento(row['ultimo'], t0_prueba)}"),
                 })
 
-        ai_analysis_errors = await asyncio.to_thread(
+        errores_hubo["si"] = bool(errors_for_analysis)
+        ai_analysis_errors, _fallo = await origen.llamar(
             gemini.analyze_errors,
             errors_for_analysis, metrics['total_requests'], test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,                      # ETAPA R2 (R-D17)
         )
+        _anota('ai_analysis_errors', ai_analysis_errors, _fallo)   # F1
         if ai_analysis_errors is None:
             logger.info("Using FALLBACK for errors")
             ai_analysis_errors = fallback.analyze_errors(errors_for_analysis, metrics['total_requests'])
@@ -242,7 +267,7 @@ async def run_ai_and_verdict(
                 f"    {percentil_frase(99, row['p99'])}"
             )
         logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
-        ai_analysis_response_times = await asyncio.to_thread(
+        ai_analysis_response_times, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'response_times', _con_serie('response_times', "\n".join(rt_lines)),
             test_type=test_type, insights=insights,
@@ -250,6 +275,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_response_times', ai_analysis_response_times, _fallo)   # F1
         if ai_analysis_response_times is None:
             logger.info("Using FALLBACK for response_times")
             ai_analysis_response_times = fallback.analyze_chart("response_times", stats_summary)
@@ -271,7 +297,7 @@ async def run_ai_and_verdict(
         # los KPI y el prompt de TPS de aqui abajo.
 
         # Latency
-        ai_analysis_latency = await asyncio.to_thread(
+        ai_analysis_latency, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'latency',
             _con_serie('latency',
@@ -284,12 +310,13 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_latency', ai_analysis_latency, _fallo)   # F1
         if ai_analysis_latency is None:
             logger.info("Using FALLBACK for latency")
             ai_analysis_latency = fallback.analyze_chart("latency", stats_summary)
 
         # Error Rate
-        ai_analysis_error_rate = await asyncio.to_thread(
+        ai_analysis_error_rate, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'error_rate',
             _con_serie('error_rate',
@@ -301,6 +328,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_error_rate', ai_analysis_error_rate, _fallo)   # F1
         if ai_analysis_error_rate is None:
             logger.info("Using FALLBACK for error_rate")
             ai_analysis_error_rate = fallback.analyze_chart("error_rate", stats_summary)
@@ -311,7 +339,7 @@ async def run_ai_and_verdict(
             f"HTTP {row['responseCode']}: {num(row['count'])} respuestas"
             for _, row in code_dist.iterrows()
         )
-        ai_analysis_codes_per_second = await asyncio.to_thread(
+        ai_analysis_codes_per_second, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'codes_per_second',
             _con_serie('codes_per_second', f"Codigos de respuesta acumulados de la prueba: {codes_summary}."),
@@ -320,6 +348,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_codes_per_second', ai_analysis_codes_per_second, _fallo)   # F1
         if ai_analysis_codes_per_second is None:
             logger.info("Using FALLBACK for codes_per_second")
             ai_analysis_codes_per_second = fallback.analyze_chart("codes_per_second", stats_summary)
@@ -329,7 +358,7 @@ async def run_ai_and_verdict(
         for _, row in summary_df.iterrows():
             tps_lines.append(f"- {row['label']}: {num(row['rendimiento'], 2)} por segundo")
         logger.info(f"TPS: enviando {len(tps_lines)} transacciones a Gemini")
-        ai_analysis_transactions_per_second = await asyncio.to_thread(
+        ai_analysis_transactions_per_second, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'transactions_per_second',
             _con_serie('transactions_per_second',
@@ -340,12 +369,13 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_transactions_per_second', ai_analysis_transactions_per_second, _fallo)   # F1
         if ai_analysis_transactions_per_second is None:
             logger.info("Using FALLBACK for transactions_per_second")
             ai_analysis_transactions_per_second = fallback.analyze_chart("transactions_per_second", stats_summary)
 
         # Active Threads
-        ai_analysis_active_threads = await asyncio.to_thread(
+        ai_analysis_active_threads, _fallo = await origen.llamar(
             gemini.analyze_chart,
             'active_threads',
             # ETAPA R2 (R-D16): hasta R2 esta seccion no recibia ni un numero
@@ -358,6 +388,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
         )
+        _anota('ai_analysis_active_threads', ai_analysis_active_threads, _fallo)   # F1
         if ai_analysis_active_threads is None:
             logger.info("Using FALLBACK for active_threads")
             ai_analysis_active_threads = fallback.analyze_chart("active_threads", stats_summary)
@@ -368,11 +399,12 @@ async def run_ai_and_verdict(
         redirect_summary = parser.get_redirect_summary_data()
         if redirect_summary is not None and len(redirect_summary) > 0:
             logger.info("[+1 opcional] Analizando redirecciones...")
-            ai_analysis_redirects = await asyncio.to_thread(
+            ai_analysis_redirects, _fallo = await origen.llamar(
                 gemini.analyze_redirects,
                 redirect_summary, metrics, test_type=test_type,
                 test_date=test_date, metric_unit=metric_unit,
             )
+            _anota('ai_analysis_redirects', ai_analysis_redirects, _fallo)   # F1
             if ai_analysis_redirects is None:
                 logger.info("Using FALLBACK for redirects")
                 ai_analysis_redirects = fallback.analyze_redirects(
@@ -383,7 +415,7 @@ async def run_ai_and_verdict(
         # 12. Sintesis: Conclusiones + Recomendaciones
         logger.info("[9-10/10] Sintetizando conclusiones y recomendaciones...")
 
-        ai_conclusions = await asyncio.to_thread(
+        ai_conclusions, _fallo = await origen.llamar(
             gemini.generate_conclusions,
             metrics=metrics,
             ai_analysis_summary=ai_analysis_summary,
@@ -403,11 +435,12 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,
             metric_unit=metric_unit,
         )
+        _anota('ai_conclusions', ai_conclusions, _fallo)   # F1
         if ai_conclusions is None:
             logger.info("Using FALLBACK for conclusions")
             ai_conclusions = fallback.generate_conclusions(stats_summary, acceptance_criteria=acceptance_criteria_dict)
 
-        ai_recommendations = await asyncio.to_thread(
+        ai_recommendations, _fallo = await origen.llamar(
             gemini.generate_recommendations,
             metrics=metrics,
             ai_analysis_summary=ai_analysis_summary,
@@ -427,6 +460,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,
             metric_unit=metric_unit,
         )
+        _anota('ai_recommendations', ai_recommendations, _fallo)   # F1
         if ai_recommendations is None:
             logger.info("Using FALLBACK for recommendations")
             ai_recommendations = fallback.generate_recommendations(stats_summary, acceptance_criteria=acceptance_criteria_dict)
@@ -437,6 +471,19 @@ async def run_ai_and_verdict(
         logger.exception(f"AI analysis failed (non-fatal, execution will be saved without AI): {ai_err}")
         if not ai_status.get("error"):
             ai_status["error"] = str(ai_err)[:200]
+        # F1: las secciones que no llegaron a generarse quedan registradas como
+        # «sin texto», con el motivo del fallo global (limite, sin clave...).
+        fallo = origen.fallo_global(ai_status.get("error") or str(ai_err))
+        textos = {"ai_analysis_summary": ai_analysis_summary, "ai_analysis_errors": ai_analysis_errors,
+                  "ai_analysis_response_times": ai_analysis_response_times,
+                  "ai_analysis_latency": ai_analysis_latency, "ai_analysis_error_rate": ai_analysis_error_rate,
+                  "ai_analysis_codes_per_second": ai_analysis_codes_per_second,
+                  "ai_analysis_transactions_per_second": ai_analysis_transactions_per_second,
+                  "ai_analysis_active_threads": ai_analysis_active_threads,
+                  "ai_conclusions": ai_conclusions, "ai_recommendations": ai_recommendations}
+        for columna, texto in textos.items():
+            if columna not in origenes and not texto:
+                origenes[columna] = origen.registro("sin_texto", fallo, ai_status.get("provider"), ai_status.get("model"))
 
     # B6.3: si se cayo al fallback sin excepcion (respuesta vacia o 400 tragado en
     # _generate), ai_status.error venia null y el problema era invisible. Se rescata
@@ -447,6 +494,22 @@ async def run_ai_and_verdict(
             GeminiAnalyzer._last_error
             or f"{ai_status.get('provider', 'IA')} no devolvio analisis; se uso el analizador de respaldo"
         )
+
+    # F1: hasta aqui `success` era verdad si la PRIMERA seccion salia de la IA,
+    # aunque las otras nueve cayeran al respaldo. Ahora es verdad solo si todas
+    # salieron de la IA, y ai_status lleva la cuenta y el motivo.
+    afectadas = [r for r in origenes.values() if r["origen"] in origen.AFECTADOS]
+    ai_status["secciones"] = len(origenes)
+    ai_status["respaldo"] = len(afectadas)
+    ai_status["success"] = bool(origenes) and not afectadas
+    if afectadas:
+        principal = next((r for r in afectadas if r["motivo_tipo"] != "circuito"), afectadas[0])
+        ai_status["motivo_tipo"] = principal["motivo_tipo"]
+        ai_status["motivo_frase"] = origen.MOTIVOS.get(principal["motivo_tipo"] or "", "")
+        ai_status["motivo"] = principal["motivo"]
+        ai_status["error"] = (f"{len(afectadas)} de {len(origenes)} secciones no las escribió la IA: "
+                              f"{ai_status['motivo_frase']}"
+                              + (f" ({principal['motivo'][:200]})" if principal["motivo"] else ""))
 
     # ===== COMPUTE VERDICT =====
     if acceptance_criteria_dict and not acceptance_criteria_dict.get('raw_text'):
@@ -465,6 +528,11 @@ async def run_ai_and_verdict(
         acceptance_criteria_dict['verdict'] = verdict
         # KNX-09: Per-transaction verdicts
         from app.services.ai.gemini import compute_per_transaction_verdicts
+        # F1: si el bloque de IA cayo ANTES de calcular la tabla (limite de Kinetix,
+        # sin clave), `summary_df` no existia y esto reventaba con UnboundLocalError:
+        # la subida con criterios acababa en 500. El veredicto no depende de la IA.
+        if summary_df is None:
+            summary_df = parser.get_summary_table_data()
         per_txn_result = compute_per_transaction_verdicts(summary_df, acceptance_criteria_dict)
         if per_txn_result:
             acceptance_criteria_dict['verdicts_per_transaction'] = per_txn_result.get('verdicts_per_transaction', {})
@@ -487,6 +555,7 @@ async def run_ai_and_verdict(
         ai_conclusions=ai_conclusions,
         ai_recommendations=ai_recommendations,
         ai_status=ai_status,
+        origenes=origenes,
     )
 
 
@@ -585,5 +654,9 @@ async def run_jtl_analysis_pipeline(
 
     if not getattr(test_execution, 'execution_date', None):
         test_execution.execution_date = _datetime.utcnow()
+
+    # F1: el origen de cada seccion viaja pegado al objeto (no es columna). Lo
+    # guarda quien hace el commit y ya tiene el id: performance_executions.py.
+    test_execution._origenes_ia = result.origenes
 
     return test_execution

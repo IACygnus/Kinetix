@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { X, FileDown, FileCode, Loader2 } from 'lucide-react';
 import api from '../../services/api';
+import { AvisoExportar, useOrigenIA } from '../common/AvisoRespaldo';   // F2
 
 export type FormatoExport = 'pdf' | 'html';
 
@@ -30,6 +31,10 @@ export default function ExportScopeDialog({ executionId, formato, onCancelar, on
   const [soloGeneral, setSoloGeneral] = useState(false);
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
+  // F2 (aviso de respaldo): si hay secciones que no escribio la IA, se dice aqui
+  // y el boton pasa a «Exportar igualmente». `undefined` = todavia leyendo.
+  const origen = useOrigenIA(formato ? executionId : null);
+  const sinIA = !!origen && origen.afectadas > 0;
 
   // Las transacciones que se pueden incluir son las que TIENEN informe: es el
   // mismo origen que usa la pantalla para decidir qué bloques pinta
@@ -61,9 +66,11 @@ export default function ExportScopeDialog({ executionId, formato, onCancelar, on
   // Sin transacciones con informe no hay nada que preguntar: se exporta como
   // siempre. Va en un efecto, no en el render, para no llamar a un setState del
   // padre durante el pintado.
+  // F2: el atajo solo vale si el origen ya se leyo y no hay nada que avisar;
+  // con secciones sin IA el dialogo se abre siempre, aunque no haya transacciones.
   useEffect(() => {
-    if (formato && labels && labels.length === 0 && !error) onExportar(null);
-  }, [formato, labels, error, onExportar]);
+    if (formato && labels && labels.length === 0 && !error && origen !== undefined && !sinIA) onExportar(null);
+  }, [formato, labels, error, onExportar, origen, sinIA]);
 
   if (!formato) return null;
 
@@ -84,7 +91,8 @@ export default function ExportScopeDialog({ executionId, formato, onCancelar, on
     return (
       <Marco onCancelar={onCancelar} titulo={`Exportar ${nombre}`}>
         <p className="text-gray-600 py-4">{error || 'Este informe no tiene transacciones con análisis.'}</p>
-        <Botones nombre={nombre} Icono={Icono} onCancelar={onCancelar} onExportar={() => onExportar(null)} />
+        <AvisoExportar origen={origen} />
+        <Botones nombre={nombre} Icono={Icono} onCancelar={onCancelar} onExportar={() => onExportar(null)} sinIA={sinIA} />
       </Marco>
     );
   }
@@ -147,7 +155,8 @@ export default function ExportScopeDialog({ executionId, formato, onCancelar, on
           </p>
         )}
       </div>
-      <Botones nombre={nombre} Icono={Icono} onCancelar={onCancelar} onExportar={exportar} />
+      <AvisoExportar origen={origen} />
+      <Botones nombre={nombre} Icono={Icono} onCancelar={onCancelar} onExportar={exportar} sinIA={sinIA} />
     </Marco>
   );
 }
@@ -172,11 +181,13 @@ function Marco({ titulo, onCancelar, children }: { titulo: string; onCancelar: (
   );
 }
 
-function Botones({ nombre, Icono, onCancelar, onExportar }: {
+function Botones({ nombre, Icono, onCancelar, onExportar, sinIA = false }: {
   nombre: string;
   Icono: React.ComponentType<{ className?: string }>;
   onCancelar: () => void;
   onExportar: () => void;
+  /** F2: hay secciones que no escribio la IA: el boton lo dice. */
+  sinIA?: boolean;
 }) {
   return (
     <div className="flex justify-end gap-3 pt-5 mt-2 border-t border-gray-200">
@@ -185,8 +196,10 @@ function Botones({ nombre, Icono, onCancelar, onExportar }: {
         Cancelar
       </button>
       <button onClick={onExportar} data-testid="export-confirmar"
-        className="flex items-center gap-2 px-6 py-3 text-lg font-bold rounded-xl bg-sqa-gold text-sqa-navy hover:bg-sqa-gold-light">
-        <Icono className="w-6 h-6" /> Exportar {nombre}
+        className={sinIA
+          ? 'flex items-center gap-2 px-6 py-3 text-lg font-bold rounded-xl border-2 border-red-500 bg-white text-red-700 hover:bg-red-50'
+          : 'flex items-center gap-2 px-6 py-3 text-lg font-bold rounded-xl bg-sqa-gold text-sqa-navy hover:bg-sqa-gold-light'}>
+        <Icono className="w-6 h-6" /> {sinIA ? `Exportar ${nombre} igualmente` : `Exportar ${nombre}`}
       </button>
     </div>
   );

@@ -18,6 +18,7 @@ import { MAX_SUFFIX, CHART_LAYOUT } from '../../config/chartConfig';
 import ReportBody, { ReportBodyCtx } from './ReportBody';
 import SummaryTable, { SummaryRow } from './SummaryTable';
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
+import { RotuloSeccion, SeccionOrigen, AFECTADAS } from '../common/AvisoRespaldo';   // F2
 import { ChartLayers } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
 
 // ETAPA 2 (D20): SEIS secciones, no ocho. Las conclusiones y recomendaciones por
@@ -56,7 +57,9 @@ const MAX_FALLOS_SONDEO = 3;
 
 type Seccion = { section: string; ai_analysis: string | null; is_edited: boolean; generated_at: string | null;
   /** ETAPA 3 (D36): terminos de estilo detectados al leer. Vacio = limpia. */
-  style_warnings?: string[] };
+  style_warnings?: string[];
+  /** F2: de donde salio el texto (F1). Sin el = anterior al registro. */
+  origen?: SeccionOrigen | null };
 type Progreso = { done: number; total: number; persisted: number; pending: string[] };
 type Estado = { series?: any; secciones: Seccion[]; progreso?: Progreso; error?: string };
 
@@ -174,15 +177,15 @@ function BloqueGraficasTx({ label, series, secciones, guardarSeccion, capas }: {
 
   const AnalysisBox = useCallback(({ value, onChange, campo }: { value: string; onChange: (v: string) => void; campo?: string }) => {
     const sec = campo ? SECCION_DE_CAMPO[campo] : undefined;
-    const avisos = sec
-      ? seccionesRef.current.find((s) => s.section === sec)?.style_warnings
-      : undefined;
+    const filaSec = sec ? seccionesRef.current.find((s) => s.section === sec) : undefined;
+    const avisos = filaSec?.style_warnings;
     return (
       <div className="mt-4 bg-white rounded-xl p-5 border-l-4 border-orange-500 border border-gray-200">
         <div className="flex items-center justify-between mb-2">
           <h4 className="font-bold text-orange-600 text-xl">Análisis</h4>
           <span className="text-xs text-gray-400 italic">Click para editar</span>
         </div>
+        <RotuloSeccion origen={filaSec?.origen} />
         <AvisoEstilo terminos={avisos} />
         <TextoEditable valor={value} editado={false} onGuardar={async (v) => onChange(v)} />
       </div>
@@ -652,8 +655,11 @@ export default function TransactionReportSection({ executionId, byLabel = [], du
                           <div>
                             <h4 className="text-xl font-bold text-gray-800 mb-2 border-l-4 border-indigo-500 pl-3">
                               {TITULOS.summary}
-                              {fila?.generated_at && !fila?.is_edited && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
+                              {/* F2: «IA hh:mm» solo si lo escribio la IA; una seccion vacia por
+                                  un fallo tambien tiene fecha de generacion. */}
+                              {fila?.generated_at && !fila?.is_edited && !AFECTADAS.includes(fila?.origen?.origen || '') && <span className="ml-3 text-sm font-normal text-gray-400">IA {hora(fila.generated_at)}</span>}
                             </h4>
+                            <RotuloSeccion origen={fila?.origen} />
                             <AvisoEstilo terminos={fila?.style_warnings} />
                             <TextoEditable
                               valor={fila?.ai_analysis || ''}

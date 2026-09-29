@@ -29,6 +29,7 @@ from app.services.export.report_generator import (
     TRANSACTION_CHARTS,
 )
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
+from app.services.export.origen_marca import con_marca   # F1
 # ETAPA 6 (D50/D51): que transacciones entran en el documento. Vive aparte para
 # que las dos salidas individuales lean el parametro con el mismo codigo.
 from app.services.export.seleccion import (
@@ -541,6 +542,7 @@ async def export_pdf(
             html_content = html_content.replace('</body>', f'{capacity_pdf}</body>')
 
         logger.info("PDF: rendering with WeasyPrint...")
+        html_content = await con_marca(db, execution, html_content)   # F1: marca invisible
         pdf_bytes = HTML(string=html_content).write_pdf()
         logger.info(f"PDF: done, {len(pdf_bytes)} bytes")
 

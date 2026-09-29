@@ -1803,6 +1803,23 @@ Instrucciones:
     }
 
 
+async def _metas_origen(db, request) -> str:
+    """F1 (aviso de respaldo): la marca invisible de cada ejecucion del integrado."""
+    ids = []
+    for sec in request.sections:
+        if sec.type in ("load_test", "stress_test"):
+            try:
+                ids.append(uuid.UUID(sec.source_id))
+            except (ValueError, AttributeError):
+                pass
+    try:
+        from app.services.ai.origen import metas_para
+        return await metas_para(db, ids)
+    except Exception as e:   # la marca jamas tumba una exportacion
+        logger.warning(f"F1: sin marca de origen en el integrado: {e}")
+        return ""
+
+
 @router.post("/integrated/export-pdf")
 async def export_integrated_pdf(
     request: IntegratedReportRequest,
@@ -1882,10 +1899,11 @@ async def export_integrated_pdf(
         <div class="ai-box"><div class="ai-text" style="white-space:pre-wrap">{unified_text}</div></div>
         </div>'''
 
+    metas_origen = await _metas_origen(db, request)   # F1
     full_pdf_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="utf-8">
-<style>
+{metas_origen}<style>
 {extracted_style}
 @page {{ size: A4 landscape; margin: 1.5cm; }}
 @page :first {{ margin: 0; }}
@@ -1976,10 +1994,11 @@ async def export_integrated_html(
     <h2>Conclusiones y Recomendaciones</h2>
     <div class="conclusions-box">{conclusions_text}</div>
 </div>''' if conclusions_text else ''
+    metas_origen = await _metas_origen(db, request)   # F1
     full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+{metas_origen}<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Informe Integrado - SQA Kinetix Pro</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 {PLOTLY_INTEGRATED_CSS}

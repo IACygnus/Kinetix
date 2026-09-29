@@ -148,6 +148,12 @@ export interface AIStatus {
   model: string | null;
   success: boolean;
   error: string | null;
+  // F1/F2 (aviso de respaldo): cuántas secciones no las escribió la IA y por qué.
+  secciones?: number;
+  respaldo?: number;
+  motivo_tipo?: string | null;
+  motivo_frase?: string;
+  motivo?: string | null;
 }
 
 // Monitoring (Phase 4)

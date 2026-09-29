@@ -39,6 +39,8 @@ from app.db.models.observed_server import ObservedServer   # noqa: F401
 from app.db.models.monitoring_session import (   # noqa: F401
     MonitoringSession, sesion_servidores,
 )
+# F1 (aviso de respaldo): de donde salio cada texto de un informe. Tabla nueva.
+from app.db.models.ai_origen import AISectionOrigin   # noqa: F401
 from app.core.security import get_password_hash
 
 # Configurar logging

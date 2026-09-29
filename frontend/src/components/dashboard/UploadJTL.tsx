@@ -13,9 +13,11 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
-import { testAPI, clientsAPI } from '../../services/api';
+import { testAPI, clientsAPI, aiConfigAPI } from '../../services/api';
 import type { TransactionMetrics } from '../../services/api';   // N3.3
-import type { ClientInfo } from '../../types';
+import type { ClientInfo, AIStatus } from '../../types';
+// F2 (aviso de respaldo): parar ANTES de generar si la IA no sirve, y avisar al terminar.
+import { PanelIANoDisponible, AvisoTrasGenerar, EstadoIA } from '../common/AvisoRespaldo';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { evaluarCriticidad } from '../../utils/criticidad';   // ETAPA 5 (D42)
 
@@ -87,10 +89,34 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [validating, setValidating] = useState(false);
 
+  // F2 (aviso de respaldo). Pedido por Fredy: «si la clave no sirve, prefiero
+  // enterarme ahi y parar, no generar un informe entero para descubrirlo al
+  // final». Se comprueba al abrir y otra vez al pulsar (sin cache). Si la
+  // comprobacion misma falla (red), no se bloquea: no se inventa un aviso.
+  const [estadoIA, setEstadoIA] = useState<EstadoIA | null>(null);
+  const [comprobandoIA, setComprobandoIA] = useState(false);
+  const [aceptaSinIA, setAceptaSinIA] = useState(false);
+  const [trasGenerar, setTrasGenerar] = useState<{ id: string; status: AIStatus } | null>(null);
+
+  const comprobarIA = useCallback(async (forzar: boolean): Promise<EstadoIA | null> => {
+    setComprobandoIA(true);
+    try {
+      const e: EstadoIA = await aiConfigAPI.estado(forzar);
+      setEstadoIA(e);
+      if (e.ok) setAceptaSinIA(false);
+      return e;
+    } catch {
+      return null;
+    } finally {
+      setComprobandoIA(false);
+    }
+  }, []);
+
   // Fetch available clients on mount
   useEffect(() => {
     clientsAPI.getMyClients().then(setClients).catch(() => {});
-  }, []);
+    comprobarIA(false);   // F2
+  }, [comprobarIA]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -281,6 +307,16 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
   };
 
   const uploadFiles = async () => {
+    // F2: la IA se vuelve a comprobar justo antes de generar, sin cache. Va AQUI
+    // porque es el unico punto por el que pasan todas las subidas (tambien la de
+    // varios archivos, que llega desde la validacion). Sin aceptacion explicita,
+    // no se genera.
+    const e = await comprobarIA(true);
+    if (e && !e.ok && !aceptaSinIA) {
+      setShowValidationModal(false);
+      setError('La IA no está disponible. Revisa el aviso de abajo antes de generar.');
+      return;
+    }
     setLoading(true);
     setError('');
     setShowValidationModal(false);
@@ -326,6 +362,13 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
       // Store AI status for toast notification on Dashboard
       if (result.ai_status) {
         sessionStorage.setItem('ai_status', JSON.stringify(result.ai_status));
+      }
+      // F2: si alguna seccion no la escribio la IA, se dice AQUI y no se cierra
+      // solo: el informe se abre cuando la persona lo ha leido.
+      if ((result.ai_status?.respaldo || 0) > 0) {
+        setLoading(false);
+        setTrasGenerar({ id: result.id, status: result.ai_status });
+        return;
       }
       onUploadSuccess(result.id);
     } catch (err: unknown) {
@@ -754,8 +797,20 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
           </div>
         )}
 
+        {/* F2: la IA no sirve -> el boton de siempre se cambia por el panel */}
+        {estadoIA && !estadoIA.ok && (
+          <PanelIANoDisponible
+            estado={estadoIA}
+            aceptado={aceptaSinIA}
+            onAceptar={setAceptaSinIA}
+            onRecomprobar={() => { setError(''); comprobarIA(true); }}
+            comprobando={comprobandoIA}
+            onSubirSinIA={() => { setError(''); handleSubmit(); }}
+          />
+        )}
+
         {/* Submit */}
-        <div className="flex justify-end">
+        <div className={`flex justify-end ${estadoIA && !estadoIA.ok ? 'hidden' : ''}`}>
           <button
             onClick={handleSubmit}
             disabled={files.length === 0 || !project || validating}
@@ -775,6 +830,11 @@ export default function UploadJTL({ onUploadSuccess }: UploadJTLProps) {
           </button>
         </div>
       </div>
+
+      {/* F2: despues de generar con secciones sin IA */}
+      {trasGenerar && (
+        <AvisoTrasGenerar aiStatus={trasGenerar.status} onVer={() => onUploadSuccess(trasGenerar.id)} />
+      )}
 
       {/* Validation Modal */}
       {showValidationModal && validationResult && (

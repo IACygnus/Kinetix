@@ -36,6 +36,7 @@ from app.services.jtl.transaction_series import (                               
     DEFAULT_INTERVAL_SECONDS,
 )
 from app.services.ai.transaction_report import generate_transaction_report       # N4.6
+from app.services.ai import origen as origen_ia                                  # F1 (aviso de respaldo)
 from app.services.ai.estilo import (                                             # ETAPA 3 (D35) + ETAPA 5 (D45)
     avisos_de_ejecucion, detectar_estilo, ms, num, pct, terminos_de, veces)
 from app.db.models.transaction_chart_analysis import (                           # N4.6
@@ -531,6 +532,15 @@ async def upload_jtl(
         await db.commit()
         await db.refresh(execution)
 
+        # F1 (aviso de respaldo): de donde salio cada texto del informe general.
+        # Commit aparte y tolerante: un fallo aqui no puede perder la ejecucion.
+        try:
+            await origen_ia.guardar_general(db, execution.id, ai_result.origenes)
+            await db.commit()
+        except Exception as origen_err:
+            logger.error(f"F1: no se pudo guardar el origen de los textos de {execution.id}: {origen_err}")
+            await db.rollback()
+
         # N3.4: analisis IA individual de las transacciones marcadas en el panel.
         # Va DESPUES del pipeline de 12 pasos y de guardar la ejecucion (necesita
         # su id). Sin transacciones marcadas no hace nada: ni IA ni escrituras.
@@ -619,7 +629,35 @@ async def list_executions(
 
     result = await db.execute(query)
     executions = result.scalars().all()
-    return executions
+    # F1: cuantas secciones de cada informe no las escribio la IA. Una sola
+    # consulta para toda la lista; las ejecuciones anteriores al registro se
+    # reconocen por el texto de plantilla, que ya viene en cada fila.
+    filas = await origen_ia.filas_de(db, [e.id for e in executions])
+    salida = []
+    for e in executions:
+        item = TestExecutionResponse.model_validate(e)
+        item.ai_origen = origen_ia.resumen_corto(origen_ia.resumen_de(e, filas.get(e.id)))
+        salida.append(item)
+    return salida
+
+
+@router.get("/executions/{execution_id}/origen-ia")
+async def get_execution_ai_origin(
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """F1: de donde salio cada texto del informe (general y transacciones), y por que.
+
+    `fuente`: 'registro' (se guardo al generar), 'texto' (anterior al registro,
+    reconocido por la plantilla del respaldo) o 'ninguna'. `marca` es la linea
+    que viaja escondida en los exportados.
+    """
+    execution = await _execution_or_404(db, current_user, execution_id)
+    filas = await origen_ia.filas_de(db, [execution.id])
+    res = origen_ia.resumen_de(execution, filas.get(execution.id))
+    res["marca"] = origen_ia.marca(res)
+    return res
 
 
 @router.delete("/executions/{execution_id}")
@@ -1012,6 +1050,10 @@ async def get_transaction_report(
     # D20: solo cuentan las secciones que se generan hoy. Sin el filtro, un informe
     # antiguo de 8 filas con texto mostraria "8/6" en la barra de progreso.
     con_texto = sum(1 for r in rows if r.ai_analysis and r.section in SECTIONS_GENERADAS)
+    # F1: de donde salio cada seccion. Sin fila = anterior al registro.
+    origenes = {f.section: origen_ia.fila_a_dict(f, origen_ia.SECCIONES_TRANSACCION)
+                for f in (await origen_ia.filas_de(db, [execution.id])).get(execution.id, [])
+                if f.label == label}
     return {
         "label": label,
         "sections": [
@@ -1021,6 +1063,7 @@ async def get_transaction_report(
                 "sort_order": r.sort_order,
                 # ETAPA 3 (D35): calculado al leer; lista vacia = seccion limpia.
                 "style_warnings": terminos_de(detectar_estilo(r.ai_analysis, r.section)),
+                "origen": origenes.get(r.section),   # F1
             }
             for r in rows
         ],
@@ -1154,6 +1197,7 @@ async def update_transaction_report_section(
     row.ai_analysis = payload.ai_analysis
     row.is_edited = True
     row.ai_analysis_updated_at = ahora
+    await origen_ia.marcar_editado(db, execution.id, label, [section])   # F1
     await db.commit()
 
     logger.info(f"N4.7: seccion '{section}' de '{label}' editada a mano ({len(payload.ai_analysis)} chars)")
@@ -1441,11 +1485,14 @@ async def update_analysis(
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
 
     if update_data:
+        # F1: las que cambian de verdad dejan de contar como «de plantilla sin tocar».
+        cambiadas = [k for k, v in update_data.items() if getattr(execution, k, None) != v]
         await db.execute(
             update(TestExecution)
             .where(TestExecution.id == exec_uuid)
             .values(**update_data)
         )
+        await origen_ia.marcar_editado(db, exec_uuid, "", cambiadas)
         await db.commit()
         logger.info(f"Analisis actualizado para {exec_uuid} ({len(update_data)} campos)")
 

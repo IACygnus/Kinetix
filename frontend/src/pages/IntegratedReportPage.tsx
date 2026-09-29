@@ -194,6 +194,10 @@ export default function IntegratedReportPage() {
   const sectionOverridesRef = useRef<Record<string, SectionOverride>>({});
   // F4: copia en estado SOLO para hidratar los hijos al abrir (nunca por tecla)
   const [sectionOverrides, setSectionOverrides] = useState<Record<string, SectionOverride>>({});
+  // F2 (aviso de respaldo): antes de exportar, si alguna ejecucion del integrado
+  // tiene secciones que no escribio la IA, se dice y se pide «igualmente». Sale
+  // de `ai_origen`, que ya viene en la lista de /executions: ninguna peticion mas.
+  const [confirmarExport, setConfirmarExport] = useState<'pdf' | 'html' | null>(null);
 
   const touchSection = useCallback((execId: string) => {
     if (!sectionOverridesRef.current[execId]) {
@@ -544,6 +548,16 @@ export default function IntegratedReportPage() {
     setGenerating(false);
   };
 
+  const ejecucionesSinIA = sections
+    .filter((s) => s.type === 'load_test' || s.type === 'stress_test')
+    .map((s) => ({ nombre: s.sourceName, o: executions.find((e: any) => String(e.id) === s.sourceId)?.ai_origen }))
+    .filter((x) => (x.o?.afectadas || 0) > 0);
+
+  const pedirExport = (formato: 'pdf' | 'html') => {
+    if (ejecucionesSinIA.length > 0) { setConfirmarExport(formato); return; }
+    if (formato === 'pdf') handleExportPDF(); else handleExportHTML();
+  };
+
   const handleExportPDF = async () => {
     await flushPending();  // F3: no exportar con ediciones sin guardar
     try {
@@ -835,15 +849,46 @@ export default function IntegratedReportPage() {
 
           {/* Export buttons */}
           <div className="flex gap-4 justify-center">
-            <button onClick={handleExportHTML}
+            <button onClick={() => pedirExport('html')}
               className="px-8 py-3 bg-[#f5a623] text-[#0a1628] rounded-xl font-bold text-lg hover:bg-[#f5a623]/90 transition-colors">
               Exportar HTML
             </button>
-            <button onClick={handleExportPDF}
+            <button onClick={() => pedirExport('pdf')}
               className="px-8 py-3 bg-red-600 text-white rounded-xl font-bold text-lg hover:bg-red-700 flex items-center gap-2 transition-colors">
               <FileDown className="w-5 h-5" /> Exportar PDF
             </button>
           </div>
+
+          {/* F2: exportar con secciones que no escribio la IA pide confirmacion */}
+          {confirmarExport && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="confirmar-export-integrado">
+              <div className="w-full max-w-xl rounded-2xl border-2 border-red-400 bg-white p-6 shadow-2xl" role="alertdialog">
+                <p className="text-2xl font-bold text-red-900">Este integrado lleva secciones que no escribió la IA</p>
+                <ul className="mt-3 space-y-1 text-base text-red-900">
+                  {ejecucionesSinIA.map((x) => (
+                    <li key={x.nombre}>
+                      <span className="font-semibold">{x.nombre}</span>: {x.o.afectadas} de {x.o.total} · {x.o.motivo_frase || 'motivo desconocido'}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-base text-red-900">
+                  El documento no lo dice en la página: quien lo reciba no lo sabrá. Lo recomendable es
+                  regenerar esas ejecuciones con IA antes de enviarlo.
+                </p>
+                <div className="mt-5 flex justify-end gap-3 border-t border-gray-200 pt-4">
+                  <button onClick={() => setConfirmarExport(null)} data-testid="export-integrado-cancelar"
+                    className="rounded-xl border border-gray-300 px-6 py-3 text-lg font-semibold text-gray-600 hover:bg-gray-50">
+                    Cancelar
+                  </button>
+                  <button data-testid="export-integrado-igualmente"
+                    onClick={() => { const f = confirmarExport; setConfirmarExport(null); if (f === 'pdf') handleExportPDF(); else handleExportHTML(); }}
+                    className="rounded-xl border-2 border-red-500 bg-white px-6 py-3 text-lg font-bold text-red-700 hover:bg-red-50">
+                    Exportar {confirmarExport === 'pdf' ? 'PDF' : 'HTML'} igualmente
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* F3: barra fija de guardado — visible con cualquier scroll.
               R1 (R-D1/R-D3/R-D4): dice «Guardado» solo con la confirmacion del

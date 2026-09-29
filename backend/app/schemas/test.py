@@ -78,6 +78,11 @@ class TestExecutionResponse(TestExecutionBase):
     # los terminos detectados ("tier", "P99 sin traducir").
     style_warnings: Optional[Dict[str, List[str]]] = None
 
+    # F1 (aviso de respaldo): cuantas secciones NO las escribio la IA y por que.
+    # Solo lo rellena la lista del historial (`origen.resumen_corto`); el detalle
+    # completo esta en GET /executions/{id}/origen-ia.
+    ai_origen: Optional[Dict[str, Any]] = None
+
     # Timestamps
     execution_date: Optional[datetime] = None
     created_at: datetime

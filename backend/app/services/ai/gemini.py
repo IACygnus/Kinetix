@@ -11,6 +11,7 @@ import os
 import time
 import json                                      # E1.2: telemetria por llamada
 import threading                                 # ETAPA 1.5 (D6): estado de clase compartido
+from contextvars import ContextVar               # F1 (respaldo): el buzon de fallo por llamada
 from datetime import datetime, timezone          # E1.2: marcas de tiempo ISO 8601
 import google.generativeai as genai
 from typing import Dict, List, Optional, Tuple
@@ -295,6 +296,39 @@ def _clasificar_error(err) -> str:
     )
     if transitorias_gemini and isinstance(err, transitorias_gemini):
         return "transient"
+    return "error"
+
+
+# ===================== F1: el buzon de fallo de cada llamada =====================
+# `GeminiAnalyzer._last_error` es de CLASE: si una subida y la generacion en
+# segundo plano de una transaccion coinciden, el motivo de una acaba en la otra.
+# El buzon es por llamada: quien llama pone un dict en esta ContextVar,
+# `asyncio.to_thread` copia el contexto al hilo, y `_generate` escribe en ESE
+# dict el tipo y el error literal de su fallo. Lo lee `services/ai/origen.py`.
+# Sin buzon puesto (cualquier otro llamador) no hace nada.
+BUZON_FALLO: ContextVar[Optional[dict]] = ContextVar("kinetix_buzon_fallo", default=None)
+
+
+def _anotar_fallo(tipo: Optional[str], detalle: str = "") -> None:
+    """tipo None = la llamada salio bien (se vacia el buzon)."""
+    try:
+        buzon = BUZON_FALLO.get()
+        if buzon is None:
+            return
+        buzon.clear()
+        if tipo:
+            buzon.update(tipo=tipo, detalle=(detalle or "")[:400])
+    except Exception:
+        pass   # anotar jamas puede tumbar una generacion
+
+
+def _tipo_de_error_seco(err) -> str:
+    """El tipo de un error que no se reintenta: 401/403 son la clave."""
+    estado = getattr(err, "status_code", None)
+    if estado in (401, 403):
+        return "clave"
+    if estado == 404:
+        return "modelo"
     return "error"
 
 
@@ -1092,6 +1126,7 @@ class GeminiAnalyzer:
             logger.info(f"AI CIRCUIT OPEN: skipping {section_name} (using fallback)")
             GeminiAnalyzer._total_errors += 1
             _tel("circuit_open", 0)
+            _anotar_fallo("circuito", GeminiAnalyzer._last_error or "circuito abierto")   # F1
             return None
 
         logger.info(f"AI CALL: provider={self.provider}, model={self.model_name}, section={section_name}, prompt_len={len(prompt)}")
@@ -1132,10 +1167,12 @@ class GeminiAnalyzer:
                             # E1.2: el caso B6.3 (tope agotado por razonamiento) queda
                             # visible con sus tokens, que es justo lo que faltaba ver.
                             _tel("empty", attempt + 1, response, fin)
+                            _anotar_fallo("vacio", motivo)   # F1
                             return None
                     else:
                         GeminiAnalyzer._total_errors += 1
                         _tel("error", attempt + 1)
+                        _anotar_fallo("error", f"proveedor no soportado: {self.provider}")   # F1
                         return None
 
                     result = sanitize_ai_text(result)
@@ -1145,6 +1182,7 @@ class GeminiAnalyzer:
                     _tel("ok", attempt + 1, response,
                          getattr(response.choices[0], "finish_reason", None)
                          if getattr(response, "choices", None) else None)
+                    _anotar_fallo(None)   # F1: salio bien, aunque un intento anterior fallara
                     return result
 
                 except Exception as e:
@@ -1161,12 +1199,14 @@ class GeminiAnalyzer:
                         GeminiAnalyzer._total_errors += 1
                         GeminiAnalyzer._abrir_circuito(f"cuota agotada en {section_name}")
                         _tel("quota_exhausted", attempt + 1)
+                        _anotar_fallo("cupo", f"{self.model_name}: {error_str}")   # F1
                         return None
 
                     if tipo == "rate_limit":
                         # D5: se respeta Retry-After si el proveedor lo manda; si no, 5/10/15.
                         wait_time = _espera_sugerida(e) or min((attempt + 1) * 5, 15)
                         logger.warning(f"AI RATE LIMITED (attempt {attempt+1}/{max_retries}) for {section_name}. Waiting {wait_time}s...")
+                        _anotar_fallo("limite_proveedor", f"{self.model_name}: {error_str}")   # F1
                         _tel("rate_limited", attempt + 1)   # E1.2: antes de dormir
                         # ETAPA 2 (D14): sin dormir tras el ultimo intento — mismo
                         # criterio que los transitorios. Ahorra los 15 s finales,
@@ -1183,6 +1223,7 @@ class GeminiAnalyzer:
                         logger.warning(f"AI TRANSIENT (attempt {attempt+1}/{max_retries}) for {section_name}: {error_str[:120]}. Waiting {wait_time}s...")
                         GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"
                         _tel("transient_error", attempt + 1)
+                        _anotar_fallo("transitorio", f"{self.model_name}: {error_str}")   # F1
                         # Sin dormir tras el ultimo intento: no queda nada que esperar.
                         # Con max_retries=3 las esperas son 2 s y 4 s, no 2/4/6.
                         if attempt + 1 < max_retries:
@@ -1195,6 +1236,7 @@ class GeminiAnalyzer:
                     GeminiAnalyzer._last_error = f"{self.model_name}: {error_str[:180]}"   # B6.3
                     GeminiAnalyzer._total_errors += 1
                     _tel("error", attempt + 1)
+                    _anotar_fallo(_tipo_de_error_seco(e), f"{self.model_name}: {error_str}")   # F1
                     return None
 
             # All retries exhausted — open circuit breaker for remaining calls

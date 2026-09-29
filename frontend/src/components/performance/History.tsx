@@ -31,6 +31,36 @@ interface Execution {
   throughput: number;
   total_redirects: number;
   created_at: string;
+  /** F2 (aviso de respaldo): cuantas secciones NO las escribio la IA (F1). */
+  ai_origen?: {
+    fuente: 'registro' | 'texto' | 'ninguna';
+    total: number; ia: number; afectadas: number; afectadas_sin_editar: number;
+    motivo_tipo: string | null; motivo_frase: string | null; fecha: string | null;
+  } | null;
+}
+
+/** F2: el motivo en dos o tres palabras; la frase entera va en el `title`. */
+const MOTIVO_CORTO: Record<string, string> = {
+  clave: 'clave rechazada', cupo: 'cupo agotado', limite_proveedor: 'límite del proveedor',
+  transitorio: 'proveedor sin respuesta', vacio: 'respuesta vacía', modelo: 'modelo inexistente',
+  circuito: 'IA ya caída', limite_kinetix: 'límite de Kinetix', sin_configuracion: 'sin IA configurada',
+  error: 'error del proveedor',
+};
+
+/** F2: el texto de la columna «Origen del texto». Texto, no un color. */
+function OrigenTexto({ o }: { o: Execution['ai_origen'] }) {
+  if (!o || o.fuente === 'ninguna' || !o.total) {
+    return <span className="text-sm text-gray-400" title="Informe anterior al registro del origen (29/09/2026); su texto no es de plantilla">sin registro</span>;
+  }
+  if (o.afectadas === 0) return <span className="text-sm text-gray-600">IA</span>;
+  const titulo = `${o.motivo_frase || 'motivo desconocido'}${o.fuente === 'texto' ? ' (detectado por el texto de plantilla)' : ''}`;
+  return (
+    <span className="text-sm font-semibold text-red-700 whitespace-nowrap" title={titulo} data-testid="origen-sin-ia">
+      Sin IA: {o.afectadas} de {o.total}
+      {o.afectadas_sin_editar < o.afectadas && <span className="block font-normal text-red-600">{o.afectadas - o.afectadas_sin_editar} corregidas</span>}
+      <span className="block font-normal text-red-600">{o.fuente === 'texto' ? 'plantilla detectada' : (MOTIVO_CORTO[o.motivo_tipo || ''] || 'error')}</span>
+    </span>
+  );
 }
 
 const TEST_TYPE_BADGE: Record<string, { label: string; className: string }> = {
@@ -52,6 +82,7 @@ export default function History() {
   const [filterType, setFilterType] = useState<string>('all');
   const [filterClient, setFilterClient] = useState<string>('all');
   const [filterProject, setFilterProject] = useState<string>('all');
+  const [soloSinIA, setSoloSinIA] = useState(false);   // F2: «Con secciones sin IA»
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   const fetchExecutions = async () => {
@@ -149,7 +180,9 @@ export default function History() {
     const matchesClient = filterClient === 'all' || e.client === filterClient;
     const matchesProject = filterProject === 'all' || e.project === filterProject;
 
-    return matchesSearch && matchesType && matchesClient && matchesProject;
+    const matchesOrigen = !soloSinIA || (e.ai_origen?.afectadas || 0) > 0;   // F2
+
+    return matchesSearch && matchesType && matchesClient && matchesProject && matchesOrigen;
   });
 
   const formatDate = (dateStr: string) => {
@@ -236,6 +269,12 @@ export default function History() {
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
+        {/* F2: los informes con secciones que no escribio la IA */}
+        <label className="flex items-center gap-2 px-4 h-12 bg-white border border-gray-300 rounded-xl text-gray-700 text-base cursor-pointer">
+          <input type="checkbox" className="w-5 h-5 accent-red-600" checked={soloSinIA}
+            data-testid="filtro-sin-ia" onChange={(e) => setSoloSinIA(e.target.checked)} />
+          Con secciones sin IA ({executions.filter((e) => (e.ai_origen?.afectadas || 0) > 0).length})
+        </label>
       </div>
 
       {/* Table */}
@@ -247,6 +286,7 @@ export default function History() {
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider">Tipo</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider">Cliente</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider">Proyecto</th>
+              <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider">Origen del texto</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider">Archivo JTL</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">Muestras</th>
               <th className="px-4 py-3 text-sm font-bold text-white uppercase tracking-wider text-right">Error %</th>
@@ -277,6 +317,10 @@ export default function History() {
                   </td>
                   <td className="px-4 py-3">
                     <p className="text-base text-gray-700">{exec.project || exec.name}</p>
+                  </td>
+                  {/* F2: junto al proyecto, para que se vea sin desplazar la tabla */}
+                  <td className="px-4 py-3">
+                    <OrigenTexto o={exec.ai_origen} />
                   </td>
                   <td className="px-4 py-3">
                     <p className="text-sm text-gray-500 font-mono">{exec.jtl_filename}</p>
@@ -356,7 +400,7 @@ export default function History() {
             })}
             {filteredExecutions.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-6 py-12 text-center bg-white">
+                <td colSpan={12} className="px-6 py-12 text-center bg-white">
                   <ClipboardList className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500 text-xl">No hay reportes en el historial</p>
                 </td>
