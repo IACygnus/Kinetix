@@ -1692,7 +1692,7 @@ async def generate_integrated_report(
             cap_data = json.loads(execution.capacity_analysis_json or "{}")
             global_ai = cap_data.get("monitoring_ai_analysis", "")
             # Monitoring section: show images + per-image AI. Global analysis goes to conclusions only.
-            sections_html.append(_build_att_html(section, atts, "", "Métricas de Monitoreo"))
+            sections_html.append(_build_att_html(section, atts, "", "Capturas de infraestructura"))   # O-D42
             # Collect individual image analyses + global analysis for conclusions
             for att in atts:
                 if att.ai_analysis:
@@ -1873,7 +1873,7 @@ async def export_integrated_pdf(
             atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
             if atts:   # R1: una seccion con todas sus capturas quitadas no sale
-                html_parts.append(_build_att_html(section, atts, "", "Métricas de Monitoreo", for_pdf=True, image_overrides=_imgs))
+                html_parts.append(_build_att_html(section, atts, "", "Capturas de infraestructura", for_pdf=True, image_overrides=_imgs))   # O-D42 en el PDF
 
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
@@ -1984,7 +1984,7 @@ async def export_integrated_html(
             atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
             if atts:   # R1: una seccion con todas sus capturas quitadas no sale
-                html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Métricas de Monitoreo", image_overrides=_imgs)}</div>')
+                html_parts.append(f'<div class="att-wrap">{_build_att_html(section, atts, "", "Capturas de infraestructura", image_overrides=_imgs)}</div>')   # O-D42
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
             _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images")
