@@ -1910,6 +1910,12 @@ async def export_integrated_pdf(
 .conclusions-block {{ page-break-before: always; break-before: page; }}
 .conclusions-block .ai-box {{ page-break-inside: auto; break-inside: auto; }}
 .conclusions-title {{ page-break-after: avoid; break-after: avoid; }}
+/* P6b: los dos bloques de capturas —monitoreo y evidencias— empiezan hoja, con su
+   titulo, como las conclusiones. Antes arrancaban al pie de la anterior y su
+   primera captura quedaba en el borde. Solo en este <style>, que es el del PDF: el
+   HTML exportado lleva las mismas clases y no cambia (regla de la rama web). */
+.monitoreo-block, .evidencias-block {{ page-break-before: always; break-before: page; }}
+.monitoreo-title, .evidencias-title {{ page-break-after: avoid; break-after: avoid; }}
 /* PDF-1: la portada mide ~210mm y solo cabe en una pagina sin margenes. Con
    `:first` eso solo valia para la pagina 1, asi que en un integrado con varias
    ejecuciones la 2a portada en adelante se partia en dos. Con pagina nombrada,
