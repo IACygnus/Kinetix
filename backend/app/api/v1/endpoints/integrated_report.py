@@ -1578,7 +1578,6 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
         img_wrapper_style = "text-align:center;margin:1rem 0"
         img_style = "max-width:100%;max-height:800px;border-radius:8px;display:block;margin:0 auto"
         img_style_alta = img_style   # la rama web no cambia
-        pair_style = ""
 
     items = ""
     for att in attachments:
@@ -1615,12 +1614,16 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
                 f'<div style="{ai_text_style}">{att_text}</div>'
                 f'</div>'
             )
+        titulo_html = f'<div style="{card_title_style}">{att.title or att.filename}</div>'
+        if for_pdf:
+            # P6: titulo + imagen, indivisibles. SOLO en el PDF: la rama web sale
+            # exactamente como antes de P6 (decision de Fredy, 29/09/2026).
+            titulo_html = f'<div style="{pair_style}">{titulo_html}{img_html}</div>'
+            img_html = ""
         items += (
             f'<div style="{card_style}">'
-            f'<div style="{pair_style}">'   # P6: titulo + imagen, indivisibles
-            f'<div style="{card_title_style}">{att.title or att.filename}</div>'
+            f'{titulo_html}'
             f'{img_html}'
-            f'</div>'
             f'{per_img_ai}'
             f'</div>'
         )
