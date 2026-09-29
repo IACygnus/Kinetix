@@ -398,6 +398,21 @@ METRIC_UNIT_NAMES = {
 }
 
 
+def bloque_lectura_base(lectura_base: str = "") -> str:
+    """ETAPA R2 (R-D17): la lectura que fijo el resumen, para que las demas
+    secciones la desarrollen en vez de contradecirla. Vacio si no hay."""
+    if not (lectura_base or "").strip():
+        return ""
+    return (
+        "\nLECTURA BASE DEL INFORME (la fijo el analisis del resumen, que se escribio\n"
+        "primero). Tu seccion la desarrolla con los datos de SU grafica y NO la\n"
+        "contradice: misma transaccion que concentra los fallos, misma forma del\n"
+        "problema (puntual o sostenido), mismo cuello. No la repites: aportas lo que\n"
+        "tu grafica anade.\n"
+        f"{lectura_base.strip()}\n"
+    )
+
+
 def get_metric_unit_instruction(metric_unit: str = "TPS") -> str:
     """Returns the instruction to append to prompts for consistent metric unit usage."""
     unit_name = METRIC_UNIT_NAMES.get(metric_unit, METRIC_UNIT_NAMES["TPS"])
@@ -1362,6 +1377,7 @@ class GeminiAnalyzer:
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
         metric_unit: str = "TPS",
+        hechos: str = "",   # ETAPA R2 (R-D17): `resumen_serie.hechos_de_la_prueba`
     ) -> Optional[str]:
         """Analisis de la tabla resumen con datos completos por transaccion"""
         try:
@@ -1406,8 +1422,13 @@ RESUMEN GLOBAL DE LA PRUEBA:
 - Duracion de la prueba: {num(metrics['duration_seconds'])} segundos
 LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
 {percentiles_bloque(metrics.get('median_response_time', 0), metrics['p90_response_time'], metrics['p95_response_time'], metrics['p99_response_time'])}{criteria_text}
+{hechos}
 
 Escribe el analisis del resumen de la prueba. Maximo 180 palabras.
+Este texto es la LECTURA BASE del informe: las demas secciones lo reciben y no
+pueden contradecirlo. Deja claro, con sus cifras, que transaccion concentra los
+fallos, si el problema es puntual o sostenido a lo largo de la prueba, y cual es
+el cuello de botella.
 NO repitas la tabla: interpreta lo que dice.
 
 Cuenta el recorrido del usuario en el orden en que ocurre, agrupando las
@@ -1438,6 +1459,7 @@ eso va en las conclusiones del informe.
         test_date: str = "N/A",
         metric_unit: str = "TPS",
         acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
+        lectura_base: str = "",                       # ETAPA R2 (R-D17)
     ) -> Optional[str]:
         """Analisis detallado de errores por transaccion y codigo HTTP"""
         if not error_data or len(error_data) == 0:
@@ -1449,15 +1471,16 @@ eso va en las conclusiones del informe.
             error_rate = (total_errors / total_requests * 100) if total_requests > 0 else 0
 
             lines = []
-            lines.append("| Transaccion | Errores | Codigo HTTP | Mensaje | % del Total |")
-            lines.append("|---|---|---|---|---|")
+            lines.append("| Transaccion | Errores | Codigo HTTP | Mensaje | Cuando | % del Total |")
+            lines.append("|---|---|---|---|---|---|")
             for item in error_data:
                 # ETAPA 3: la variable local se llamaba `pct` y tapaba al helper
                 # del mismo nombre importado de `estilo.py`.
                 porcentaje = (item['count'] / total_requests * 100) if total_requests > 0 else 0
                 lines.append(
                     f"| {item['label']} | {num(item['count'])} | {item.get('code', 'N/A')} | "
-                    f"{item.get('message', 'N/A')} | {pct(porcentaje)} |"
+                    f"{item.get('message') or 'el JTL no trae mensaje'} | "
+                    f"{item.get('cuando') or 'sin dato'} | {pct(porcentaje)} |"
                 )
             logger.info(f"Enviando {len(error_data)} entradas de error a Gemini")
             errors_table = "\n".join(lines)
@@ -1495,14 +1518,14 @@ CONTEXTO:
 - Total de peticiones: {num(total_requests)}
 - Transacciones con errores: {len(error_data)}
 - Codigos de respuesta distintos: {len(error_by_code)}
-{bloque_completo(acceptance_criteria)}
+{bloque_completo(acceptance_criteria)}{bloque_lectura_base(lectura_base)}
 Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
 con error. NO repitas la tabla: interpreta lo que dice.
 
 1. Cuantos fallos hubo y en que punto del flujo de negocio aparecen. Agrupa las
    transacciones que fallan por el mismo motivo.
-2. Que significa cada codigo en terminos de negocio y cual es su causa probable,
-   marcada como hipotesis.
+2. Que significa cada codigo en terminos de negocio y que dice su mensaje; la
+   causa probable, marcada como hipotesis, sale de ese mensaje.
 3. Que gravedad tiene para la operacion.
 
 No digas si el sistema esta listo para produccion ni propongas un plan de
@@ -1523,6 +1546,7 @@ trabajo: eso va en las conclusiones y recomendaciones del informe.
         test_date: str = "N/A",
         metric_unit: str = "TPS",
         acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
+        lectura_base: str = "",                       # ETAPA R2 (R-D17)
     ) -> Optional[str]:
         """Analisis de graficos individuales con contexto del tipo de prueba"""
         try:
@@ -1545,6 +1569,14 @@ trabajo: eso va en las conclusiones y recomendaciones del informe.
                     "\n\nLAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:\n"
                     f"{build_tier_summary(insights)}\n")
 
+            # ETAPA R2 (R-D13): hasta R2 cinco de estas secciones solo recibian
+            # agregados y aun asi se les preguntaba por el tiempo (reporte 120
+            # §3); de ahi salian las disculpas. Ahora cada una recibe su serie
+            # (`resumen_serie.py`) y se le pide lo que esa serie trae: cuando,
+            # cuanto dura y si se sostiene. Lo que ningun dato contiene (atribuir
+            # a la red una latencia que incluye al servidor, o decir si los
+            # errores crecen con la carga sin los hilos delante) se quito.
+            #
             # ETAPA 3 (D29): estas instrucciones pedian literalmente "distribucion
             # por tiers" y "variabilidad P99/avg", y el modelo escribia esas dos
             # palabras en el informe (reporte 30 §2). Ahora piden lo mismo dicho
@@ -1554,21 +1586,22 @@ trabajo: eso va en las conclusiones y recomendaciones del informe.
 Nombra todas, aunque sea agrupando las que se comportan igual, y sigue el orden del flujo de negocio.
 Contrasta la mas rapida con la mas lenta usando la cifra de "LA MAS LENTA ES ... LA MAS RAPIDA" que ya viene calculada.
 El grupo se asigna por el promedio, pero mira SIEMPRE tambien el maximo: si el maximo supera de largo al promedio (diez veces o mas), senala ese pico con su cifra y su causa probable (esperas, tiempos agotados, contencion) aunque el promedio se vea sano. Los ratios llegan calculados como "[PICO: el maximo es N veces el promedio]": usalos tal cual.
-Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas que viene en los datos.""",
+Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas que viene en los datos.
+Los datos traen tambien la serie de cada transaccion: di CUANDO aparecen sus picos (minuto y hora), si coinciden entre transacciones y si hay tramos sostenidos o solo puntos aislados.""",
 
                 'response_time_over_time': """Cubre: si los tiempos se mantienen o empeoran segun avanza la prueba, en que momento cambian, y que picos aparecen y por que.""",
 
                 'throughput': """Cubre: cuanto trafico aguanto el sistema, si lo sostuvo, cuando cayo y cuanto margen queda frente a la carga esperada.""",
 
-                'latency': """Cubre: cuanto del tiempo total se va en la espera previa a la respuesta, que peso tiene sobre lo que espera el usuario, y que picos apuntan a problemas de red.""",
+                'latency': """Cubre: cuanto del tiempo total es espera hasta el primer byte y cuanto es descarga, como se mueve la latencia a lo largo de la prueba (tramos y tendencia) y cuando aparecen sus picos. La latencia incluye el procesamiento del servidor: no la atribuyas solo a la red.""",
 
-                'error_rate': """Cubre: si los fallos son constantes, intermitentes o van a mas, si crecen con la carga, si el sistema se recupera, y que disponibilidad real deja eso.""",
+                'error_rate': """Cubre, con los minutos y las cifras de la serie: entre que valores se movio la tasa de error la mayor parte del tiempo, sus picos y cuando ocurrieron, si hubo tramos sostenidos o solo puntos aislados (es decir, si el fallo es constante, intermitente o va a mas), si hubo momentos sin fallos, y que disponibilidad real deja eso.""",
 
-                'codes_per_second': """Cubre: que responde el sistema y en que proporcion, que significa cada codigo en terminos de negocio, y si los fallos se concentran en algun tramo.""",
+                'codes_per_second': """Cubre: que responde el sistema y en que proporcion, que significa cada codigo en terminos de negocio, cuando aparece por primera vez cada codigo de fallo y si se concentra en algun tramo o se reparte por toda la prueba.""",
 
-                'transactions_per_second': """Cubre: como se reparte el trabajo entre transacciones, si el caudal se sostiene, y si alguna operacion se queda atras.""",
+                'transactions_per_second': """Cubre: como se reparte el trabajo entre transacciones, si el caudal se sostiene o cae y en que minutos, como fue el arranque, y si alguna operacion se queda atras.""",
 
-                'active_threads': """Cubre: como entraron los usuarios (subida, meseta, bajada), cuantos llegaron a la vez, y si los tiempos empeoraron al subir la concurrencia.""",
+                'active_threads': """Cubre, con los minutos de la serie: como entraron los usuarios (subida, meseta y bajada si la hubo), cuantos llegaron a la vez y cuanto tiempo se sostuvo ese maximo, y como se comportaron el tiempo de respuesta y los errores en cada nivel de concurrencia.""",
             }
 
             chart_name = chart_names.get(chart_type, chart_type)
@@ -1579,7 +1612,7 @@ Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas 
 
 DATOS DE LA GRAFICA "{chart_name}":
 {data_summary}
-{tier_context}{bloque_completo(acceptance_criteria)}
+{tier_context}{bloque_completo(acceptance_criteria)}{bloque_lectura_base(lectura_base)}
 Escribe el analisis de esta grafica. Maximo 130 palabras.
 NO repitas los datos: interpreta lo que muestran.
 
@@ -1846,6 +1879,12 @@ RESUMEN Y TRANSACCIONES:
 
 ERRORES:
 {ai_analysis_errors}
+
+TASA DE ERROR EN EL TIEMPO:
+{ai_analysis_error_rate}
+
+CODIGOS DE RESPUESTA:
+{ai_analysis_codes_per_second}
 
 TIEMPOS DE RESPUESTA:
 {ai_analysis_response_times}

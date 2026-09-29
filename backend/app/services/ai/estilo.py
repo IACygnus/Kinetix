@@ -213,7 +213,14 @@ una persona usando la aplicacion.
     no se omiten nunca, aunque el promedio se vea sano.
 
 14. Escribe en parrafos narrativos fluidos de 2 a 4 oraciones. El texto debe
-    leerse como si lo hubiera escrito una persona, no una maquina."""
+    leerse como si lo hubiera escrito una persona, no una maquina.
+
+15. SIN DISCULPAS. PROHIBIDO escribir frases sobre lo que los datos no traen:
+    "con la informacion agregada no es posible", "con la informacion entregada
+    no hay", "no se puede determinar", "los datos no permiten", "si existieran
+    ... cambiarian la lectura", "no se dispone de". Si un dato no esta, no lo
+    menciones: habla de lo que SI esta, que es lo que el lector necesita. Los
+    datos traen la serie de tiempo de la grafica: usala para decir CUANDO."""
 
 
 PERMISO_VEREDICTO = """ESTA SECCION SI ES EL LUGAR DEL DICTAMEN (excepcion a la regla 10 del estilo).
@@ -303,6 +310,27 @@ _VEREDICTO = [
     (re.compile(r"\bviable\s+para\s+produccion\b", re.I), "viable para produccion"),
 ]
 
+# --- R2 (R-D14): disculpas por el dato que falta ---
+# Salian de pedirle al modelo lo que el dato no contenia (reporte 120 §3). Con la
+# serie delante no hacen falta; sin ella, la respuesta es arreglar el dato, no
+# disculparse. Se comparan sin tildes y en minusculas.
+_DISCULPA = [
+    (re.compile(r"\bcon\s+(?:la\s+)?informacion\s+(?:agregada|entregada|disponible|suministrada|recibida|proporcionada)", re.I),
+     "con la informacion agregada/entregada"),
+    (re.compile(r"\bno\s+(?:es|resulta|fue)\s+posible\s+(?:determinar|atribuir|establecer|saber|concluir|identificar|precisar|afirmar|asociar|distinguir)", re.I),
+     "no es posible determinar"),
+    (re.compile(r"\bno\s+se\s+pueden?\s+(?:determinar|atribuir|establecer|saber|concluir|identificar|precisar|afirmar|asociar|distinguir)", re.I),
+     "no se puede determinar"),
+    (re.compile(r"\blos\s+datos\s+(?:\w+\s+)?no\s+permiten\b", re.I), "los datos no permiten"),
+    (re.compile(r"\bsi\s+(?:existieran|existiera|se\s+contara|se\s+dispusiera|se\s+tuviera)\b", re.I),
+     "si existieran..."),
+    (re.compile(r"\bcambiar(?:ia|ian)\s+la\s+lectura\b", re.I), "cambiarian la lectura"),
+    (re.compile(r"\bno\s+(?:se\s+dispone|se\s+cuenta|hay|tenemos)\s+(?:de\s+|con\s+)?(?:informacion|datos|serie|detalle)\b", re.I),
+     "no se dispone de datos"),
+    (re.compile(r"\bcon\s+la\s+informacion\s+\w+\s+no\s+hay\b", re.I), "con la informacion ... no hay"),
+    (re.compile(r"\bsin\s+(?:la\s+)?serie\s+(?:temporal|de\s+tiempo)\b", re.I), "sin la serie temporal"),
+]
+
 # --- D32: formato ingles ---
 # Decimal a la inglesa: punto con uno o dos decimales ("179.73", "3.9"). Un
 # punto con TRES digitos detras es separador de miles a la espanola
@@ -350,6 +378,14 @@ def detectar_estilo(texto: Optional[str], seccion: str = "") -> List[Dict[str, s
                     avisos.append({"tipo": "veredicto_fuera_de_conclusiones",
                                    "termino": termino,
                                    "contexto": _contexto(texto, m.start(), m.end())})
+
+        # R2 (R-D14): una sola marca por frase, aunque case con dos patrones.
+        for frase in _frases(plano):
+            for rx, termino in _DISCULPA:
+                if rx.search(frase):
+                    avisos.append({"tipo": "disculpa", "termino": termino,
+                                   "contexto": frase.strip()[:160]})
+                    break
 
         for rx, termino in ((_DECIMAL_PUNTO, "decimal con punto"),
                             (_MILES_COMA, "miles con coma"),

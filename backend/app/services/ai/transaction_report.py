@@ -46,6 +46,9 @@ from app.services.ai.estilo import ms, percentil_frase, pct, veces
 # ETAPA 5b (D55): el umbral efectivo de ESTA transaccion —el suyo propio o el
 # general— resuelto con la MISMA regla que usa la tabla de veredictos.
 from app.services.ai.criterios import bloque_de_transaccion
+# ETAPA R2: la serie resumida (R-D10) y la lectura base (R-D17).
+from app.services.ai import resumen_serie
+from app.services.ai.gemini import bloque_lectura_base
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +73,20 @@ PICO_OBLIGATORIO = ("summary", "chart_response_times", "conclusions", "recommend
 # Que se le pide a cada seccion y su tope de palabras. Las graficas mantienen el
 # tope de las globales (130); resumen, conclusiones y recomendaciones van a 200
 # por decision de este sprint.
+#
+# ETAPA R2 (R-D13): cada instruccion pide solo lo que su serie trae. Se quito
+# «cuanto pesa la red contra el procesamiento del servidor» (la latencia incluye
+# las dos cosas y ningun dato las separa: ver DEFINICION_LATENCIA) y «como se
+# relaciona con sus tiempos» del caudal, que no recibe la serie de tiempos.
 INSTRUCCIONES: Dict[str, tuple] = {
-    "summary": ("Resumen del comportamiento de esta transaccion: como respondio, que la separa de un servicio sano y a cuantos usuarios les duele la espera.", 200),
-    "chart_response_times": ("Analiza la evolucion de sus tiempos de respuesta en el tiempo: nivel base, picos y cuando aparecen.", 130),
-    "chart_latency": ("Analiza su latencia frente al tiempo total: cuanto pesa la red o la espera previa contra el procesamiento del servidor.", 130),
-    "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba: si es constante, si se concentra en un tramo o si no hubo errores.", 130),
-    "chart_codes": ("Analiza los codigos de respuesta de esta transaccion y que indica su reparto sobre la salud del servicio.", 130),
-    "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene, si cae y como se relaciona con sus tiempos.", 130),
+    "summary": ("Resumen del comportamiento de esta transaccion: como respondio, que la separa de un servicio sano y a cuantos usuarios les duele la espera. "
+                "Este texto es la LECTURA BASE de la transaccion: las otras cinco secciones lo reciben y no pueden contradecirlo. "
+                "Deja claro, con los minutos de las series, si sus fallos y sus picos son puntuales o sostenidos.", 200),
+    "chart_response_times": ("Analiza la evolucion de sus tiempos de respuesta en el tiempo: nivel base, picos y en que minuto aparecen, y si hay tramos sostenidos o solo puntos aislados.", 130),
+    "chart_latency": ("Analiza su latencia frente al tiempo total: cuanto es espera hasta el primer byte y cuanto es descarga, y como se mueve a lo largo de la prueba.", 130),
+    "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba con los minutos de la serie: entre que valores se movio la mayor parte del tiempo, su peor y su mejor minuto, y si el fallo es constante, intermitente o se concentra en un tramo.", 130),
+    "chart_codes": ("Analiza los codigos de respuesta de esta transaccion: que indica su reparto sobre la salud del servicio, cuando aparece cada codigo de fallo y si se reparte por toda la prueba o se concentra en un tramo.", 130),
+    "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene o cae y en que minutos, y como fue el arranque.", 130),
     # D30: estas dos ya no se generan (D20), pero si alguien las reactiva no
     # pueden dictaminar sobre produccion desde el bloque de UNA transaccion.
     "conclusions": ("Escribe las conclusiones de ESTA transaccion: que quedo demostrado, con sus cifras.", 200),
@@ -84,10 +94,22 @@ INSTRUCCIONES: Dict[str, tuple] = {
 }
 
 
-def _serie_digest(series: Dict[str, Any]) -> Dict[str, str]:
-    """Resume las 5 series a una linea cada una. El prompt no puede llevar los
-    ~500 KB de puntos que devuelve N4.3, pero si su forma: pico, promedio y
-    cuando pasa lo relevante."""
+def _serie_digest(series: Dict[str, Any], df_tx=None) -> Dict[str, str]:
+    """Resume las 5 series. El prompt no puede llevar los ~500 KB de puntos que
+    devuelve N4.3, pero si su forma: pico, promedio y cuando pasa lo relevante.
+
+    ETAPA R2 (R-D10): con las muestras de la transaccion (`df_tx`) cada serie
+    sale en el formato de `resumen_serie` —extremos con su minuto, tramos,
+    episodios sostenidos y tendencia—, los codigos incluidos EN EL TIEMPO. Sin
+    ellas se conserva el resumen de una linea de N4.6, que no decia cuando.
+    """
+    if df_tx is not None and len(df_tx):
+        try:
+            b = resumen_serie.bloques_transaccion(df_tx, int(series.get("interval_seconds", 1) or 1))
+            b["_cabecera"] = b.pop("cabecera")   # va una sola vez por prompt
+            return b
+        except Exception as e:
+            logger.warning(f"R2: sin serie resumida para la transaccion ({e}); se usa la de N4.6")
     interval = int(series.get("interval_seconds", 1) or 1)
 
     def _vals(nombre: str, key: str = "value") -> List[float]:
@@ -125,7 +147,8 @@ def _serie_digest(series: Dict[str, Any]) -> Dict[str, str]:
 
 def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
                           test_type: str = "load",
-                          acceptance_criteria: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+                          acceptance_criteria: Optional[Dict[str, Any]] = None,
+                          df_tx=None, lectura_base: str = "") -> Dict[str, str]:
     """Los prompts de una transaccion, con SUS metricas reales.
 
     ETAPA 3 (D33/D34): las cifras siguen saliendo formateadas a la espanola —
@@ -141,7 +164,7 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
     """
     avg, mx = float(m.get("promedio", 0) or 0), float(m.get("max", 0) or 0)
     ratio = veces(mx / avg) + " su promedio" if avg > 0 else "sin promedio de referencia"
-    digest = _serie_digest(series)
+    digest = _serie_digest(series, df_tx)
     metricas = f"""METRICAS REALES DE LA TRANSACCION "{label}" (prueba de {test_type}):
 - Muestras ejecutadas: {_n(m.get('muestras', 0))}
 - Tiempo promedio: {ms(avg)} | Minimo: {ms(m.get('min', 0))}
@@ -161,7 +184,11 @@ LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
         instruccion, tope = INSTRUCCIONES[section]
         # Las 5 graficas reciben su serie; resumen, conclusiones y recomendaciones
         # reciben las cinco, que es su ambito.
-        serie_txt = digest.get(section) or "\n".join(digest.values())
+        # R2: el resumen recibe las cinco; la linea de tiempo va una sola vez.
+        series_txt = {k: v for k, v in digest.items() if k != "_cabecera"}
+        serie_txt = series_txt.get(section) or "\n\n".join(series_txt.values())
+        if digest.get("_cabecera"):
+            serie_txt = f"{digest['_cabecera']}\n{serie_txt}"
         pico = (
             f"El maximo de {ms(mx)} y su relacion ({ratio}) son OBLIGATORIOS en esta seccion."
             if section in PICO_OBLIGATORIO else
@@ -169,11 +196,13 @@ LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
             f"si no aporta, no lo repitas: otras secciones del informe ya lo tratan."
         )
         extra = DEFINICION_LATENCIA if section == "chart_latency" else ""
+        # R-D17: las cinco graficas reciben el resumen ya escrito de ESTA transaccion.
+        lectura = bloque_lectura_base(lectura_base) if section != "summary" else ""
         prompts[section] = f"""{metricas}
 
 DATOS DE LA SERIE TEMPORAL:
 {serie_txt}
-{extra}
+{extra}{lectura}
 {instruccion}
 Maximo {tope} palabras. Habla SOLO de esta transaccion, no del test completo.
 {pico}
@@ -212,6 +241,7 @@ async def generate_transaction_report(
     db, execution_id, label: str, metrics: Dict[str, Any], series: Dict[str, Any],
     test_type: str = "load", analyzer=None, sections: Optional[List[str]] = None,
     acceptance_criteria: Optional[Dict[str, Any]] = None,
+    df_tx=None,
 ) -> Dict[str, Any]:
     """Genera y persiste las secciones. Nunca lanza por un fallo de IA.
 
@@ -226,7 +256,25 @@ async def generate_transaction_report(
     objetivo = [s for s in SECTIONS_GENERADAS if not sections or s in sections]
     counters = {"total": len(objetivo), "generated": 0, "failed": 0}
     # ETAPA 5b (D55): los criterios de la ejecucion entran en los seis prompts.
-    prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria)
+    # ETAPA R2: `df_tx` son las muestras de la transaccion, para resumir su serie.
+    prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria, df_tx)
+
+    # R-D17: el resumen va primero (SECTIONS_GENERADAS empieza por el) y su
+    # texto es la lectura base de las otras cinco. Si solo se rehace una grafica,
+    # la lectura es el resumen que ya esta guardado.
+    lectura_base = ""
+    if "summary" not in objetivo:
+        try:
+            fila = (await db.execute(select(TransactionChartAnalysis.ai_analysis).where(
+                TransactionChartAnalysis.execution_id == execution_id,
+                TransactionChartAnalysis.label == label,
+                TransactionChartAnalysis.section == "summary",
+            ))).scalar_one_or_none()
+            lectura_base = fila or ""
+        except Exception as e:
+            logger.warning(f"R2: sin resumen guardado de '{label}' para la lectura base ({e})")
+        prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria,
+                                        df_tx, lectura_base)
 
     if analyzer is None:
         try:
@@ -255,6 +303,12 @@ async def generate_transaction_report(
                 )
                 if texto:
                     texto = sanitize_ai_text(texto)   # regla 14
+                if section == "summary" and texto:
+                    # R-D17: con el resumen escrito, se rearman los prompts de las
+                    # graficas para que lo lleven. Sin llamada nueva: solo texto.
+                    lectura_base = texto
+                    prompts = build_section_prompts(label, metrics, series, test_type,
+                                                    acceptance_criteria, df_tx, lectura_base)
             except Exception as e:
                 # Tolerancia por seccion: se registra vacia y el resto sigue.
                 logger.error(f"N4.6: fallo la seccion '{section}' de '{label}': {e}")

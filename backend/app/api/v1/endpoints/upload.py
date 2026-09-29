@@ -883,6 +883,7 @@ async def _generar_mini_informes_bg(execution_id, labels: List[str]) -> None:
                         # ETAPA 5b (D55): el umbral que se le aplica a ESTA
                         # transaccion tiene que llegar a sus seis prompts.
                         acceptance_criteria=execution.acceptance_criteria_json,
+                        df_tx=df[df["label"] == label],   # ETAPA R2: su serie resumida
                     )
                     logger.info(f"N4.10: '{label}' listo en {round((time.perf_counter() - t0) * 1000)} ms {counters}")
                 except Exception as e:
@@ -971,6 +972,7 @@ async def generate_transaction_report_endpoint(
         db=db, execution_id=execution.id, label=label, metrics=metrics,
         series=series, test_type=execution.test_type or "load", sections=pedidas,
         acceptance_criteria=execution.acceptance_criteria_json,   # ETAPA 5b (D55)
+        df_tx=df[df["label"] == label],                             # ETAPA R2
     )
     counters["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
     counters["label"] = label

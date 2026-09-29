@@ -35,6 +35,8 @@ from app.services.ai.gemini import (
 # ETAPA 3 (D32/D33): los bloques de datos de las graficas se formatean aqui, y
 # se entregan al modelo ya en espanol y con los percentiles traducidos.
 from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
+# ETAPA R2 (R-D9/R-D10): cada seccion de grafica recibe SU serie, resumida.
+from app.services.ai import resumen_serie
 
 logger = logging.getLogger(__name__)
 
@@ -149,32 +151,64 @@ async def run_ai_and_verdict(
             "num_transactions": len(summary_df),
         }
 
-        # 1. Tabla resumen
+        # ETAPA R2 (R-D9, R-D12): las series de las graficas, con el MISMO
+        # intervalo adaptativo que usa el dashboard. Se calculan aqui, sobre el
+        # DataFrame ya parseado: `jtl_parser.py` (protegido) solo se llama.
+        # Si algo falla, las secciones salen como antes de R2, sin serie.
+        series: Dict[str, str] = {}
+        hechos = ""
+        try:
+            df_main = parser.df_main if getattr(parser, "df_main", None) is not None and len(parser.df_main) else parser.df
+            intervalo = parser._calculate_adaptive_interval() if hasattr(parser, "_calculate_adaptive_interval") else 1
+            series = resumen_serie.bloques_generales(parser.df, df_main, intervalo)
+            hechos = resumen_serie.hechos_de_la_prueba(df_main, intervalo)
+        except Exception as e:
+            logger.warning(f"R2: sin series para los prompts ({e}); las secciones van sin serie")
+
+        def _con_serie(clave: str, datos: str) -> str:
+            if not series.get(clave):
+                return datos
+            return f"{datos}\n\n{series['cabecera']}\n{series[clave]}"
+
+        # 1. Tabla resumen — es la primera y fija la LECTURA BASE (R-D17): su
+        # texto llega a todas las secciones que vienen detras.
         logger.info("[1/10] Analizando tabla resumen...")
         ai_analysis_summary = await asyncio.to_thread(
             gemini.analyze_summary_table,
             summary_df, metrics, test_type=test_type,
             acceptance_criteria=acceptance_criteria_dict, insights=insights,
-            test_date=test_date, metric_unit=metric_unit,
+            test_date=test_date, metric_unit=metric_unit, hechos=hechos,
         )
         if ai_analysis_summary is None:
             logger.info("Using FALLBACK for summary_table")
             ai_analysis_summary = fallback.analyze_summary_table(summary_df, insights)
         else:
             ai_status["success"] = True  # Gemini responded for the primary analysis
+        # El texto del respaldo tambien sirve de lectura: es lo que se publica.
+        lectura_base = ai_analysis_summary or ""
 
         # 2. Errores
         logger.info("[2/10] Analizando errores...")
         errors_for_analysis: List[dict] = []
         error_codes_df = parser.df[~parser.df['success']].copy() if parser.df is not None else None
         if error_codes_df is not None and len(error_codes_df) > 0:
-            error_grouped = error_codes_df.groupby(['label', 'responseCode']).size().reset_index(name='count')
+            # ETAPA R2 (R-D15): el mensaje iba vacio SIEMPRE, escrito a mano
+            # (`'message': ''`), aunque el JTL trae `responseMessage` y
+            # `failureMessage`. Ahora va el real; si el JTL no trae ninguno, el
+            # prompt dice «el JTL no trae mensaje». Y cuando aparece cada fallo.
+            mensajes = resumen_serie.mensajes_de_error(error_codes_df)
+            t0_prueba = parser.df['timestamp'].min()
+            error_grouped = error_codes_df.groupby(['label', 'responseCode']).agg(
+                count=('timestamp', 'size'), primero=('timestamp', 'min'), ultimo=('timestamp', 'max'),
+            ).reset_index()
             for _, row in error_grouped.iterrows():
                 errors_for_analysis.append({
                     'label': row['label'],
                     'count': int(row['count']),
                     'code': str(row['responseCode']),
-                    'message': '',
+                    'message': mensajes.get((str(row['label']), str(row['responseCode'])), ''),
+                    'cuando': (f"del {resumen_serie.momento(row['primero'], t0_prueba)} "
+                               f"al {resumen_serie.momento(row['ultimo'], t0_prueba)}"),
                 })
 
         ai_analysis_errors = await asyncio.to_thread(
@@ -182,6 +216,7 @@ async def run_ai_and_verdict(
             errors_for_analysis, metrics['total_requests'], test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,                      # ETAPA R2 (R-D17)
         )
         if ai_analysis_errors is None:
             logger.info("Using FALLBACK for errors")
@@ -209,9 +244,11 @@ async def run_ai_and_verdict(
         logger.info(f"Response times: enviando {len(rt_lines)} transacciones a Gemini")
         ai_analysis_response_times = await asyncio.to_thread(
             gemini.analyze_chart,
-            'response_times', "\n".join(rt_lines), test_type=test_type, insights=insights,
+            'response_times', _con_serie('response_times', "\n".join(rt_lines)),
+            test_type=test_type, insights=insights,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_response_times is None:
             logger.info("Using FALLBACK for response_times")
@@ -237,13 +274,15 @@ async def run_ai_and_verdict(
         ai_analysis_latency = await asyncio.to_thread(
             gemini.analyze_chart,
             'latency',
-            f"Latencia promedio: {ms(metrics.get('avg_latency', 0))}. "
-            f"Tiempo total promedio de respuesta: {ms(metrics.get('avg_response_time', 0))}. "
-            f"Volumen recibido: {kbs(metrics.get('kb_per_sec_received', 0))}. "
-            f"Volumen enviado: {kbs(metrics.get('kb_per_sec_sent', 0))}.",
+            _con_serie('latency',
+                       f"Latencia promedio: {ms(metrics.get('avg_latency', 0))}. "
+                       f"Tiempo total promedio de respuesta: {ms(metrics.get('avg_response_time', 0))}. "
+                       f"Volumen recibido: {kbs(metrics.get('kb_per_sec_received', 0))}. "
+                       f"Volumen enviado: {kbs(metrics.get('kb_per_sec_sent', 0))}."),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_latency is None:
             logger.info("Using FALLBACK for latency")
@@ -253,12 +292,14 @@ async def run_ai_and_verdict(
         ai_analysis_error_rate = await asyncio.to_thread(
             gemini.analyze_chart,
             'error_rate',
-            f"Tasa de error: {pct(metrics['error_rate'])} "
-            f"({num(metrics['total_errors'])} de {num(metrics['total_requests'])} peticiones). "
-            f"Duracion de la prueba: {num(metrics['duration_seconds'])} segundos.",
+            _con_serie('error_rate',
+                       f"Tasa de error: {pct(metrics['error_rate'])} "
+                       f"({num(metrics['total_errors'])} de {num(metrics['total_requests'])} peticiones). "
+                       f"Duracion de la prueba: {num(metrics['duration_seconds'])} segundos."),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_error_rate is None:
             logger.info("Using FALLBACK for error_rate")
@@ -273,10 +314,11 @@ async def run_ai_and_verdict(
         ai_analysis_codes_per_second = await asyncio.to_thread(
             gemini.analyze_chart,
             'codes_per_second',
-            f"Codigos de respuesta acumulados de la prueba: {codes_summary}.",
+            _con_serie('codes_per_second', f"Codigos de respuesta acumulados de la prueba: {codes_summary}."),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_codes_per_second is None:
             logger.info("Using FALLBACK for codes_per_second")
@@ -290,11 +332,13 @@ async def run_ai_and_verdict(
         ai_analysis_transactions_per_second = await asyncio.to_thread(
             gemini.analyze_chart,
             'transactions_per_second',
-            f"Caudal total: {num(metrics['throughput'], 2)} por segundo, repartido entre "
-            f"{len(summary_df)} transacciones:\n" + "\n".join(tps_lines),
+            _con_serie('transactions_per_second',
+                       f"Caudal total: {num(metrics['throughput'], 2)} por segundo, repartido entre "
+                       f"{len(summary_df)} transacciones:\n" + "\n".join(tps_lines)),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_transactions_per_second is None:
             logger.info("Using FALLBACK for transactions_per_second")
@@ -304,11 +348,15 @@ async def run_ai_and_verdict(
         ai_analysis_active_threads = await asyncio.to_thread(
             gemini.analyze_chart,
             'active_threads',
-            f"Concurrencia durante {num(metrics['duration_seconds'])} segundos de prueba. "
-            f"Tiempo promedio de respuesta en toda la ventana: {ms(metrics.get('avg_response_time', 0))}.",
+            # ETAPA R2 (R-D16): hasta R2 esta seccion no recibia ni un numero
+            # de hilos y se le pedia contar subida, meseta y cuantos a la vez.
+            _con_serie('active_threads',
+                       f"Concurrencia durante {num(metrics['duration_seconds'])} segundos de prueba. "
+                       f"Tiempo promedio de respuesta en toda la ventana: {ms(metrics.get('avg_response_time', 0))}."),
             test_type=test_type,
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
+            lectura_base=lectura_base,
         )
         if ai_analysis_active_threads is None:
             logger.info("Using FALLBACK for active_threads")
