@@ -75,7 +75,11 @@ def main():
         cliente = fila["id"]
     else:
         cliente = str(uuid.uuid4())
-        tc.execute("insert into clients (id, name, description, is_active) values (%s,%s,%s,true)",
+        # Con fechas: el modelo las pone en Python (`default=datetime.utcnow`),
+        # no en la base, asi que un INSERT a mano las dejaba en NULL y
+        # `GET /clients` fallaba entero con un 500 de validacion (reporte 129).
+        tc.execute("insert into clients (id, name, description, is_active, created_at, updated_at) "
+                   "values (%s,%s,%s,true,now(),now())",
                    (cliente, CLIENTE, "ZZTEST: datos de la etapa R1"))
 
     tc.execute("select column_name from information_schema.columns where table_name='test_executions'")

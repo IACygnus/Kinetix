@@ -159,15 +159,13 @@ def main():
 
 def correr(cli, crudo, cur, tokens_vistos):
     # ---------- 0. Los clientes ----------
-    # Se buscan por SQL de LECTURA y no por GET /clients: en la base de pruebas
-    # hay un `ZZTEST-R1` sin `created_at` que hace fallar esa lista entera (500
-    # de validacion). No es de esta etapa y no se toca.
-    clientes = {}
+    r = cli.get(f"{API}/clients")
+    ok(r.status_code == 200, f"GET /clients: {r.status_code}")
+    clientes = {c["name"]: c["id"] for c in r.json()}
     for nombre in (CLIENTE, OTRO):
-        cur.execute("SELECT id FROM clients WHERE name = %s", (nombre,))
-        fila = cur.fetchone()
-        clientes[nombre] = str(fila[0]) if fila else cli.post(f"{API}/clients", json={
-            "name": nombre, "description": "Prueba O2e.2b. Marca ZZTEST."}).json()["id"]
+        if nombre not in clientes:
+            clientes[nombre] = cli.post(f"{API}/clients", json={
+                "name": nombre, "description": "Prueba O2e.2b. Marca ZZTEST."}).json()["id"]
     uno, otro = clientes[CLIENTE], clientes[OTRO]
 
     # ---------- 1. CSRF ----------
