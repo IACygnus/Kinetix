@@ -449,6 +449,7 @@ httpOnly `access_token`.
 | GET | `/executions/{id}/charts` | Datos para Dashboard |
 | PUT | `/executions/{id}/analysis` | Editar análisis IA |
 | GET/PUT | `/executions/{id}/capacity` | Análisis de capacidad |
+| GET | `/executions/{id}/origen-ia` | F1: qué secciones no escribió la IA, por qué, cuándo, y la marca de los exportados. La lista `/executions` trae `ai_origen` (resumen) |
 
 #### Informe por transacción (ETAPA 2, `upload.py`)
 | Verbo | Path | Función |
@@ -521,6 +522,7 @@ mira no pueden discrepar.
 | GET | `/ai-config/models/live` | Llama API del provider, **cache TTL 5min**, fallback a lista hardcoded |
 | POST | `/ai-config/test` | Probar conexión (acepta payload o usa DB) |
 | POST | `/ai-config/reset-usage` | Resetear contadores (admin) |
+| GET | `/ai-config/estado` | F1: ¿sirve la IA **ahora**? Sin generar (`models.retrieve`), caché 60 s, cualquier usuario activo. No ve un cupo agotado |
 
 ### Motor de Performance Testing
 - `/scripts` — CRUD ScriptDesign + `POST /{id}/export-jmx`
@@ -628,6 +630,7 @@ Schema se crea con `Base.metadata.create_all` al startup (sin Alembic).
 | **`transaction_chart_analyses`** | id, execution_id, label, section, ai_analysis, generated_at, is_edited, ai_analysis_updated_at, sort_order, created_at — **ETAPA 2**: los textos del informe por transacción. `SECTIONS_GENERADAS` = `summary` + `chart_response_times/latency/error_rate/codes/tps`. Las filas viejas de `conclusions`/`recommendations` siguen ahí y **se ignoran** (D20) |
 | **`transaction_analyses`** | id, execution_id, label, is_critical, marked_by (ai/user), metrics_json, ai_analysis, ai_analysis_updated_at, sort_order, created_at — transacciones marcadas como críticas. **Legacy de solo lectura desde N3.4**: `ai_analysis` ya no se pinta en ninguna salida |
 | **`client_logos`** | logo del cliente para la portada |
+| **`ai_section_origins`** | F1 (reporte 124): de dónde salió cada texto. Una fila por (execution_id, label, section); `label=''` es el informe general. `origen` = `ia`/`respaldo`/`sin_texto`/`fijo`, provider, model, `motivo_tipo`, `motivo` (el error literal), generated_at, edited_at. La crea `create_all`: **sin SQL** |
 | **`ai_script_designs`** · **`ai_design_data_files`** | AI Script Designer |
 
 ### 5.1 Las siete tablas del MÓDULO DE HORAS (H1)
@@ -737,6 +740,26 @@ aviso ámbar en pantalla (`AvisoEstilo.tsx`), nunca como corrección automática
 > 5 minutos con `gpt-5.5`. Retirar Throughput ahorra 1 llamada por informe y
 > quitar las conclusiones por transacción ahorra 2 por transacción; **agrupar
 > llamadas sigue sin medir**. El modelo no se degrada como atajo.
+
+#### El origen de cada texto — el aviso de respaldo (F1/F2, reporte 124)
+
+Nace del 26-28/09/2026: la clave se invalidó y se generaron informes con
+`FallbackAnalyzer` dos días sin que nadie lo supiera.
+
+- **`services/ai/origen.py` es la única definición** de qué es respaldo, cómo se
+  cuenta, cómo se reconoce un informe viejo (por las plantillas del respaldo) y
+  qué dice la marca invisible de los exportados («cuántas, cuándo y por qué»).
+- **El motivo viaja por un buzón por llamada** (`gemini.BUZON_FALLO`, una
+  `ContextVar`), no por `GeminiAnalyzer._last_error`, que es de clase y se pisa
+  entre generaciones en paralelo. Toda llamada nueva de IA que produzca un
+  texto del informe pasa por `origen.llamar()` y registra su origen.
+- **`ai_status.success` solo es verdad si TODAS las secciones salieron de la IA.**
+  Antes bastaba la primera.
+- **La pantalla lo dice con texto**: panel que para la subida si `/ai-config/estado`
+  falla, aviso que no se cierra solo, franja arriba del informe, rótulo por
+  sección de transacción, columna y filtro del historial, «Exportar igualmente».
+  **Nada de eso sale en el PDF ni en el HTML**: allí va la marca invisible
+  (`<meta name="kinetix:origen">` y los metadatos del PDF).
 
 #### `GENERATION_CONFIG`
 ```python
@@ -1085,18 +1108,22 @@ Lee la primera línea no-vacía y devuelve `True` si empieza con `<?xml` o
 > Fredy. Cualquier cambio debe ser quirúrgico (1 fix por prompt, diff
 > mínimo, validación visual previa).
 
-| Archivo | Líneas (2026-09-17) |
+| Archivo | Líneas (2026-09-29) |
 |---|---|
-| `frontend/src/components/dashboard/Dashboard.tsx` | 1045 |
+| `frontend/src/components/dashboard/Dashboard.tsx` | 1057 |
 | `frontend/src/pages/ScriptDesigner.tsx` | 967 |
 | `backend/app/services/jtl/jtl_parser.py` | 515 |
 | `backend/app/services/engine/virtual_user.py` | 194 |
 | `backend/app/services/export/report_generator.py` | 1103 |
-| `backend/app/api/v1/endpoints/export_html.py` | 1416 |
-| `backend/app/api/v1/endpoints/export_pdf.py` | 547 |
+| `backend/app/api/v1/endpoints/export_html.py` | 1418 |
+| `backend/app/api/v1/endpoints/export_pdf.py` | 575 |
 | `backend/app/services/engine/` (carpeta completa) | — motor propio |
 
 **NO refactorizar sin autorización explícita de Fredy.**
+
+> Últimas líneas autorizadas (F1/F2, reporte 124): `con_marca(...)` más su import
+> en `export_html.py` y `export_pdf.py` (la marca invisible de origen), y
+> `<FranjaRespaldo>` más su import en `Dashboard.tsx`. Toda la lógica, fuera.
 
 ### Cómo se trabajó un protegido en el plan de corrección
 
@@ -1191,6 +1218,14 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     manual.
 11. **WeasyPrint: solo table layouts, no flex/grid.** En las ramas `for_pdf`
     de `_build_att_html` y derivados.
+
+    **La rama web no se toca** (Fredy, 29/09/2026). El informe HTML está bien
+    como está: los ajustes de maquetación —espacios, tamaño de las imágenes,
+    saltos de página— son **solo del PDF**, y viven en las ramas `for_pdf` o en
+    el `<style>` del PDF. Nadie «mejora» la rama web sin que Fredy lo pida
+    expresamente, ni siquiera con un `<div>` que «no cambia nada». Ya pasó: P6
+    metió un envoltorio en la rama web (reporte 123), deshecho en `eb59c46`. Se
+    comprueba comparando la salida de la rama web antes y después, byte a byte.
 12. **Gemini en Docker: `transport="rest"` siempre.** El gRPC default falla
     detrás del bridge network.
 13. **`bcrypt==4.0.1` pinned.** `passlib==1.7.4` es incompatible con bcrypt
