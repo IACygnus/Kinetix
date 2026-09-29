@@ -67,6 +67,15 @@ for obligatorio in URL TOKEN ORG CUBO CLIENTE; do
     [ -n "${!obligatorio}" ] || { echo "falta --${obligatorio,,}" >&2; exit 2; }
 done
 NOMBRE_HOST="${NOMBRE_HOST:-$(hostname)}"
+# El cliente va entre comillas simples en el fichero de entorno (ver mas abajo),
+# y Telegraf lo pega tal cual dentro de una cadena TOML entre comillas dobles.
+# Una comilla de cualquier tipo, una barra invertida o un salto de linea rompen
+# una de las dos cosas: se rechaza antes de tocar nada.
+case "$CLIENTE" in
+    *\'*|*\"*|*\\*|*$'\n'*)
+        echo "el nombre del cliente no puede llevar comillas, barras invertidas ni saltos de linea" >&2
+        exit 2 ;;
+esac
 
 [ "$(id -u)" -eq 0 ] || { echo "hay que ser root para instalar un servicio" >&2; exit 1; }
 
@@ -126,9 +135,12 @@ CONF
 chmod 644 "$DIR_CONFIG/conf.d/00-corrida.conf"
 
 # El secreto, aparte y con permisos de secreto.
+# KX_CLIENTE entre comillas simples (O2e.3, reporte 129 §5.1): sin systemd el
+# agente arranca con `. entorno`, y un nombre con espacio dejaba KX_CLIENTE
+# vacio. `EnvironmentFile` de systemd tambien entiende las comillas simples.
 cat > "$DIR_CONFIG/entorno" <<ENV
 KX_HOST=$NOMBRE_HOST
-KX_CLIENTE=$CLIENTE
+KX_CLIENTE='$CLIENTE'
 KX_INFLUX_URL=$URL
 KX_INFLUX_ORG=$ORG
 KX_INFLUX_BUCKET=$CUBO
