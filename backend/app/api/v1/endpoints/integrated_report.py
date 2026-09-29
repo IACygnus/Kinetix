@@ -7,6 +7,7 @@ import uuid
 import json
 import os
 import base64
+import io
 import logging
 from typing import List, Optional
 from datetime import datetime
@@ -1491,6 +1492,12 @@ def _extract_style_from_individual_report(full_html: str) -> str:
     return ""
 
 
+# P6: geometria de una captura en el PDF del integrado (A4 apaisado, margen 1,5 cm).
+# Ancho util 267 mm menos el relleno de la tarjeta (2 x 4 mm) = 259 mm.
+_ANCHO_UTIL_MM = 259
+_ALTO_MAX_CAPTURA_MM = 155
+
+
 def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_prefix: str, for_pdf: bool = False, image_overrides=None) -> str:
     """Build HTML for monitoring/evidence sections.
     Works for both HTML (browser, Plotly integrated) and PDF (WeasyPrint).
@@ -1514,25 +1521,40 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
     # Fix 7.3: PDF uses pt/mm matching build_pdf_html standalone; HTML keeps rem for browser rendering.
     _font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
     if for_pdf:
+        # P6 (diagnostico 120 §6): la tarjeta entera y la caja de analisis
+        # llevaban `avoid`. Una tarjeta mide 90-110 mm y no caben dos en los
+        # 180 mm utiles: la segunda saltaba de hoja y dejaba 70-100 mm en
+        # blanco en CADA pagina de capturas. Ahora solo la pareja titulo +
+        # imagen es indivisible (`pair_style`); el analisis puede seguir en la
+        # hoja siguiente, con orphans/widows para que no quede una linea suelta.
         ai_box_style = (
             "background:#ffffff;border:2px solid #4f46e5;border-left:6px solid #4f46e5;"
             f"border-radius:1.5mm;padding:3mm 4mm;margin:2mm 0 4mm 0;"
-            f"page-break-inside:avoid;break-inside:avoid;font-family:{_font};text-align:left"
+            f"font-family:{_font};text-align:left"
         )
-        ai_title_style = f"font-size:8.5pt;font-weight:700;color:#0a1628;margin-bottom:1.5mm;font-family:{_font}"
-        ai_text_style = f"font-size:8pt;line-height:1.6;color:#334155;font-family:{_font}"
+        ai_title_style = (f"font-size:8.5pt;font-weight:700;color:#0a1628;margin-bottom:1.5mm;"
+                          f"page-break-after:avoid;break-after:avoid;font-family:{_font}")
+        ai_text_style = f"font-size:8pt;line-height:1.6;color:#334155;orphans:3;widows:3;font-family:{_font}"
         card_style = (
             "background:#ffffff;border-radius:2mm;padding:3mm 4mm;margin:2mm 0;"
-            f"page-break-inside:avoid;break-inside:avoid;font-family:{_font}"
+            f"font-family:{_font}"
         )
+        pair_style = "page-break-inside:avoid;break-inside:avoid"
         card_title_style = (
             "font-size:10pt;font-weight:700;color:#0a1628;"
             f"border-left:1mm solid #0a1628;padding-left:3mm;margin-bottom:2mm;"
             f"text-align:left;font-family:{_font}"
         )
         img_wrapper_style = "margin:2mm 0"
-        img_style = (
-            "display:block;margin:0 auto;max-width:100%;max-height:60mm;"
+        # P6: lo que hace legible la letra de dentro de una captura es el ANCHO.
+        # Toda captura va al ancho util entero (259 mm), con el alto que salga:
+        # sin tope. El tope de 60 mm dejaba la de CPU en 139 mm de ancho.
+        img_style = "display:block;margin:0 auto;width:100%;height:auto;border-radius:1.5mm"
+        # Unica excepcion: una captura tan alta que a todo el ancho no cabe en
+        # una hoja con su titulo (180 mm utiles menos ~25 de titulo y margenes).
+        # Esa se limita a la hoja y pierde ancho; no se puede partir una imagen.
+        img_style_alta = (
+            f"display:block;margin:0 auto;max-width:100%;max-height:{_ALTO_MAX_CAPTURA_MM}mm;"
             "width:auto;height:auto;object-fit:contain;border-radius:1.5mm"
         )
     else:
@@ -1555,6 +1577,8 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
         )
         img_wrapper_style = "text-align:center;margin:1rem 0"
         img_style = "max-width:100%;max-height:800px;border-radius:8px;display:block;margin:0 auto"
+        img_style_alta = img_style   # la rama web no cambia
+        pair_style = ""
 
     items = ""
     for att in attachments:
@@ -1563,10 +1587,22 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
             abs_path = os.path.join("/app", att.filepath.lstrip("/"))
             if os.path.exists(abs_path):
                 with open(abs_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
+                    crudo = f.read()
+                b64 = base64.b64encode(crudo).decode()
+                estilo = img_style
+                if for_pdf:
+                    try:
+                        from PIL import Image   # solo lee la cabecera: ancho y alto
+                        w, h = Image.open(io.BytesIO(crudo)).size
+                        if w and _ANCHO_UTIL_MM * h / w > _ALTO_MAX_CAPTURA_MM:
+                            estilo = img_style_alta
+                            logger.info(f"P6: '{att.title}' ({w}x{h}) no cabe a todo el ancho; "
+                                        f"se limita a {_ALTO_MAX_CAPTURA_MM} mm de alto")
+                    except Exception:
+                        pass   # sin medida, se queda el estilo general
                 img_html = (
                     f'<div style="{img_wrapper_style}">'
-                    f'<img src="data:{att.file_type};base64,{b64}" style="{img_style}" />'
+                    f'<img src="data:{att.file_type};base64,{b64}" style="{estilo}" />'
                     f'</div>'
                 )
         per_img_ai = ""
@@ -1581,8 +1617,10 @@ def _build_att_html(section: SectionInput, attachments, ai_analysis: str, title_
             )
         items += (
             f'<div style="{card_style}">'
+            f'<div style="{pair_style}">'   # P6: titulo + imagen, indivisibles
             f'<div style="{card_title_style}">{att.title or att.filename}</div>'
             f'{img_html}'
+            f'</div>'
             f'{per_img_ai}'
             f'</div>'
         )
@@ -1826,7 +1864,12 @@ async def export_integrated_pdf(
     # B2: integrated PDF header removed. PDF starts directly with the first
     # execution's compact cover (from build_pdf_html via _generate_full_execution_pdf_html).
 
-    # Unified conclusions (B1+B3: forced new page via .conclusions-block, boxes don't split)
+    # Unified conclusions (B1+B3: forced new page via .conclusions-block)
+    # P6: el comentario prometia un salto de pagina que ninguna regla CSS
+    # hacia, y la caja heredaba `break-inside:avoid` de `.ai-box`. Como mide mas
+    # de una hoja, WeasyPrint la empujaba entera a la siguiente y dejaba el
+    # titulo solo en una pagina en blanco. Las dos reglas estan ahora en el
+    # <style> de abajo: el bloque empieza pagina y su caja se puede partir.
     conclusions_html = ""
     unified_text = await _resolve_unified_conclusions(db, request)   # N2.2-A
     if unified_text:
@@ -1843,6 +1886,9 @@ async def export_integrated_pdf(
 {extracted_style}
 @page {{ size: A4 landscape; margin: 1.5cm; }}
 @page :first {{ margin: 0; }}
+.conclusions-block {{ page-break-before: always; break-before: page; }}
+.conclusions-block .ai-box {{ page-break-inside: auto; break-inside: auto; }}
+.conclusions-title {{ page-break-after: avoid; break-after: avoid; }}
 /* PDF-1: la portada mide ~210mm y solo cabe en una pagina sin margenes. Con
    `:first` eso solo valia para la pagina 1, asi que en un integrado con varias
    ejecuciones la 2a portada en adelante se partia en dos. Con pagina nombrada,

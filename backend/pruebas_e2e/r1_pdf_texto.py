@@ -20,10 +20,17 @@ import json
 import re
 import sys
 
-import pymupdf
-
 pdf, esperado = sys.argv[1], json.load(open(sys.argv[2], encoding="utf-8"))
-texto = " ".join(p.get_text() for p in pymupdf.open(pdf))
+try:
+    import pymupdf
+    texto = " ".join(p.get_text() for p in pymupdf.open(pdf))
+except ImportError:
+    # P6: el Python de esta maquina ya no trae PyMuPDF; pypdfium2 si esta en
+    # el contenedor (LEEME.md), asi que la comprobacion puede correr alli.
+    import pypdfium2 as pdfium
+    texto = " ".join(p.get_textpage().get_text_range() for p in pdfium.PdfDocument(pdf))
+    # pdfium entrega el guion de un corte de linea como U+FFFE; PyMuPDF, como «-».
+    texto = texto.replace("￾", "-")
 texto = re.sub(r"-\s*\n\s*", "-", texto)
 texto = re.sub(r"\s+", " ", texto)
 
