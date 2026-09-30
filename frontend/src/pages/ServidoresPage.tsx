@@ -23,6 +23,8 @@ import {
   PlugZap, Server, Settings2, Trash2, X,
 } from 'lucide-react';
 import { clientsAPI, servidoresAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { ConexionInflux, TokensIngesta } from '../components/observabilidad/TokensIngesta';
 import type {
   ClientInfo, ConfiguracionServidor, ResultadoPrueba, ServidorObservado,
   ModoServidor, TipoServidor,
@@ -78,6 +80,8 @@ const VACIO: Formulario = {
 };
 
 export default function ServidoresPage() {
+  const { user } = useAuth();
+  const esAdmin = user?.role === 'admin';
   const [clientes, setClientes] = useState<ClientInfo[]>([]);
   const [filtroCliente, setFiltroCliente] = useState('');
   const [servidores, setServidores] = useState<ServidorObservado[]>([]);
@@ -235,6 +239,18 @@ export default function ServidoresPage() {
           </select>
         </label>
       </div>
+
+      {/* ---------- O2e.4a: la conexión de Kinetix con InfluxDB, siempre; los
+          tokens de ingesta, del cliente elegido ---------- */}
+      <ConexionInflux esAdmin={esAdmin} />
+      {filtroCliente ? (
+        <TokensIngesta key={filtroCliente} clienteId={filtroCliente} esAdmin={esAdmin}
+          clienteNombre={clientes.find((c) => c.id === filtroCliente)?.name || ''} />
+      ) : (
+        <p className="mb-6 text-base text-gray-500" data-testid="ing-elige-cliente">
+          Elige un cliente para ver y crear sus tokens de ingesta.
+        </p>
+      )}
 
       {error && (
         <p className="mb-4 p-4 rounded-xl bg-red-50 border border-red-300 text-base text-red-800"

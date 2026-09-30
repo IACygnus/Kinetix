@@ -1032,6 +1032,53 @@ export const servidoresAPI = {
 };
 
 // ===========================================================================
+// OBSERVABILIDAD — los tokens de ingesta del agente (ETAPA O2e)
+// ===========================================================================
+/** Lo que se ve de un token. No hay campo para el token: no sale nunca. */
+export interface TokenIngesta {
+  id: string;
+  client_id: string;
+  prefijo: string;
+  creado_en: string;
+  ultimo_uso: string | null;
+  revocado_en: string | null;
+}
+
+/** Solo la respuesta del alta lleva el token, y solo esa vez (O-D49). */
+export interface TokenIngestaCreado extends TokenIngesta {
+  token: string;
+  aviso: string;
+}
+
+export interface EstadoTokenEscritura {
+  columna_aplicada: boolean;
+  hay_token: boolean;
+  sql: string;
+}
+
+export const ingestaAPI = {
+  listar: async (clientId: string): Promise<TokenIngesta[]> => {
+    const r = await api.get('/ingesta/tokens', { params: { client_id: clientId } });
+    return r.data;
+  },
+  crear: async (clientId: string): Promise<TokenIngestaCreado> => {
+    const r = await api.post('/ingesta/tokens', { client_id: clientId });
+    return r.data;
+  },
+  revocar: async (id: string): Promise<TokenIngesta> => {
+    const r = await api.post(`/ingesta/tokens/${id}/revocar`);
+    return r.data;
+  },
+  estadoEscritura: async (): Promise<EstadoTokenEscritura> => {
+    const r = await api.get('/ingesta/token-escritura');
+    return r.data;
+  },
+  cargarEscritura: async (token: string): Promise<void> => {
+    await api.put('/ingesta/token-escritura', { token });
+  },
+};
+
+// ===========================================================================
 // OBSERVABILIDAD — las sesiones de monitoreo (ETAPA O2d)
 // ===========================================================================
 const SESIONES = '/observabilidad/sesiones';
