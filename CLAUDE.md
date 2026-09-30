@@ -1253,8 +1253,15 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
 
     El 30/09 se quitaron del árbol los reportes anteriores al 135. Viven en el
     historial de git (`git log -- docs/reporte_claude_code/`). No se restauran.
-    La numeración sigue: el siguiente es el **136**. Lo que solo vivía en ellos
-    está en `PROJECT_STATUS.md`, «Al 30/09/2026».
+    La numeración sigue. Lo que solo vivía en ellos está en `PROJECT_STATUS.md`,
+    «Al 30/09/2026».
+
+    **Regla de Fredy (30/09/2026): los reportes se guardan solo en
+    `docs/reporte_claude_code/`.** Cualquier otra carpeta o archivo suelto que
+    aparezca —`docs/reports/repo/`, copias de reportes, backups `.bak`, etc.— **no
+    se toca, no se mueve, no se borra y no se versiona**, y no se señala como
+    pendiente. Fredy lo limpia al final del proyecto. Al hacer commit, se añaden
+    los archivos por su nombre: nunca `git add -A` ni `git add .`.
 20. **`docs/ESPECIFICACION-informe.md` es la referencia única de cómo debe
     quedar el informe.** Todo cambio del informe se valida contra ese
     documento; si el cambio pedido contradice la especificación, se avisa
