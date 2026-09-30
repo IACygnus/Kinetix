@@ -161,6 +161,33 @@ async def main():
               "sin hilos en el JTL: «fases no disponibles», nada inventado")
     comprobar(F.calcular(df.iloc[0:0]).disponible is False, "sin muestras: no disponibles")
 
+    print("7. Concentracion (BLOQUE 2.1b)")
+    import numpy as np
+    import pandas as pd
+    t0 = pd.Timestamp("2026-09-30 10:00:00")
+    fz = F.Fases(True, t0=t0, duracion_s=300.0, max_hilos=10, subida_hasta_s=10.0,
+                 bajada_desde_s=289.0, ultimo_s=300.0)
+    T = lambda s: pd.Series(t0 + pd.to_timedelta(s, unit="s"))
+    picos = F.concentracion(T(list(np.linspace(150, 155, 80)) + list(np.linspace(20, 280, 20)) + [3, 4, 295]), fz)
+    # El pico (80 fallos en 150-155 s) cae a caballo de dos ventanas de 9 s (64 + 17,
+    # con 1 de fondo): la zona tiene que juntar las dos, no contar solo la primera.
+    comprobar("concentrados en min 2:25–2:43" in picos and "81 de 100 (81,0%)" in picos,
+              "con picos: la zona entera del pico, aunque cruce dos ventanas (81 de 100)")
+    comprobar("y 3 en las rampas (subida 2, bajada 1)" in picos, "con picos: las rampas se cuentan aparte")
+    parejo = F.concentracion(T(np.arange(0, 300, 0.5)), fz)
+    comprobar("repartidos sin concentracion" in parejo and "si fuera parejo" in parejo,
+              "repartido: «repartidos sin concentracion», con la ventana mayor frente a la pareja")
+    comprobar("ventanas de 9 s" in parejo, "ventanas de duracion/30 (279 s / 30 = 9 s)")
+    comprobar("primero" not in picos + parejo and "ultimo" not in picos + parejo,
+              "ni el primero ni el ultimo como dato")
+    solo_rampas = F.concentracion(T([1, 2, 3, 295, 296]), fz)
+    comprobar(solo_rampas.startswith("ninguno en la carga sostenida"), "todo en las rampas: lo dice")
+    corta = F.concentracion(T(np.arange(0, 60, 1)), F.Fases(True, t0=t0, duracion_s=60.0, max_hilos=2,
+                                                            subida_hasta_s=0.0, bajada_desde_s=60.0, ultimo_s=60.0))
+    comprobar("ventanas de 5 s" in corta, "prueba corta: ventana minima de 5 s")
+    sinf = F.concentracion(T(np.arange(0, 300, 1)), F.Fases(False, t0=t0, duracion_s=300.0, motivo="x"))
+    comprobar("fases no disponibles: se mira la prueba entera" in sinf, "sin fases: lo dice y mira la prueba entera")
+
     print()
     print("R2 SERIES: TODO PASA" if not fallos else f"R2 SERIES: {len(fallos)} FALLA(N)")
     return 1 if fallos else 0
