@@ -8,7 +8,18 @@ export KX_SESION=/tmp/e2e_sesion_test.json
 export KX_API_PUERTO=8002
 export KX_PWD=sqa2024
 export KX_PWD_ANA=zztest2026
-export KX_TOKEN_ESCRITURA="qYZd1tnpiAguyaDO1wLUDQvpo6kKY0l6a4axiHiR6lusa6p1nX01sNAz3YaGzHAkGnWABsJvenY61uLm0dHkiA=="
+# El token de escritura del cubo `jmeter` ya NO va escrito aqui (reporte 131):
+# estaba en claro y subido a GitHub. Vive en lab/lab.env, que no se versiona.
+# Este guion corre DENTRO de jmeter_backend, donde lab/ no existe, asi que se
+# lo pasa quien lo lanza desde el anfitrion, igual que scripts/regresion_h8.sh:
+#   docker exec --env-file lab/lab.env jmeter_backend sh /app/pruebas_e2e/cierre_o2a.sh
+if [ -z "${KX_TOKEN_ESCRITURA:-}" ]; then
+  echo "PARADA: falta KX_TOKEN_ESCRITURA (el token de escritura del cubo jmeter)." >&2
+  echo "Esta en lab/lab.env, que no se versiona. Lanza el guion asi:" >&2
+  echo "  docker exec --env-file lab/lab.env jmeter_backend sh /app/pruebas_e2e/cierre_o2a.sh" >&2
+  exit 1
+fi
+export KX_TOKEN_ESCRITURA
 export KX_CORRIDA=zztest-laboratorio-o2a-zztest-tienda-20260922-1333
 export PGHOST=postgres
 export PGPASSWORD=jmeter_secure_2024
