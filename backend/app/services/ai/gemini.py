@@ -59,6 +59,7 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
     BLOQUE_ESTILO,
     PERMISO_VEREDICTO,
     REFERENCIA_ESTILO,
+    recordatorio_cifras,
     kbs,
     ms,
     num,
@@ -71,6 +72,7 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
 # ETAPA 5b (D55): la resolucion del umbral efectivo de cada transaccion vive en
 # un solo sitio, y este modulo la usa tanto para calcular los veredictos como
 # para contarselos a los prompts.
+from app.services.ai.fases import NOTA_RAMPAS   # BLOQUE 2.5
 from app.services.ai.criterios import (
     bloque_completo, bloque_general, criterios_efectivos,
 )
@@ -1526,7 +1528,8 @@ TABLA DE RESULTADOS POR TRANSACCION:
 LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
 {tier_summary}
 
-{INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}"""
+{INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}
+{recordatorio_cifras(table + tier_summary)}"""
             return self._generate(prompt, section_name="summary_table")
 
         except Exception as e:
@@ -1599,7 +1602,8 @@ ERRORES DETECTADOS:
 - Transacciones con errores: {len(error_data)}
 - Codigos de respuesta distintos: {len(error_by_code)}
 
-{INSTRUCCION_ERRORES}"""
+{INSTRUCCION_ERRORES}
+{recordatorio_cifras(errors_table + error_classification)}"""
             return self._generate(prompt, section_name="errors")
 
         except Exception as e:
@@ -1673,7 +1677,9 @@ SECCION: GRAFICA "{chart_name}"
 DATOS DE LA GRAFICA:
 {data_summary}
 {tier_context}
-{INSTRUCCION_GRAFICA.format(especifico=specific)}"""
+{INSTRUCCION_GRAFICA.format(especifico=specific)}
+{'' if chart_type == 'active_threads' else NOTA_RAMPAS}
+{recordatorio_cifras(data_summary)}"""
             return self._generate(prompt, section_name=f"chart_{chart_type}")
 
         except Exception as e:
@@ -1708,7 +1714,8 @@ CONTEXTO DEL TRAFICO PRINCIPAL:
 - Muestras de redireccion: {num(main_metrics.get('total_redirects', 0))}
 - Nombres de las redirecciones: {', '.join(main_metrics.get('redirect_labels', []))}
 
-{INSTRUCCION_REDIRECCIONES}"""
+{INSTRUCCION_REDIRECCIONES}
+{recordatorio_cifras(table)}"""
             return self._generate(prompt, section_name="redirects")
 
         except Exception as e:

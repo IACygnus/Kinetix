@@ -1232,7 +1232,9 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     5.x. **`pydyf==0.10.0` pinned.** WeasyPrint 61.2 incompatible con 0.12.x.
 14. **`sanitize_ai_text()` en TODA respuesta IA** antes de persistir o
     exportar (limpia markdown que el modelo se cuela aunque el prompt lo
-    prohíba).
+    prohíba). **Las viñetas no se borran: `- ` y `* ` al principio de línea
+    pasan a `• `** (bloque 2.3, reporte 139): conclusiones y recomendaciones
+    van en viñetas, y el HTML y el PDF las pintan una por línea.
 15. **Palabras prohibidas en output IA:** `veredicto`, `hallazgo`,
     `se evidencia`, `se observa que`, `cabe destacar`,
     `es importante mencionar`, `en conclusion`. Verificadas en el

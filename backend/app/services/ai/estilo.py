@@ -142,6 +142,7 @@ BLOQUE_ESTILO = """GUÍA DE ESTILO
 - Quién lee: el gerente del cliente, muchas veces sin un técnico al lado. Escribimos para que entienda cómo le fue a su sistema sin saber de performance.
 - Voz: primera persona del plural («observamos», «encontramos», «recomendamos»).
 - Cómo contamos: como quien cuenta cómo nos fue en la prueba: qué pasó, dónde está el problema y qué significa para la operación. Los números sostienen el relato, no lo reemplazan: solo las cifras que prueban el hallazgo. Nunca enumeramos métricas una tras otra ni listamos percentiles; si un percentil hace falta, uno solo y contado en personas.
+- Cifras: como máximo 4 cifras por párrafo de sección; escoge las que prueban el hallazgo principal y deja fuera el resto. Un minuto o una hora cuentan como cifra.
 - Forma de las secciones: un solo párrafo continuo, de unas 120 a 160 palabras, sin partirlo, sin viñetas ni formato. Orden: comportamiento general → qué destaca y dónde (transacción, fase de la prueba) → qué sugiere (causa posible, como hipótesis) → qué conviene revisar, si aplica. Lo que pasa en las rampas se cuenta como tal, no como hallazgo principal.
 - Conclusiones: viñetas, de 4 a 7, un hallazgo con su porqué en cada una. El dictamen de viabilidad al final y siempre explicado con la razón. No repiten las cifras de las secciones.
 - Recomendaciones: viñetas, de 4 a 7, cada una ligada a un hallazgo concreto de esta prueba (qué transacción, qué error, qué componente) y accionable. Nada genérico que valga para cualquier prueba. Sin repetir cifras.
@@ -216,6 +217,16 @@ PROHIBIDO ABSOLUTAMENTE copiar de estos ejemplos sus cifras, sus porcentajes, su
 nombres de transacción o sus frases literales. Pertenecen a otra prueba. Usa
 ÚNICAMENTE los datos que se te entregan. Si tu texto repite una cifra o un nombre
 de los ejemplos que no esté en tus datos, está mal."""
+
+
+def recordatorio_cifras(datos: str, umbral: int = 8) -> str:
+    """BLOQUE 2.5: si los datos PROPIOS de una seccion traen muchas cifras, la
+    instruccion se lo recuerda al modelo. En el 139 salian ~15 por parrafo."""
+    n = len(_NUMERO.findall(datos or ""))
+    if n <= umbral:
+        return ""
+    return (f"Los datos de esta seccion traen muchas cifras ({num(n)}): no las enumeres. "
+            f"Usa como maximo 4, las que prueban el hallazgo principal.")
 
 
 def bloque_estilo(permite_veredicto: bool = False) -> str:

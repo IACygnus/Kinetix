@@ -39,7 +39,16 @@ MAX_ZONAS = 3          # zonas que se nombran
 INSTRUCCION_FASES = (
     "Lo que ocurra en la subida o en la bajada se describe como tal (arranque o cierre de "
     "la prueba) y no se usa como hallazgo principal: el hallazgo principal es lo que pasa "
-    "con la carga sostenida.")
+    "con la carga sostenida. En los datos, los momentos que caen en una rampa van marcados "
+    "[rampa]: no los cites como hallazgo; si los nombras, es solo para decir que son el "
+    "arranque o el cierre de la prueba.")
+
+# BLOQUE 2.5: lo mismo, repetido al final de cada grafica (general y por
+# transaccion). En el 139, 22 de los 35 momentos en rampa salian de las graficas
+# por transaccion de tiempos y de caudal: la instruccion del bloque, lejos, no pesaba.
+NOTA_RAMPAS = (
+    "Cuenta lo que pasa con la carga sostenida. Un minimo, un maximo o un pico marcado "
+    "[rampa] no es un hallazgo: no lo cites, o dilo como arranque o cierre de la prueba.")
 
 
 def mmss(seg: float) -> str:

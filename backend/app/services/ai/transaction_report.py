@@ -42,7 +42,8 @@ from app.services.ai.gemini import (
 # general con 121 (reporte 30 §5). Las dos reglas estan ahora dentro de
 # `BLOQUE_ESTILO`, que llega a los diecinueve prompts por igual.
 from app.services.ai.estilo import num as _n
-from app.services.ai.estilo import ms, percentil_frase, pct, veces
+from app.services.ai.estilo import ms, percentil_frase, pct, veces, recordatorio_cifras
+from app.services.ai.fases import NOTA_RAMPAS   # BLOQUE 2.5
 # ETAPA 5b (D55): el umbral efectivo de ESTA transaccion —el suyo propio o el
 # general— resuelto con la MISMA regla que usa la tabla de veredictos.
 from app.services.ai.criterios import bloque_de_transaccion
@@ -233,6 +234,8 @@ DATOS DE LA SERIE TEMPORAL:
 {instruccion}
 Sigue la guia de estilo: un solo parrafo de unas 120 a {tope} palabras. Habla SOLO
 de esta transaccion, no de la prueba completa.
+{NOTA_RAMPAS}
+{recordatorio_cifras(serie_txt)}
 {pico}
 No digas si el servicio esta listo para produccion: eso va en las conclusiones
 del informe, no en el bloque de una transaccion."""

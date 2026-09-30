@@ -58,8 +58,32 @@ def _minuto(ts, t0) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def _cuando(ts, t0) -> str:
-    return f"min {_minuto(ts, t0)} ({_reloj(ts)})"
+def _cuando(ts, t0, fases: Optional[F.Fases] = None) -> str:
+    return f"min {_minuto(ts, t0)} ({_reloj(ts)}){_rampa(ts, fases)}"
+
+
+def _rampa(ts, fases: Optional[F.Fases]) -> str:
+    """BLOQUE 2.5: un momento que cae en la subida o en la bajada lo dice en el
+    propio dato. El modelo citaba el minimo o el pico de la subida como si fuera
+    un hallazgo de la carga sostenida (reporte 139 §4.2)."""
+    if fases is None or not fases.disponible or fases.t0 is None:
+        return ""
+    fase = fases.fase_de((pd.Timestamp(ts) - fases.t0).total_seconds())
+    return {"subida": " [en la subida: rampa]", "bajada": " [en la bajada: rampa]"}.get(fase, "")
+
+
+def _ventana_rampa(a, b, fases: Optional[F.Fases]) -> str:
+    """Un tramo o episodio: si toca una rampa, se dice."""
+    if fases is None or not fases.disponible or fases.t0 is None:
+        return ""
+    ini = fases.fase_de((pd.Timestamp(a) - fases.t0).total_seconds())
+    fin = fases.fase_de((pd.Timestamp(b) - fases.t0).total_seconds())
+    que = {x for x in (ini, fin) if x in ("subida", "bajada")}
+    if not que:
+        return ""
+    if ini == fin:
+        return f" [todo en la {ini}: rampa]"
+    return " [incluye " + " y ".join(f"parte de la {x}" for x in sorted(que, reverse=True)) + "]"
 
 
 def momento(ts, t0) -> str:
@@ -144,6 +168,7 @@ def resumir(
     habitual: bool = True,
     episodios: bool = True,
     tramos: int = TRAMOS,
+    fases: Optional[F.Fases] = None,   # BLOQUE 2.5: marca lo que cae en rampa
 ) -> str:
     """El bloque de una serie en el formato de R-D10.
 
@@ -166,11 +191,11 @@ def resumir(
     imin, imax = serie.idxmin(), serie.idxmax()
     n_min, n_max = int((serie == vmin).sum()), int((serie == vmax).sum())
     txt_min = f"minimo {fmt(vmin)} " + (
-        f"(en {num(n_min)} de los {num(len(serie))} puntos; el primero {_cuando(imin, t0)})"
-        if n_min > 1 else _cuando(imin, t0))
+        f"(en {num(n_min)} de los {num(len(serie))} puntos; el primero {_cuando(imin, t0, fases)})"
+        if n_min > 1 else _cuando(imin, t0, fases))
     txt_max = f"maximo {fmt(vmax)} " + (
-        f"(en {num(n_max)} puntos; el primero {_cuando(imax, t0)})"
-        if n_max > 1 else _cuando(imax, t0))
+        f"(en {num(n_max)} puntos; el primero {_cuando(imax, t0, fases)})"
+        if n_max > 1 else _cuando(imax, t0, fases))
     lineas.append(f"- Extremos: {txt_max}; {txt_min}; valor de toda la prueba {fmt(por_muestras(df))}.")
 
     # 2. Lo habitual
@@ -189,7 +214,8 @@ def resumir(
         pico = serie[(serie.index >= a.floor(f"{intervalo}s")) & (serie.index <= b)]
         extra = f" (punto mas alto {fmt(pico.max())})" if alto_es_malo and len(pico) else (
             f" (punto mas bajo {fmt(pico.min())})" if len(pico) else "")
-        partes.append(f"min {_minuto(a, t0)}-{_minuto(b, t0)}: {fmt(por_muestras(trozo))}{extra}")
+        partes.append(f"min {_minuto(a, t0)}-{_minuto(b, t0)}{_ventana_rampa(a, b, fases)}: "
+                      f"{fmt(por_muestras(trozo))}{extra}")
     lineas.append("- Por tramos: " + "; ".join(partes) + ".")
 
     # 4. Episodios sostenidos fuera de lo habitual
@@ -213,7 +239,7 @@ def resumir(
         pass
     elif eps:
         txt = "; ".join(
-            f"{_ventana(a, b, t0)}, {num(n)} puntos seguidos, promedio {fmt(m)}, "
+            f"{_ventana(a, b, t0)}{_ventana_rampa(a, b, fases)}, {num(n)} puntos seguidos, promedio {fmt(m)}, "
             + (f"maximo {fmt(mx)}" if alto_es_malo else f"minimo {fmt(mn)}")
             for a, b, n, m, mx, mn in eps)
         lineas.append(f"- Episodios sostenidos {sentido} {fmt(umbral)}: {txt}. "
@@ -240,7 +266,7 @@ def resumir(
     return "\n".join(lineas)
 
 
-def _picos(df: pd.DataFrame, t0, n: int = MAX_PICOS) -> str:
+def _picos(df: pd.DataFrame, t0, n: int = MAX_PICOS, fases: Optional[F.Fases] = None) -> str:
     """Los n tiempos maximos, separados al menos 10 s entre si, con su momento."""
     top = df.nlargest(n * 20, "elapsed")[["timestamp", "elapsed"]]
     elegidos: List[Tuple] = []
@@ -249,7 +275,7 @@ def _picos(df: pd.DataFrame, t0, n: int = MAX_PICOS) -> str:
             elegidos.append((ts, v))
         if len(elegidos) == n:
             break
-    return "; ".join(f"{ms(v)} {_cuando(ts, t0)}" for ts, v in elegidos)
+    return "; ".join(f"{ms(v)} {_cuando(ts, t0, fases)}" for ts, v in elegidos)
 
 
 # ====================================================================
@@ -290,14 +316,14 @@ def degradacion(df, col: str, fases: Optional[F.Fases]) -> str:
 
 def serie_tiempos(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     return resumir(df, intervalo, nombre, ms, lambda g: g["elapsed"].mean(),
-                   lambda d: float(d["elapsed"].mean()), t0=t0) + degradacion(df, "elapsed", fases)
+                   lambda d: float(d["elapsed"].mean()), t0=t0, fases=fases) + degradacion(df, "elapsed", fases)
 
 
 def serie_latencia(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     if "Latency" not in df.columns:
         return f"{nombre}: el JTL no trae la columna de latencia."
     bloque = resumir(df, intervalo, nombre, ms, lambda g: g["Latency"].mean(),
-                     lambda d: float(d["Latency"].mean()), t0=t0)
+                     lambda d: float(d["Latency"].mean()), t0=t0, fases=fases)
     total, lat = float(df["elapsed"].mean()), float(df["Latency"].mean())
     return bloque + (f"\n- Frente al tiempo total: el tiempo total medio de la prueba es {ms(total)}; "
                      f"la descarga del cuerpo (total menos latencia) suma {ms(max(0.0, total - lat))} de media."
@@ -316,7 +342,7 @@ def serie_error(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None)
     bloque = resumir(
         df, intervalo, nombre, pct,
         lambda g: g.apply(_tasa_error), _tasa_error, t0=t0,
-        habitual=denso, episodios=denso)
+        habitual=denso, episodios=denso, fases=fases)
     if not denso:
         # Minutos contados desde el inicio de la prueba, no del reloj: si no, el
         # primero seria un trozo de 5 s con la hora anterior al arranque.
@@ -326,8 +352,8 @@ def serie_error(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None)
             bloque += (f"\n- Por minuto ({num(len(por_min))} minutos, porque cada punto de "
                        f"{num(intervalo)} s tiene muy pocas peticiones): 8 de cada 10 minutos entre "
                        f"{pct(por_min.quantile(0.1))} y {pct(por_min.quantile(0.9))}; el peor minuto "
-                       f"{_cuando(por_min.idxmax(), t0)} con {pct(por_min.max())}, el mejor "
-                       f"{_cuando(por_min.idxmin(), t0)} con {pct(por_min.min())}.")
+                       f"{_cuando(por_min.idxmax(), t0, fases)} con {pct(por_min.max())}, el mejor "
+                       f"{_cuando(por_min.idxmin(), t0, fases)} con {pct(por_min.min())}.")
     err = df[~_ok(df)]
     if len(err) == 0:
         return bloque + "\n- No hubo ni un fallo en toda la prueba."
@@ -340,7 +366,7 @@ def serie_error(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None)
         f"{F.concentracion(err['timestamp'], fases, 'fallos')}.")
 
 
-def serie_caudal(df, intervalo, nombre, t0=None) -> str:
+def serie_caudal(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     iv = max(1, int(intervalo))
 
     def _por_muestras(d):
@@ -351,7 +377,7 @@ def serie_caudal(df, intervalo, nombre, t0=None) -> str:
     # rachas «por debajo de lo habitual» son ruido de redondeo, no caidas.
     denso = len(df) / max(1, df["timestamp"].dt.floor(f"{iv}s").nunique()) >= 10
     return resumir(df, iv, nombre, _tps, lambda g: g.size() / iv, _por_muestras,
-                   t0=t0, alto_es_malo=False, episodios=denso)
+                   t0=t0, alto_es_malo=False, episodios=denso, fases=fases)
 
 
 def _es_fallo(code: str) -> bool:
@@ -381,7 +407,7 @@ def serie_codigos(df, intervalo, t0=None, fases: Optional[F.Fases] = None) -> st
                 if _es_fallo(str(code)) else "")
         lineas.append(
             f"- HTTP {code}: {num(n)} respuestas ({pct(100 * n / len(df))} del total). "
-            f"Pico de {num(por_s.max(), 2)} por segundo {_cuando(por_s.idxmax(), t0)}. "
+            f"Pico de {num(por_s.max(), 2)} por segundo {_cuando(por_s.idxmax(), t0, fases)}. "
             f"Por tramos de {num((t1 - t0).total_seconds() / 60 / len(cortes), 1)} minutos: {reparto}.{conc}")
     return "\n".join(lineas)
 
@@ -434,16 +460,16 @@ def bloques_generales(df_todo: pd.DataFrame, df_main: pd.DataFrame, intervalo: i
     for label in labels[:MAX_LABELS_RT]:
         sub = df_main[df_main["label"] == label]
         rt.append(serie_tiempos(sub, 1, f"«{label}», tiempo medio por segundo", t0=t0, fases=fases)
-                  + f"\n- Sus tres tiempos mas altos: {_picos(sub, t0)}.")
+                  + f"\n- Sus tres tiempos mas altos: {_picos(sub, t0, fases=fases)}.")
     if len(labels) > MAX_LABELS_RT:
         rt.append(f"(Sin detalle de tiempo, por espacio: {', '.join(labels[MAX_LABELS_RT:])}.)")
 
-    tps = [serie_caudal(df_main, intervalo, "Caudal total", t0=t0)]
+    tps = [serie_caudal(df_main, intervalo, "Caudal total", t0=t0, fases=fases)]
     for label in sorted(df_main["label"].unique()):
         sub = df_main[df_main["label"] == label]
         por_s = sub.groupby(sub["timestamp"].dt.floor(f"{intervalo}s")).size() / intervalo
-        tps.append(f"- «{label}»: minimo {_tps(por_s.min())} {_cuando(por_s.idxmin(), t0)}, "
-                   f"maximo {_tps(por_s.max())} {_cuando(por_s.idxmax(), t0)}.")
+        tps.append(f"- «{label}»: minimo {_tps(por_s.min())} {_cuando(por_s.idxmin(), t0, fases)}, "
+                   f"maximo {_tps(por_s.max())} {_cuando(por_s.idxmax(), t0, fases)}.")
 
     return {
         "cabecera": cab,
@@ -470,11 +496,11 @@ def bloques_transaccion(df_tx: pd.DataFrame, intervalo: int = 1,
     return {
         "cabecera": cabecera(df_tx, intervalo, fases),
         "chart_response_times": serie_tiempos(df_tx, intervalo, "Tiempo medio por segundo", t0=t0, fases=fases)
-                                + f"\n- Sus tres tiempos mas altos: {_picos(df_tx, t0)}.",
+                                + f"\n- Sus tres tiempos mas altos: {_picos(df_tx, t0, fases=fases)}.",
         "chart_latency": serie_latencia(df_tx, intervalo, "Latencia media", t0=t0, fases=fases),
         "chart_error_rate": serie_error(df_tx, intervalo, "Tasa de error", t0=t0, fases=fases),
         "chart_codes": serie_codigos(df_tx, intervalo, t0=t0, fases=fases),
-        "chart_tps": serie_caudal(df_tx, intervalo, "Caudal", t0=t0),
+        "chart_tps": serie_caudal(df_tx, intervalo, "Caudal", t0=t0, fases=fases),
     }
 
 
