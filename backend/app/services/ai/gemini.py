@@ -1521,15 +1521,10 @@ class GeminiAnalyzer:
             prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria)}
 {'' if contexto else hechos}
 SECCION: RESUMEN DE LA PRUEBA
-
-TABLA DE RESULTADOS POR TRANSACCION:
-{table}
-
-LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
-{tier_summary}
+{'' if contexto else 'TABLA DE RESULTADOS POR TRANSACCION:' + chr(10) + table + chr(10) + chr(10) + 'LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:' + chr(10) + tier_summary + chr(10)}
 
 {INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}
-{recordatorio_cifras(table + tier_summary)}"""
+{'' if contexto else recordatorio_cifras(table + tier_summary)}"""
             return self._generate(prompt, section_name="summary_table")
 
         except Exception as e:
@@ -1635,7 +1630,8 @@ ERRORES DETECTADOS:
             }
 
             tier_context = ""
-            if chart_type == 'response_times' and insights:
+            # BLOQUE 2.5: con el bloque de la ejecucion, la agrupacion ya va en el.
+            if chart_type == 'response_times' and insights and not contexto:
                 tier_context = (
                     "\n\nLAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:\n"
                     f"{build_tier_summary(insights)}\n")

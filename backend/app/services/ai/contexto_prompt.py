@@ -43,7 +43,8 @@ def _tipo(test_type: str) -> str:
 
 def bloque_ejecucion(metrics: Dict[str, Any], test_type: str, metric_unit: str,
                      acceptance_criteria: Optional[Dict[str, Any]],
-                     df_todo=None, fases: Optional[F.Fases] = None, hechos: str = "") -> str:
+                     df_todo=None, fases: Optional[F.Fases] = None, hechos: str = "",
+                     tabla: str = "") -> str:
     """El bloque comun. `df_todo` es `parser.df` (para la linea de tiempo);
     `hechos` es `resumen_serie.hechos_de_la_prueba`, que ya lleva las fases."""
     total = metrics.get("total_requests", 0) or 0
@@ -65,6 +66,11 @@ def bloque_ejecucion(metrics: Dict[str, Any], test_type: str, metric_unit: str,
                   + "; ".join(percentil_frase(p, metrics.get(k, 0)) for p, k in (
                       (50, "median_response_time"), (90, "p90_response_time"),
                       (95, "p95_response_time"), (99, "p99_response_time"))))
+    # BLOQUE 2.5 (reporte 140 §3): la tabla por transaccion es igual en todas las
+    # llamadas y alarga el tramo comun lo bastante para que las secciones generales
+    # alcancen el corte de cache de 2.816 tokens; antes se quedaban a ~200.
+    if tabla:
+        lineas += ["", "TABLA DE RESULTADOS POR TRANSACCION:", tabla]
     crit = bloque_completo(acceptance_criteria).strip()
     lineas += ["", crit if crit else "CRITERIOS DE ACEPTACION: no se definieron."]
     if df_todo is not None and len(df_todo):
@@ -105,7 +111,18 @@ def contexto_de_parser(parser, test_type: str, metric_unit: str,
     fases = F.calcular(df_main)
     hechos = resumen_serie.hechos_de_la_prueba(df_main, intervalo, fases)
     m = metrics if metrics is not None else metricas_de_parser(parser)
-    return bloque_ejecucion(m, test_type, metric_unit, acceptance_criteria, parser.df, fases, hechos), fases
+    return bloque_ejecucion(m, test_type, metric_unit, acceptance_criteria, parser.df, fases, hechos,
+                            tabla_de(parser.get_summary_table_data())), fases
+
+
+def tabla_de(summary_df) -> str:
+    """La tabla por transaccion y su agrupacion por tiempo de respuesta, con el
+    mismo formato que ya usaban el resumen y la grafica de tiempos."""
+    from app.services.ai.gemini import (GeminiAnalyzer, build_tier_summary,
+                                        prepare_insights_for_prompt)
+    return (GeminiAnalyzer._build_transactions_table(None, summary_df)
+            + "\n\nLAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:\n"
+            + build_tier_summary(prepare_insights_for_prompt(summary_df)))
 
 
 def nota_intervalo(intervalo: int) -> str:

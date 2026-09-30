@@ -196,7 +196,7 @@ async def run_ai_and_verdict(
         # las seis de cada transaccion (`contexto_prompt.contexto_de_parser`).
         contexto = contexto_prompt.bloque_ejecucion(
             metrics, test_type, metric_unit, acceptance_criteria_dict,
-            parser.df, fases_prueba, hechos)
+            parser.df, fases_prueba, hechos, contexto_prompt.tabla_de(summary_df))
 
         def _con_serie(clave: str, datos: str) -> str:
             if not series.get(clave):
