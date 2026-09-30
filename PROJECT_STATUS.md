@@ -15,7 +15,7 @@ Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
 ### Plan de análisis (en este orden)
 
 1. **R2** — la serie de tiempo resumida en cada sección (`resumen_serie.py`), commit `243900c`. Corrida con IA antes/después en curso: reporte **136**.
-2. **Prompts de estilo.**
+2. **Prompts de estilo.** Bloque 2.1 (fases y concentración), 2.2 (un solo sistema y el bloque de la ejecución delante) y 2.3 (la guía de estilo de Fredy) hechos; corrida 2.4 en el reporte **139**, pendiente de la lectura de Fredy (`Kinetix_pruebas\r2\comparacion2.html`).
 3. **Conclusión única.**
 4. **Mockups.**
 5. **Contexto y conversación.**
@@ -38,7 +38,7 @@ Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
 - **Despliegue:** checklist 53 y su versión corregida 59 §4 (puertos, `target` del frontend, `/app/media`, DEBUG). Nada ejecutado.
 - **HF-3** — el límite de `/auth/login` deja sin acceso a toda la plataforma detrás de nginx (37).
 - **Guardado lento del integrado** mientras la página carga: más de 6 s (121 §2.2).
-- **Corte intermitente de R1.1** (`Server disconnected` al exportar el PDF) en la suite; causa no encontrada (123, 124).
+- **Corte intermitente de R1.1** (`Server disconnected` al exportar el PDF): con un 8002 recién arrancado y **sin `--reload`** la suite pasa entera. Causa probable: el proceso de larga vida con recarga. `preparar_base_de_pruebas.sh` sigue arrancando con `--reload`; `pruebas_e2e/reiniciar_8002.sh` lo arranca sin él. Decidir cuál queda (138).
 - **Gemini sin timeout** en la generación, y un `SSLError` no cuenta como transitorio: sale del respaldo sin reintento (134 §3d).
 - **`/ai-config/models/live`** es síncrona dentro de un endpoint async (bloquea el backend) y no tiene timeout (134 §2a).
 - **Pantalla de IA:** «Probar conexión» prueba lo guardado, no lo de la pantalla, y guardar no vuelve a pedir la lista de modelos (134 F-1, F-4).
