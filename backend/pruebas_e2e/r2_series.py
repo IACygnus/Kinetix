@@ -188,6 +188,27 @@ async def main():
     sinf = F.concentracion(T(np.arange(0, 300, 1)), F.Fases(False, t0=t0, duracion_s=300.0, motivo="x"))
     comprobar("fases no disponibles: se mira la prueba entera" in sinf, "sin fases: lo dice y mira la prueba entera")
 
+    print("8. Lo que reciben los prompts del general (BLOQUE 2.1c)")
+    for s in ("summary_table", "errors", "chart_response_times", "chart_latency", "chart_error_rate",
+              "chart_codes_per_second", "chart_transactions_per_second", "chart_active_threads"):
+        comprobar("Subida 0:00–3:14 · Carga sostenida 3:14–30:00 · Sin bajada" in por.get(s, "")
+                  and F.INSTRUCCION_FASES in por.get(s, ""), f"{s} recibe las fases y su instruccion")
+    comprobar("Primero min" not in por["summary_table"] and "repartidos sin concentracion" in por["summary_table"],
+              "hechos: la concentracion, no el primero y el ultimo")
+    comprobar("el primero min 0:05" not in por["chart_error_rate"] and "1.244 (95,2%) caen en la carga sostenida"
+              in por["chart_error_rate"], "tasa de error: 1.244 de 1.307 fallos en la carga sostenida, 63 en la subida")
+    comprobar("Primera min" not in por["chart_codes_per_second"], "codigos: sin «Primera… ultima…»")
+    comprobar("HTTP 502: 10 respuestas" in por["chart_codes_per_second"]
+              and "concentrados en min 18:32–19:26 (20:23:27–20:24:21): 7 de 10" in por["chart_codes_per_second"],
+              "codigos: el 502 concentrado (7 de 10 en min 18:32-19:26)")
+    comprobar("del min" not in por["errors"] and "repartidos sin concentracion; 63 en las rampas" in por["errors"],
+              "tabla de errores: la concentracion de cada error en «Cuando»")
+    comprobar(por["chart_response_times"].count("- Degradacion") == 4 and "- Degradacion" in por["chart_latency"],
+              "tiempos (4 transacciones) y latencia llevan su degradacion")
+    plano = p.df_main[p.df_main["label"] == TX].assign(elapsed=100, Latency=100)
+    comprobar("sin degradacion" in R.degradacion(plano, "elapsed", F.calcular(p.df_main)),
+              "sin muestras por encima del doble de la mediana: «sin degradacion», no se fabrica con el P90")
+
     print()
     print("R2 SERIES: TODO PASA" if not fallos else f"R2 SERIES: {len(fallos)} FALLA(N)")
     return 1 if fallos else 0

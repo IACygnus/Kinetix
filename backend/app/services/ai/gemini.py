@@ -1502,6 +1502,7 @@ eso va en las conclusiones del informe.
         metric_unit: str = "TPS",
         acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
         lectura_base: str = "",                       # ETAPA R2 (R-D17)
+        fases: str = "",                              # BLOQUE 2.1: `fases.Fases.linea()`
     ) -> Optional[str]:
         """Analisis detallado de errores por transaccion y codigo HTTP"""
         if not error_data or len(error_data) == 0:
@@ -1553,6 +1554,7 @@ eso va en las conclusiones del informe.
 ERRORES DETECTADOS:
 {errors_table}
 {error_classification}
+{fases}
 
 CONTEXTO:
 - Total de errores: {num(total_errors)}

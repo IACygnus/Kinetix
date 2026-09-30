@@ -37,6 +37,7 @@ from app.services.ai.gemini import (
 from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
 # ETAPA R2 (R-D9/R-D10): cada seccion de grafica recibe SU serie, resumida.
 from app.services.ai import resumen_serie
+from app.services.ai import fases as F   # BLOQUE 2.1
 # F1 (aviso de respaldo): de donde sale cada texto, y por que.
 from app.services.ai import origen
 
@@ -179,11 +180,13 @@ async def run_ai_and_verdict(
         # Si algo falla, las secciones salen como antes de R2, sin serie.
         series: Dict[str, str] = {}
         hechos = ""
+        fases_prueba = None   # BLOQUE 2.1: una sola vez, sobre la prueba entera
         try:
             df_main = parser.df_main if getattr(parser, "df_main", None) is not None and len(parser.df_main) else parser.df
             intervalo = parser._calculate_adaptive_interval() if hasattr(parser, "_calculate_adaptive_interval") else 1
-            series = resumen_serie.bloques_generales(parser.df, df_main, intervalo)
-            hechos = resumen_serie.hechos_de_la_prueba(df_main, intervalo)
+            fases_prueba = F.calcular(df_main)
+            series = resumen_serie.bloques_generales(parser.df, df_main, intervalo, fases_prueba)
+            hechos = resumen_serie.hechos_de_la_prueba(df_main, intervalo, fases_prueba)
         except Exception as e:
             logger.warning(f"R2: sin series para los prompts ({e}); las secciones van sin serie")
 
@@ -220,18 +223,16 @@ async def run_ai_and_verdict(
             # `failureMessage`. Ahora va el real; si el JTL no trae ninguno, el
             # prompt dice «el JTL no trae mensaje». Y cuando aparece cada fallo.
             mensajes = resumen_serie.mensajes_de_error(error_codes_df)
-            t0_prueba = parser.df['timestamp'].min()
-            error_grouped = error_codes_df.groupby(['label', 'responseCode']).agg(
-                count=('timestamp', 'size'), primero=('timestamp', 'min'), ultimo=('timestamp', 'max'),
-            ).reset_index()
-            for _, row in error_grouped.iterrows():
+            # BLOQUE 2.1 (decision 5): «Cuando» dice donde se concentra cada error,
+            # no el primero y el ultimo (reporte 136 §6.1).
+            fases_err = fases_prueba if fases_prueba is not None else F.calcular(parser.df)
+            for (label, code), g in error_codes_df.groupby(['label', 'responseCode']):
                 errors_for_analysis.append({
-                    'label': row['label'],
-                    'count': int(row['count']),
-                    'code': str(row['responseCode']),
-                    'message': mensajes.get((str(row['label']), str(row['responseCode'])), ''),
-                    'cuando': (f"del {resumen_serie.momento(row['primero'], t0_prueba)} "
-                               f"al {resumen_serie.momento(row['ultimo'], t0_prueba)}"),
+                    'label': label,
+                    'count': int(len(g)),
+                    'code': str(code),
+                    'message': mensajes.get((str(label), str(code)), ''),
+                    'cuando': F.concentracion(g['timestamp'], fases_err, 'fallos', corto=True),
                 })
 
         errores_hubo["si"] = bool(errors_for_analysis)
@@ -241,6 +242,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,                      # ETAPA R2 (R-D17)
+            fases=fases_prueba.linea() if fases_prueba is not None else "",   # BLOQUE 2.1
         )
         _anota('ai_analysis_errors', ai_analysis_errors, _fallo)   # F1
         if ai_analysis_errors is None:

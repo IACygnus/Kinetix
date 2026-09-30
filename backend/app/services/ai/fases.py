@@ -217,6 +217,8 @@ def concentracion(ts: pd.Series, f: Fases, que: str = "fallos", corto: bool = Fa
                   f"reune el {pct(100 * mayor / n, 1)}, frente al {pct(100 / n_ven, 1)} si fuera parejo")
 
     if corto:
+        # Celda de tabla: sin la frase de la ventana mayor, que no cabe.
+        cuerpo = cuerpo if concentrado else "repartidos sin concentracion"
         extra = f"; {num(rampas)} en las rampas" if rampas else ""
         return cuerpo + extra
 

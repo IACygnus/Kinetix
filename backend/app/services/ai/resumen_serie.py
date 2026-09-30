@@ -33,6 +33,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from app.services.ai import fases as F
 from app.services.ai.estilo import ms, num, pct
 
 logger = logging.getLogger(__name__)
@@ -78,14 +79,16 @@ def _hilos(v) -> str:
     return "1 hilo" if int(v) == 1 else f"{num(v)} hilos"
 
 
-def cabecera(df: pd.DataFrame, intervalo: int) -> str:
-    """Una linea que explica como leer los momentos. Va una vez por prompt."""
+def cabecera(df: pd.DataFrame, intervalo: int, fases: Optional[F.Fases] = None) -> str:
+    """Una linea que explica como leer los momentos. Va una vez por prompt.
+    BLOQUE 2.1: y, debajo, las fases de la prueba con su instruccion."""
     t0, t1 = df["timestamp"].min(), df["timestamp"].max()
     dur = (t1 - t0).total_seconds()
-    return (f"LINEA DE TIEMPO: la prueba va de {_reloj(t0)} a {_reloj(t1)} "
-            f"({num(dur / 60, 1)} minutos). Cada momento se da como «min M:SS» desde el "
-            f"inicio de la prueba, con la hora del reloj entre parentesis. Cada punto de "
-            f"la grafica agrupa {num(intervalo)} s.")
+    linea = (f"LINEA DE TIEMPO: la prueba va de {_reloj(t0)} a {_reloj(t1)} "
+             f"({num(dur / 60, 1)} minutos). Cada momento se da como «min M:SS» desde el "
+             f"inicio de la prueba, con la hora del reloj entre parentesis. Cada punto de "
+             f"la grafica agrupa {num(intervalo)} s.")
+    return linea + (f"\n{fases.linea()}" if fases is not None else "")
 
 
 # ====================================================================
@@ -264,22 +267,44 @@ def _tasa_error(d) -> float:
     return float(100.0 * (1.0 - _ok(d).mean())) if len(d) else 0.0
 
 
-def serie_tiempos(df, intervalo, nombre, t0=None) -> str:
+def degradacion(df, col: str, fases: Optional[F.Fases]) -> str:
+    """BLOQUE 2.1 (decision 2): las muestras lentas son las que superan el mayor
+    entre el P90 y el doble de la mediana. Si ninguna supera el doble de la
+    mediana, «sin degradacion»: un P90 siempre existe y no basta para fabricarla."""
+    if fases is None or col not in df.columns or len(df) == 0:
+        return ""
+    v = pd.to_numeric(df[col], errors="coerce").dropna()
+    if len(v) == 0:
+        return ""
+    doble = 2 * float(v.median())
+    if not (v > doble).any():
+        return (f"\n- Degradacion: sin degradacion (ninguna muestra supera el doble de la "
+                f"mediana, {ms(doble)}).")
+    umbral = max(float(v.quantile(0.9)), doble)
+    lentas = df.loc[v.index[v > umbral], "timestamp"]
+    if len(lentas) == 0:
+        return f"\n- Degradacion: sin degradacion (ninguna muestra supera {ms(umbral)})."
+    return (f"\n- Degradacion (muestras por encima de {ms(umbral)}, el mayor entre el P90 y el "
+            f"doble de la mediana): {F.concentracion(lentas, fases, 'muestras lentas')}.")
+
+
+def serie_tiempos(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     return resumir(df, intervalo, nombre, ms, lambda g: g["elapsed"].mean(),
-                   lambda d: float(d["elapsed"].mean()), t0=t0)
+                   lambda d: float(d["elapsed"].mean()), t0=t0) + degradacion(df, "elapsed", fases)
 
 
-def serie_latencia(df, intervalo, nombre, t0=None) -> str:
+def serie_latencia(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     if "Latency" not in df.columns:
         return f"{nombre}: el JTL no trae la columna de latencia."
     bloque = resumir(df, intervalo, nombre, ms, lambda g: g["Latency"].mean(),
                      lambda d: float(d["Latency"].mean()), t0=t0)
     total, lat = float(df["elapsed"].mean()), float(df["Latency"].mean())
     return bloque + (f"\n- Frente al tiempo total: el tiempo total medio de la prueba es {ms(total)}; "
-                     f"la descarga del cuerpo (total menos latencia) suma {ms(max(0.0, total - lat))} de media.")
+                     f"la descarga del cuerpo (total menos latencia) suma {ms(max(0.0, total - lat))} de media."
+                     ) + degradacion(df, "Latency", fases)
 
 
-def serie_error(df, intervalo, nombre, t0=None) -> str:
+def serie_error(df, intervalo, nombre, t0=None, fases: Optional[F.Fases] = None) -> str:
     if "success" not in df.columns:
         return f"{nombre}: el JTL no trae la columna de exito."
     t0 = df["timestamp"].min() if t0 is None else t0
@@ -308,10 +333,11 @@ def serie_error(df, intervalo, nombre, t0=None) -> str:
         return bloque + "\n- No hubo ni un fallo en toda la prueba."
     b = df["timestamp"].dt.floor(f"{intervalo}s")
     con_fallo = err["timestamp"].dt.floor(f"{intervalo}s").nunique()
+    # BLOQUE 2.1: donde se concentran, no el primero y el ultimo (reporte 136).
+    fases = fases if fases is not None else F.calcular(df)
     return bloque + (
-        f"\n- Fallos: el primero {_cuando(err['timestamp'].min(), t0)} y el ultimo "
-        f"{_cuando(err['timestamp'].max(), t0)}; {num(con_fallo)} de los {num(b.nunique())} "
-        f"puntos tienen al menos un fallo.")
+        f"\n- Fallos: {num(con_fallo)} de los {num(b.nunique())} puntos tienen al menos un fallo; "
+        f"{F.concentracion(err['timestamp'], fases, 'fallos')}.")
 
 
 def serie_caudal(df, intervalo, nombre, t0=None) -> str:
@@ -328,10 +354,15 @@ def serie_caudal(df, intervalo, nombre, t0=None) -> str:
                    t0=t0, alto_es_malo=False, episodios=denso)
 
 
-def serie_codigos(df, intervalo, t0=None) -> str:
-    """Un renglon por codigo: cuantas, cuando aparece y cuando deja de aparecer,
-    su pico por segundo y como se reparte por tramos. Es la dimension tiempo que
-    los totales acumulados tiraban."""
+def _es_fallo(code: str) -> bool:
+    return not (code[:1] in ("2", "3") and code[:3].isdigit())
+
+
+def serie_codigos(df, intervalo, t0=None, fases: Optional[F.Fases] = None) -> str:
+    """Un renglon por codigo: cuantas, su pico por segundo y como se reparte por
+    tramos. Es la dimension tiempo que los totales acumulados tiraban.
+    BLOQUE 2.1 (decision 4): sin «primera… ultima…» —en el 200 solo marcaban el
+    inicio y el fin de la prueba— y, en los codigos de fallo, donde se concentran."""
     if "responseCode" not in df.columns or len(df) == 0:
         return "Codigos de respuesta: el JTL no trae la columna de codigo."
     t0 = df["timestamp"].min() if t0 is None else t0
@@ -340,16 +371,18 @@ def serie_codigos(df, intervalo, t0=None) -> str:
     cortes = _cortes(t0, t1, TRAMOS) if t1 > t0 else [(t0, t1)]
     lineas = ["Codigos de respuesta en el tiempo:"]
     codigos = df["responseCode"].astype(str)
+    fases = fases if fases is not None else F.calcular(df)
     for code, n in codigos.value_counts().items():
         sub = df[codigos == code]
         por_s = sub.groupby(sub["timestamp"].dt.floor(f"{iv}s")).size() / iv
         reparto = ", ".join(
             num(len(_en(sub, a, b, i == len(cortes) - 1))) for i, (a, b) in enumerate(cortes))
+        conc = (f" Concentracion: {F.concentracion(sub['timestamp'], fases, 'respuestas')}."
+                if _es_fallo(str(code)) else "")
         lineas.append(
             f"- HTTP {code}: {num(n)} respuestas ({pct(100 * n / len(df))} del total). "
-            f"Primera {_cuando(sub['timestamp'].min(), t0)}, ultima {_cuando(sub['timestamp'].max(), t0)}; "
-            f"pico de {num(por_s.max(), 2)} por segundo {_cuando(por_s.idxmax(), t0)}. "
-            f"Por tramos de {num((t1 - t0).total_seconds() / 60 / len(cortes), 1)} minutos: {reparto}.")
+            f"Pico de {num(por_s.max(), 2)} por segundo {_cuando(por_s.idxmax(), t0)}. "
+            f"Por tramos de {num((t1 - t0).total_seconds() / 60 / len(cortes), 1)} minutos: {reparto}.{conc}")
     return "\n".join(lineas)
 
 
@@ -385,19 +418,22 @@ def serie_hilos(df, intervalo, t0=None) -> str:
 # Lo que recibe cada seccion
 # ====================================================================
 
-def bloques_generales(df_todo: pd.DataFrame, df_main: pd.DataFrame, intervalo: int) -> Dict[str, str]:
+def bloques_generales(df_todo: pd.DataFrame, df_main: pd.DataFrame, intervalo: int,
+                      fases: Optional[F.Fases] = None) -> Dict[str, str]:
     """Las series del informe general (R-D9). `df_todo` es `parser.df` —lo que
     usan las graficas de linea de tiempo, codigos y hilos— y `df_main` las
-    transacciones principales —las de Response Times y TPS por transaccion—."""
+    transacciones principales —las de Response Times y TPS por transaccion—.
+    BLOQUE 2.1: `fases` son las de la prueba entera (`fases.calcular(df_main)`)."""
     t0 = df_todo["timestamp"].min()
-    cab = cabecera(df_todo, intervalo)
+    fases = fases if fases is not None else F.calcular(df_main)
+    cab = cabecera(df_todo, intervalo, fases)
 
     # Response Times: 1 s por transaccion, como su grafica (GRAF1).
     rt = []
     labels = (df_main.groupby("label")["elapsed"].max().sort_values(ascending=False).index.tolist())
     for label in labels[:MAX_LABELS_RT]:
         sub = df_main[df_main["label"] == label]
-        rt.append(serie_tiempos(sub, 1, f"«{label}», tiempo medio por segundo", t0=t0)
+        rt.append(serie_tiempos(sub, 1, f"«{label}», tiempo medio por segundo", t0=t0, fases=fases)
                   + f"\n- Sus tres tiempos mas altos: {_picos(sub, t0)}.")
     if len(labels) > MAX_LABELS_RT:
         rt.append(f"(Sin detalle de tiempo, por espacio: {', '.join(labels[MAX_LABELS_RT:])}.)")
@@ -412,24 +448,29 @@ def bloques_generales(df_todo: pd.DataFrame, df_main: pd.DataFrame, intervalo: i
     return {
         "cabecera": cab,
         "response_times": "\n\n".join(rt),
-        "latency": serie_latencia(df_todo, intervalo, "Latencia media", t0=t0),
-        "error_rate": serie_error(df_todo, intervalo, "Tasa de error", t0=t0),
-        "codes_per_second": serie_codigos(df_todo, intervalo, t0=t0),
+        "latency": serie_latencia(df_todo, intervalo, "Latencia media", t0=t0, fases=fases),
+        "error_rate": serie_error(df_todo, intervalo, "Tasa de error", t0=t0, fases=fases),
+        "codes_per_second": serie_codigos(df_todo, intervalo, t0=t0, fases=fases),
         "transactions_per_second": "\n".join(tps),
         "active_threads": serie_hilos(df_todo, intervalo, t0=t0),
     }
 
 
-def bloques_transaccion(df_tx: pd.DataFrame, intervalo: int = 1) -> Dict[str, str]:
-    """Las 5 series de UNA transaccion, con la clave de su seccion."""
+def bloques_transaccion(df_tx: pd.DataFrame, intervalo: int = 1,
+                        fases: Optional[F.Fases] = None) -> Dict[str, str]:
+    """Las 5 series de UNA transaccion, con la clave de su seccion.
+    BLOQUE 2.1 (decision 1): `fases` son las de la PRUEBA ENTERA, las mismas del
+    informe general. Solo si no llegan se calculan con las muestras de la
+    transaccion, que pueden desplazar el final de la subida unos segundos."""
     t0 = df_tx["timestamp"].min()
+    fases = fases if fases is not None else F.calcular(df_tx)
     return {
-        "cabecera": cabecera(df_tx, intervalo),
-        "chart_response_times": serie_tiempos(df_tx, intervalo, "Tiempo medio por segundo", t0=t0)
+        "cabecera": cabecera(df_tx, intervalo, fases),
+        "chart_response_times": serie_tiempos(df_tx, intervalo, "Tiempo medio por segundo", t0=t0, fases=fases)
                                 + f"\n- Sus tres tiempos mas altos: {_picos(df_tx, t0)}.",
-        "chart_latency": serie_latencia(df_tx, intervalo, "Latencia media", t0=t0),
-        "chart_error_rate": serie_error(df_tx, intervalo, "Tasa de error", t0=t0),
-        "chart_codes": serie_codigos(df_tx, intervalo, t0=t0),
+        "chart_latency": serie_latencia(df_tx, intervalo, "Latencia media", t0=t0, fases=fases),
+        "chart_error_rate": serie_error(df_tx, intervalo, "Tasa de error", t0=t0, fases=fases),
+        "chart_codes": serie_codigos(df_tx, intervalo, t0=t0, fases=fases),
         "chart_tps": serie_caudal(df_tx, intervalo, "Caudal", t0=t0),
     }
 
@@ -467,7 +508,7 @@ def mensajes_de_error(df_err: pd.DataFrame, top: int = 2) -> Dict[Tuple[str, str
 # R-D17: los hechos de la prueba, calculados, para la lectura base
 # ====================================================================
 
-def hechos_de_la_prueba(df_main: pd.DataFrame, intervalo: int) -> str:
+def hechos_de_la_prueba(df_main: pd.DataFrame, intervalo: int, fases: Optional[F.Fases] = None) -> str:
     """Hechos que no dependen de la redaccion: que transaccion concentra los
     fallos, si el fallo es puntual o sostenido y cual es la mas lenta. Van al
     resumen, que es la primera llamada y fija la lectura que las demas reciben."""
@@ -475,8 +516,9 @@ def hechos_de_la_prueba(df_main: pd.DataFrame, intervalo: int) -> str:
         return ""
     ok = _ok(df_main)
     total_err = int((~ok).sum())
-    t0 = df_main["timestamp"].min()
-    lineas = ["HECHOS DE LA PRUEBA (calculados sobre el JTL; son la base de la lectura):"]
+    fases = fases if fases is not None else F.calcular(df_main)
+    lineas = ["HECHOS DE LA PRUEBA (calculados sobre el JTL; son la base de la lectura):",
+              fases.linea()]
     if total_err:
         por_label = (~ok).groupby(df_main["label"]).agg(["sum", "count"])
         por_label = por_label[por_label["sum"] > 0].sort_values("sum", ascending=False)
@@ -490,13 +532,12 @@ def hechos_de_la_prueba(df_main: pd.DataFrame, intervalo: int) -> str:
         n_puntos = b.nunique()
         con_fallo = err["timestamp"].dt.floor(f"{intervalo}s").nunique()
         cobertura = con_fallo / max(1, n_puntos)
-        forma = ("repartidos a lo largo de toda la prueba" if cobertura >= 0.5 else
-                 "presentes en una parte de la prueba" if cobertura >= 0.15 else
-                 "concentrados en pocos momentos")
+        # BLOQUE 2.1: donde se concentran, en lugar del primero y el ultimo, que
+        # el modelo citaba como si dijeran algo (reporte 136 §6.1).
         lineas.append(
             f"- Los fallos aparecen en {num(con_fallo)} de los {num(n_puntos)} puntos de "
-            f"{num(intervalo)} s ({pct(100 * cobertura, 1)}): {forma}. Primero "
-            f"{_cuando(err['timestamp'].min(), t0)}, ultimo {_cuando(err['timestamp'].max(), t0)}.")
+            f"{num(intervalo)} s ({pct(100 * cobertura, 1)}); "
+            f"{F.concentracion(err['timestamp'], fases, 'fallos')}.")
     else:
         lineas.append("- No hubo ni un fallo en toda la prueba.")
     medias = df_main.groupby("label")["elapsed"].agg(["mean", "max"])
