@@ -5,6 +5,49 @@
 
 ---
 
+## AL 30/09/2026 — lo que hasta hoy solo vivía en los reportes
+
+El 30/09 se quitaron del árbol los reportes anteriores al 135. Viven en el
+historial de git (`git log -- docs/reporte_claude_code/`) y **no se restauran**.
+Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
+`git show <commit>:<ruta>`. Lo que sigue es lo que hacía falta tener a mano.
+
+### Plan de análisis (en este orden)
+
+1. **R2** — la serie de tiempo resumida en cada sección (`resumen_serie.py`), commit `243900c`. Corrida con IA antes/después en curso: reporte **136**.
+2. **Prompts de estilo.**
+3. **Conclusión única.**
+4. **Mockups.**
+5. **Contexto y conversación.**
+6. **Cierre.**
+
+### En pausa
+
+- **S2.3** — la ruta de la IA (`refine-surgical`) pone el token de escritura en el Backend Listener; módulo nuevo compartido con `sesiones.py` (reporte 132 §4).
+- **S2.4** — `AIScriptEditor.tsx` pide los argumentos del listener a `/monitoring/jmeter-config` en vez de su lista fija. **Pantalla, regla 31.**
+- **S2.5** — suites y guiones sin token maestro por defecto: solo del entorno, y paran si falta.
+- **S2.6** — Grafana lee con un token de lectura (`INFLUXDB_GRAFANA_TOKEN`), no con el maestro. Recrear Grafana es de Fredy.
+- **Token maestro en producción** — mirar si el `.env` del servidor define `INFLUXDB_TOKEN` e `INFLUXDB_ADMIN_PASSWORD`; si no, rotarlo dentro del servicio, y buscar `BackendListener` en `ai_script_designs.current_jmx` de allí (132 §4).
+- **O2e.4b** — el generador de la orden de instalación del agente con la URL de producción, en la pantalla de Servidores. **Pantalla, regla 31** (130).
+- **O2e.5** — `requisitos-con-agente.md` v1.2: un token cubre ~20 servidores, ~300 escrituras/min por token, solo 443 saliente hacia `kinetix.sqasa.co`, y el agente se pone al día solo tras un corte (128 §7, 129 §10).
+- **Dos proveedores de IA, P1–P4** — una clave por proveedor en una tabla nueva `ai_provider_keys`, sin SQL. **Decisión pendiente: la heurística del arranque** (reconocer por prefijo una clave de Gemini guardada bajo `openai`). La clave de Gemini …zo1g se perdió al guardar la de OpenAI y no está en ninguna copia (135).
+
+### Deudas
+
+- **SQL pendiente en producción:** `etapa2_reasoning_effort.sql`, `o2c_influxdb_read_token.sql`, `h8_estado_proyecto.sql` + `_cierre.sql` (el último), `o2e_infra_write_token.sql`.
+- **Despliegue:** checklist 53 y su versión corregida 59 §4 (puertos, `target` del frontend, `/app/media`, DEBUG). Nada ejecutado.
+- **HF-3** — el límite de `/auth/login` deja sin acceso a toda la plataforma detrás de nginx (37).
+- **Guardado lento del integrado** mientras la página carga: más de 6 s (121 §2.2).
+- **Corte intermitente de R1.1** (`Server disconnected` al exportar el PDF) en la suite; causa no encontrada (123, 124).
+- **Gemini sin timeout** en la generación, y un `SSLError` no cuenta como transitorio: sale del respaldo sin reintento (134 §3d).
+- **`/ai-config/models/live`** es síncrona dentro de un endpoint async (bloquea el backend) y no tiene timeout (134 §2a).
+- **Pantalla de IA:** «Probar conexión» prueba lo guardado, no lo de la pantalla, y guardar no vuelve a pedir la lista de modelos (134 F-1, F-4).
+- **El instalador de Windows del agente**, escrito y no probado (O-D21); y las comillas del instalador (129 §5.1).
+- **O3** — el motor propio en InfluxDB y el WebSocket en el navegador (`services/engine/`, protegida).
+- **CLAUDE.md §11** con recuentos de líneas atrasados (121 §8).
+
+---
+
 ## ESTADO ACTUAL (2026-09-24)
 
 - **Branch activa:** `backup-trabajo-local`. **Todo el producto vive ahí.** `main`
