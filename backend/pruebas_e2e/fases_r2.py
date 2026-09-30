@@ -2,8 +2,8 @@
 
     docker exec -w /app jmeter_backend python3 /app/pruebas_e2e/fases_r2.py <id8> [<id8> ...]
 
-Para cada ejecucion lee su JTL (solo lectura) y saca las fases con los hilos
-activos (`allThreads`), agrupados por segundo:
+Para cada ejecucion lee su JTL (solo lectura) y saca las fases con
+`services/ai/fases.py` (BLOQUE 2.1: una sola definicion), por hilos activos:
   - rampa de subida: desde el inicio hasta que se alcanza el 95 % del maximo;
   - meseta: mientras se esta en el 95 % o mas;
   - rampa de bajada: desde la ultima vez en el 95 % hasta el final.
@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from app.core.config import settings
 from app.db.models.test import TestExecution
 from app.api.v1.endpoints.upload import _parse_execution_df
+from app.services.ai import fases as F
 
 MIN = re.compile(r"\bmin(?:uto)?s?\.?\s*(\d{1,3})(?::(\d{2}))?\b", re.I)
 RELOJ = re.compile(r"(?<![\d:])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])")
@@ -50,21 +51,20 @@ async def _ejecucion(id8):
     return df
 
 
+_NOMBRE = {"subida": "rampa de subida", "sostenida": "meseta", "bajada": "rampa de bajada"}
+
+
 def fases(df):
-    t = (df["timeStamp"] - df["timeStamp"].min()) / 1000.0
-    hilos = df.groupby(t.astype(int))["allThreads"].max().sort_index()
-    tope = hilos.max()
-    altos = hilos[hilos >= 0.95 * tope]
-    return {"duracion": float(t.max()), "max_hilos": int(tope),
-            "subida_hasta": float(altos.index.min()), "bajada_desde": float(altos.index.max())}
+    """BLOQUE 2.1: la definicion vive en `services/ai/fases.py`; aqui solo se lee."""
+    x = F.calcular(df)
+    if not x.disponible:
+        raise SystemExit(f"fases no disponibles: {x.motivo}")
+    return {"duracion": x.duracion_s, "max_hilos": x.max_hilos,
+            "subida_hasta": x.subida_hasta_s, "bajada_desde": x.bajada_desde_s, "_fases": x}
 
 
 def fase_de(seg, f):
-    if seg < f["subida_hasta"]:
-        return "rampa de subida"
-    if seg > f["bajada_desde"]:
-        return "rampa de bajada"
-    return "meseta"
+    return _NOMBRE[f["_fases"].fase_de(seg)]
 
 
 def main(ids):

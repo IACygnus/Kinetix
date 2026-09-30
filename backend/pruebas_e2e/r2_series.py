@@ -14,6 +14,8 @@ Sobre el JTL de «Nova capa media» (carga, 15.786 peticiones), de solo lectura:
   5. R-D14: el detector marca las dos disculpas del informe de referencia y no
      marca una frase con serie.
   6. R-D11: el numero de llamadas no cambia (10 + 6 por transaccion).
+  7. BLOQUE 2.1: las fases de las tres ejecuciones del 136 (las mismas que
+     fases_r2.py), sin bajada, bajada de 1 s y sin hilos; y la concentracion.
 
 `_generate` se sustituye por un stub que devuelve un texto marcado: ni una
 peticion sale a la IA. `_upsert` se sustituye por un colector: nada se escribe.
@@ -127,6 +129,37 @@ async def main():
         comprobar(any(a["tipo"] == "disculpa" for a in detectar_estilo(frase, "chart_error_rate")), f"marca: {frase[:50]}...")
     limpia = "La tasa de error se movió entre 3,21% y 14,29% la mayor parte del tiempo, con un pico de 33,33% en el min 0:11."
     comprobar(not any(a["tipo"] == "disculpa" for a in detectar_estilo(limpia, "chart_error_rate")), "no marca una frase con serie")
+
+    print("6. Fases de la prueba (BLOQUE 2.1a)")
+    from types import SimpleNamespace
+    from app.api.v1.endpoints.upload import _parse_execution_df
+    from app.services.ai import fases as F
+    sys.path.insert(0, "/app/pruebas_e2e")
+    import fases_r2
+    # Las tres ejecuciones del 136, leidas del JTL (sin base, regla 34). Esperado:
+    # lo que dio fases_r2.py en el reporte 136 §6.1.
+    esperado = {
+        "Nova": ("resultados_general_carga_22-09-2026_200455.jtl", "3:14", "29:59",
+                 "Subida 0:00–3:14 · Carga sostenida 3:14–30:00 · Sin bajada"),
+        "prueba 6": ("resultados_general_carga  4-sept-2025-184018.jtl", "2:19", "4:24",
+                     "Subida 0:00–2:19 · Carga sostenida 2:19–4:24 · Bajada 4:24–5:01"),
+        "prueba avianca": ("View Results Tree ejecucion2.jtl", "0:27", "2:59",
+                           "Subida 0:00–0:27 · Carga sostenida 0:27–2:59 · Bajada 2:59–3:00"),
+    }
+    for nombre, (jtl, sub, baj, linea) in esperado.items():
+        _, df = _parse_execution_df(SimpleNamespace(jtl_filenames=None, jtl_filename=jtl, id=nombre))
+        x = F.calcular(df)
+        comprobar(x.disponible and F.mmss(x.subida_hasta_s) == sub and F.mmss(x.bajada_desde_s) == baj,
+                  f"{nombre}: subida hasta {sub}, carga sostenida hasta {baj}")
+        comprobar(linea in x.linea(), f"{nombre}: «{linea}»")
+        r = fases_r2.fases(df)
+        comprobar((r["subida_hasta"], r["bajada_desde"]) == (x.subida_hasta_s, x.bajada_desde_s),
+                  f"{nombre}: fases_r2.py da lo mismo que el servicio")
+    comprobar(F.INSTRUCCION_FASES in x.linea(), "la linea lleva la instruccion de las rampas")
+    sin = F.calcular(df.drop(columns=[c for c in ("allThreads", "grpThreads") if c in df.columns]))
+    comprobar(not sin.disponible and "no disponibles" in sin.linea() and "Subida" not in sin.linea(),
+              "sin hilos en el JTL: «fases no disponibles», nada inventado")
+    comprobar(F.calcular(df.iloc[0:0]).disponible is False, "sin muestras: no disponibles")
 
     print()
     print("R2 SERIES: TODO PASA" if not fallos else f"R2 SERIES: {len(fallos)} FALLA(N)")
