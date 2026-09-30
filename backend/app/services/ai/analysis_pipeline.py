@@ -38,6 +38,7 @@ from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
 # ETAPA R2 (R-D9/R-D10): cada seccion de grafica recibe SU serie, resumida.
 from app.services.ai import resumen_serie
 from app.services.ai import fases as F   # BLOQUE 2.1
+from app.services.ai import contexto_prompt   # BLOQUE 2.2
 # F1 (aviso de respaldo): de donde sale cada texto, y por que.
 from app.services.ai import origen
 
@@ -181,6 +182,7 @@ async def run_ai_and_verdict(
         series: Dict[str, str] = {}
         hechos = ""
         fases_prueba = None   # BLOQUE 2.1: una sola vez, sobre la prueba entera
+        intervalo = 1
         try:
             df_main = parser.df_main if getattr(parser, "df_main", None) is not None and len(parser.df_main) else parser.df
             intervalo = parser._calculate_adaptive_interval() if hasattr(parser, "_calculate_adaptive_interval") else 1
@@ -190,10 +192,19 @@ async def run_ai_and_verdict(
         except Exception as e:
             logger.warning(f"R2: sin series para los prompts ({e}); las secciones van sin serie")
 
+        # BLOQUE 2.2: el bloque de la ejecucion, IGUAL en las diez llamadas y en
+        # las seis de cada transaccion (`contexto_prompt.contexto_de_parser`).
+        contexto = contexto_prompt.bloque_ejecucion(
+            metrics, test_type, metric_unit, acceptance_criteria_dict,
+            parser.df, fases_prueba, hechos)
+
         def _con_serie(clave: str, datos: str) -> str:
             if not series.get(clave):
                 return datos
-            return f"{datos}\n\n{series['cabecera']}\n{series[clave]}"
+            # Response Times se agrupa por segundo (GRAF1); las demas, por el
+            # intervalo adaptativo. La linea de tiempo y las fases ya van en el bloque.
+            paso = 1 if clave == "response_times" else intervalo
+            return f"{datos}\n\n{contexto_prompt.nota_intervalo(paso)}\n{series[clave]}"
 
         # 1. Tabla resumen — es la primera y fija la LECTURA BASE (R-D17): su
         # texto llega a todas las secciones que vienen detras.
@@ -203,6 +214,7 @@ async def run_ai_and_verdict(
             summary_df, metrics, test_type=test_type,
             acceptance_criteria=acceptance_criteria_dict, insights=insights,
             test_date=test_date, metric_unit=metric_unit, hechos=hechos,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_summary', ai_analysis_summary, _fallo)   # F1
         if ai_analysis_summary is None:
@@ -243,6 +255,7 @@ async def run_ai_and_verdict(
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,                      # ETAPA R2 (R-D17)
             fases=fases_prueba.linea() if fases_prueba is not None else "",   # BLOQUE 2.1
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_errors', ai_analysis_errors, _fallo)   # F1
         if ai_analysis_errors is None:
@@ -276,6 +289,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_response_times', ai_analysis_response_times, _fallo)   # F1
         if ai_analysis_response_times is None:
@@ -311,6 +325,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_latency', ai_analysis_latency, _fallo)   # F1
         if ai_analysis_latency is None:
@@ -329,6 +344,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_error_rate', ai_analysis_error_rate, _fallo)   # F1
         if ai_analysis_error_rate is None:
@@ -349,6 +365,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_codes_per_second', ai_analysis_codes_per_second, _fallo)   # F1
         if ai_analysis_codes_per_second is None:
@@ -370,6 +387,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_transactions_per_second', ai_analysis_transactions_per_second, _fallo)   # F1
         if ai_analysis_transactions_per_second is None:
@@ -389,6 +407,7 @@ async def run_ai_and_verdict(
             test_date=test_date, metric_unit=metric_unit,
             acceptance_criteria=acceptance_criteria_dict,   # ETAPA 5b (D55)
             lectura_base=lectura_base,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_analysis_active_threads', ai_analysis_active_threads, _fallo)   # F1
         if ai_analysis_active_threads is None:
@@ -405,6 +424,7 @@ async def run_ai_and_verdict(
                 gemini.analyze_redirects,
                 redirect_summary, metrics, test_type=test_type,
                 test_date=test_date, metric_unit=metric_unit,
+                contexto=contexto,   # BLOQUE 2.2
             )
             _anota('ai_analysis_redirects', ai_analysis_redirects, _fallo)   # F1
             if ai_analysis_redirects is None:
@@ -436,6 +456,7 @@ async def run_ai_and_verdict(
             test_date=test_date,
             acceptance_criteria=acceptance_criteria_dict,
             metric_unit=metric_unit,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_conclusions', ai_conclusions, _fallo)   # F1
         if ai_conclusions is None:
@@ -461,6 +482,7 @@ async def run_ai_and_verdict(
             test_date=test_date,
             acceptance_criteria=acceptance_criteria_dict,
             metric_unit=metric_unit,
+            contexto=contexto,   # BLOQUE 2.2
         )
         _anota('ai_recommendations', ai_recommendations, _fallo)   # F1
         if ai_recommendations is None:

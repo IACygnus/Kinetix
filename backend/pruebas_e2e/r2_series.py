@@ -115,7 +115,10 @@ async def main():
         db=_SinBase(), execution_id=None, label=TX, metrics={k: fila[k] for k in METRIC_KEYS},
         series=build_transaction_series(p.df_main, TX), analyzer=G.GeminiAnalyzer.__new__(G.GeminiAnalyzer),
         df_tx=p.df_main[p.df_main["label"] == TX],
-        fases=__import__("app.services.ai.fases", fromlist=["calcular"]).calcular(p.df_main))   # BLOQUE 2.1d
+        fases=__import__("app.services.ai.fases", fromlist=["calcular"]).calcular(p.df_main),   # BLOQUE 2.1d
+        # BLOQUE 2.2: la linea de tiempo y las fases viajan en el bloque de la ejecucion.
+        contexto=__import__("app.services.ai.contexto_prompt", fromlist=["x"]).contexto_de_parser(
+            p, "load", "TPS", {"concurrency": 4, "response_time": 2000, "availability": 99.5})[0])
     comprobar(len(LLAMADAS) == 6, f"R-D11: transaccion con {len(LLAMADAS)} llamadas (eran 6)")
     comprobar(LLAMADAS[0][0] == "txreport_summary", "el resumen va primero")
     for s, pr in LLAMADAS[1:]:

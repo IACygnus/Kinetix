@@ -57,8 +57,8 @@ except ImportError:
 
 from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
     BLOQUE_ESTILO,
+    PERMISO_VEREDICTO,
     REFERENCIA_ESTILO,
-    bloque_estilo,
     kbs,
     ms,
     num,
@@ -394,13 +394,11 @@ SYSTEM_PROMPT = f"""{_PERSONA}
 
 {REFERENCIA_ESTILO}"""
 
-# El mismo bloque con el permiso de dictaminar (D30): solo lo reciben las
-# conclusiones, las recomendaciones y el consolidado del informe integrado.
-SYSTEM_PROMPT_VEREDICTO = f"""{_PERSONA}
-
-{bloque_estilo(permite_veredicto=True)}
-
-{REFERENCIA_ESTILO}"""
+# BLOQUE 2.2: habia una segunda variante del sistema con el permiso de dictamen
+# metido entre la regla 15 y el ejemplo. Partia en dos el prefijo comun (reporte
+# 137 §4.3): las secciones que dictaminan no compartian cache con el resto. El
+# sistema es ahora UNO; el permiso va al final del mensaje de la seccion que lo
+# necesita (`_generate(permite_veredicto=True)`).
 
 
 def sanitize_ai_text(text: str) -> str:
@@ -977,6 +975,94 @@ def build_tier_summary(insights: Dict) -> str:
 
 # ==================== GEMINI ANALYZER ====================
 
+# ====================================================================
+# BLOQUE 2.2 — lo PROPIO de cada seccion, que va al final del prompt
+# ====================================================================
+# El bloque de la ejecucion (unidad, tipo, cifras globales, criterios, fases y
+# hechos) va delante y es igual en todas; estas instrucciones son lo unico que
+# cambia de una seccion a otra, junto con sus datos.
+
+INSTRUCCION_RESUMEN = """Escribe el analisis del resumen de la prueba. Maximo 180 palabras.
+Este texto es la LECTURA BASE del informe: las demas secciones lo reciben y no
+pueden contradecirlo. Deja claro, con sus cifras, que transaccion concentra los
+fallos, si el problema es puntual o sostenido a lo largo de la prueba, y cual es
+el cuello de botella.
+NO repitas la tabla: interpreta lo que dice.
+
+Cuenta el recorrido del usuario en el orden en que ocurre, agrupando las
+transacciones que se comportan igual en vez de listarlas una a una:
+
+1. Cuantas transacciones se ejecutaron, cuanto tardaron en conjunto y que parte
+   del flujo funciono bien.
+2. Donde se rompe: nombra las transacciones con errores o con tiempos altos, con
+   sus cifras, y di que significa funcionalmente que fallen justo ahi.
+3. Si unos usuarios esperan mucho mas que otros, dilo con la frase de personas y
+   su cifra.
+
+Las {n} transacciones tienen que aparecer por su nombre, aunque sea agrupadas.
+No digas si el sistema esta listo para produccion: eso va en las conclusiones
+del informe."""
+
+INSTRUCCION_ERRORES = """Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
+con error. NO repitas la tabla: interpreta lo que dice.
+
+1. Cuantos fallos hubo y en que punto del flujo de negocio aparecen. Agrupa las
+   transacciones que fallan por el mismo motivo.
+2. Que significa cada codigo en terminos de negocio y que dice su mensaje; la
+   causa probable, marcada como hipotesis, sale de ese mensaje.
+3. Que gravedad tiene para la operacion.
+
+No digas si el sistema esta listo para produccion ni propongas un plan de
+trabajo: eso va en las conclusiones y recomendaciones del informe."""
+
+INSTRUCCION_GRAFICA = """Escribe el analisis de esta grafica. Maximo 130 palabras.
+NO repitas los datos: interpreta lo que muestran.
+
+{especifico}
+
+No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
+las conclusiones y recomendaciones del informe."""
+
+INSTRUCCION_REDIRECCIONES = """Escribe el analisis de las redirecciones. Maximo 130 palabras. Nombra cada una.
+NO repitas la tabla: interpreta lo que dice.
+
+1. Cuantas son, que parte del trafico representan y en que punto del flujo
+   aparecen.
+2. Cuanto tiempo anaden a lo que espera el usuario frente a las transacciones
+   principales, con su cifra.
+3. Si su presencia es coherente con el diseno de la aplicacion o apunta a algo
+   mal configurado, marcado como hipotesis.
+
+No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
+las conclusiones y recomendaciones del informe."""
+
+INSTRUCCION_RESULTADO = """RESULTADO CALCULADO FRENTE A LOS CRITERIOS: {verdict}
+IMPORTANTE: tu primera conclusion DEBE ser ese resultado, "{verdict}", comparando
+las cifras contra los criterios. Si es NO APTO, di que criterios se incumplen.
+Si es APTO CON RESERVAS, di que cifras quedan cerca del limite.
+"""
+
+INSTRUCCION_CONCLUSIONES = """Has terminado de analizar una prueba de performance. Sintetiza TODO en las
+conclusiones ejecutivas del informe.
+Escribe 6 conclusiones, cada una un parrafo completo de 3 a 5 oraciones,
+numeradas. Maximo 350 palabras en total. Cubre: el resultado frente a los
+criterios, los tiempos, los errores, la capacidad, la estabilidad y lo que hay
+que resolver primero.
+
+Cada conclusion cruza varias secciones y nombra transacciones concretas con sus
+cifras. No repitas literalmente lo que ya dijo una seccion: sintetiza."""
+
+INSTRUCCION_RECOMENDACIONES = """Escribe las recomendaciones del informe a partir de los resultados de la
+prueba, apuntando a cumplir los criterios de aceptacion si los hay.
+Ordenalas por prioridad. Maximo 350 palabras.
+CRITICAS (2 o 3): hay que resolverlas antes de salir a produccion.
+ALTAS (2 o 3): hay que resolverlas pronto.
+MEDIAS (1 o 2): mejoras que pueden esperar.
+
+Cada recomendacion es un parrafo de 3 o 4 oraciones con el problema, la accion
+concreta y las transacciones afectadas con sus cifras."""
+
+
 class GeminiAnalyzer:
     """AI Analyzer supporting Gemini and OpenAI providers."""
 
@@ -1093,11 +1179,15 @@ class GeminiAnalyzer:
         ETAPA 3 (D34): el bloque de estilo lo pone AQUI, una sola vez por llamada
         y para los dos proveedores. Ningun prompt lo vuelve a incluir. Con Gemini
         va delante del prompt (el modelo se crea sin `system_instruction`); con
-        OpenAI va como mensaje `system`. `permite_veredicto` elige la variante con
-        el permiso de dictaminar (D30): conclusiones, recomendaciones y el
-        consolidado del integrado. El resto de las secciones no dictaminan.
+        OpenAI va como mensaje `system`. `permite_veredicto` (D30) anade el permiso
+        de dictaminar AL FINAL del prompt (BLOQUE 2.2): conclusiones,
+        recomendaciones, los globales de capturas, la comparativa y el integrado.
         """
-        sistema = SYSTEM_PROMPT_VEREDICTO if permite_veredicto else SYSTEM_PROMPT
+        # BLOQUE 2.2: un solo sistema para todos; el permiso de dictamen va al
+        # final de lo propio de la seccion, donde no rompe el prefijo comun.
+        sistema = SYSTEM_PROMPT
+        if permite_veredicto:
+            prompt = f"{prompt.rstrip()}\n\n{PERMISO_VEREDICTO}"
 
         # E1.2: `_t0` se reinicia en cada intento; `_tel` solo evita repetir 8 argumentos.
         _t0 = datetime.now(timezone.utc)
@@ -1390,6 +1480,18 @@ class GeminiAnalyzer:
         desc = TEST_TYPE_DESCRIPTIONS.get(test_type, f"Tipo de prueba: {test_type}")
         return f"\nTIPO DE PRUEBA: {desc}\n"
 
+    def _cabeza(self, contexto: str, metric_unit: str, test_type: str,
+                acceptance_criteria: Optional[Dict] = None, lectura_base: str = "") -> str:
+        """BLOQUE 2.2: lo que va delante de cada seccion. `contexto` es el bloque de
+        la ejecucion (`contexto_prompt.bloque_ejecucion`), IGUAL en todas las
+        llamadas de un informe; detras, la lectura base si ya existe. Sin bloque
+        (un llamador antiguo) se arma lo minimo: unidad, tipo y criterios."""
+        if not contexto:
+            contexto = (f"{get_metric_unit_instruction(metric_unit).strip()}\n"
+                        f"{self._build_test_type_context(test_type).strip()}"
+                        f"{bloque_completo(acceptance_criteria)}")
+        return f"{contexto.rstrip()}\n{bloque_lectura_base(lectura_base)}"
+
     def _build_transactions_table(self, summary_df) -> str:
         """Tabla de TODAS las transacciones (sin limite), en formato espanol.
 
@@ -1419,36 +1521,25 @@ class GeminiAnalyzer:
         insights: Optional[Dict] = None,
         test_date: str = "N/A",
         metric_unit: str = "TPS",
-        hechos: str = "",   # ETAPA R2 (R-D17): `resumen_serie.hechos_de_la_prueba`
+        hechos: str = "",   # ETAPA R2 (R-D17); BLOQUE 2.2: ya viaja en `contexto`
+        contexto: str = "",  # BLOQUE 2.2: `contexto_prompt.bloque_ejecucion`
     ) -> Optional[str]:
         """Analisis de la tabla resumen con datos completos por transaccion"""
         try:
-            test_ctx = self._build_test_type_context(test_type)
             table = self._build_transactions_table(summary_df)
 
             if insights is None:
                 insights = prepare_insights_for_prompt(summary_df)
 
             tier_summary = build_tier_summary(insights)
-
-            criteria_text = ""
-            if acceptance_criteria:
-                criteria_text = "\n\nCRITERIOS DE ACEPTACION:\n"
-                if acceptance_criteria.get("concurrency"):
-                    criteria_text += f"- Concurrencia esperada: {num(acceptance_criteria['concurrency'])} usuarios\n"
-                if acceptance_criteria.get("response_time"):
-                    criteria_text += f"- Tiempo de respuesta maximo aceptable: {ms(acceptance_criteria['response_time'])}\n"
-                if acceptance_criteria.get("availability"):
-                    criteria_text += f"- Disponibilidad minima: {pct(acceptance_criteria['availability'], 1)}\n"
-                # ETAPA 5b (D55): las que NO se miden con ese criterio.
-                criteria_text += bloque_general(acceptance_criteria)
-
             logger.info(f"Enviando {len(summary_df)} transacciones a Gemini para analisis de tabla resumen")
 
-            # ETAPA 3 (D30): esta seccion NO dictamina — `permite_veredicto` se
-            # queda en False y la estructura ya no pide "Listo para produccion?".
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
+            # BLOQUE 2.2: las cifras globales, los percentiles, los criterios y los
+            # hechos estan en el bloque de la ejecucion; aqui, solo lo propio.
+            # ETAPA 3 (D30): esta seccion NO dictamina.
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria)}
+{'' if contexto else hechos}
+SECCION: RESUMEN DE LA PRUEBA
 
 TABLA DE RESULTADOS POR TRANSACCION:
 {table}
@@ -1456,37 +1547,7 @@ TABLA DE RESULTADOS POR TRANSACCION:
 LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
 {tier_summary}
 
-RESUMEN GLOBAL DE LA PRUEBA:
-- Total de muestras: {num(metrics['total_requests'])}
-- Tasa de error global: {pct(metrics['error_rate'])}
-- Tiempo promedio global: {ms(metrics['avg_response_time'])}
-- Caudal global: {num(metrics['throughput'], 2)} por segundo
-- Duracion de la prueba: {num(metrics['duration_seconds'])} segundos
-LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
-{percentiles_bloque(metrics.get('median_response_time', 0), metrics['p90_response_time'], metrics['p95_response_time'], metrics['p99_response_time'])}{criteria_text}
-{hechos}
-
-Escribe el analisis del resumen de la prueba. Maximo 180 palabras.
-Este texto es la LECTURA BASE del informe: las demas secciones lo reciben y no
-pueden contradecirlo. Deja claro, con sus cifras, que transaccion concentra los
-fallos, si el problema es puntual o sostenido a lo largo de la prueba, y cual es
-el cuello de botella.
-NO repitas la tabla: interpreta lo que dice.
-
-Cuenta el recorrido del usuario en el orden en que ocurre, agrupando las
-transacciones que se comportan igual en vez de listarlas una a una:
-
-1. Cuantas transacciones se ejecutaron, cuanto tardaron en conjunto y que parte
-   del flujo funciono bien.
-2. Donde se rompe: nombra las transacciones con errores o con tiempos altos, con
-   sus cifras, y di que significa funcionalmente que fallen justo ahi.
-3. Si unos usuarios esperan mucho mas que otros, dilo con la frase de personas y
-   su cifra.
-
-Las {insights['total_transactions']} transacciones tienen que aparecer por su
-nombre, aunque sea agrupadas. No digas si el sistema esta listo para produccion:
-eso va en las conclusiones del informe.
-"""
+{INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}"""
             return self._generate(prompt, section_name="summary_table")
 
         except Exception as e:
@@ -1502,14 +1563,14 @@ eso va en las conclusiones del informe.
         metric_unit: str = "TPS",
         acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
         lectura_base: str = "",                       # ETAPA R2 (R-D17)
-        fases: str = "",                              # BLOQUE 2.1: `fases.Fases.linea()`
+        fases: str = "",                              # BLOQUE 2.1; 2.2: ya viaja en `contexto`
+        contexto: str = "",                           # BLOQUE 2.2
     ) -> Optional[str]:
         """Analisis detallado de errores por transaccion y codigo HTTP"""
         if not error_data or len(error_data) == 0:
             return "No se detectaron errores en la ejecucion. El sistema respondio correctamente a todas las solicitudes."
 
         try:
-            test_ctx = self._build_test_type_context(test_type)
             total_errors = sum(item['count'] for item in error_data)
             error_rate = (total_errors / total_requests * 100) if total_requests > 0 else 0
 
@@ -1548,33 +1609,18 @@ eso va en las conclusiones del informe.
                     f"{len(info['transactions'])} transacciones: {', '.join(info['transactions'])}\n"
                 )
 
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria, lectura_base)}
+{'' if contexto else fases}
+SECCION: ERRORES
 
 ERRORES DETECTADOS:
 {errors_table}
 {error_classification}
-{fases}
-
-CONTEXTO:
-- Total de errores: {num(total_errors)}
-- Tasa de error global: {pct(error_rate)}
-- Total de peticiones: {num(total_requests)}
+- Total de errores: {num(total_errors)} de {num(total_requests)} peticiones ({pct(error_rate)})
 - Transacciones con errores: {len(error_data)}
 - Codigos de respuesta distintos: {len(error_by_code)}
-{bloque_completo(acceptance_criteria)}{bloque_lectura_base(lectura_base)}
-Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
-con error. NO repitas la tabla: interpreta lo que dice.
 
-1. Cuantos fallos hubo y en que punto del flujo de negocio aparecen. Agrupa las
-   transacciones que fallan por el mismo motivo.
-2. Que significa cada codigo en terminos de negocio y que dice su mensaje; la
-   causa probable, marcada como hipotesis, sale de ese mensaje.
-3. Que gravedad tiene para la operacion.
-
-No digas si el sistema esta listo para produccion ni propongas un plan de
-trabajo: eso va en las conclusiones y recomendaciones del informe.
-"""
+{INSTRUCCION_ERRORES}"""
             return self._generate(prompt, section_name="errors")
 
         except Exception as e:
@@ -1591,10 +1637,10 @@ trabajo: eso va en las conclusiones y recomendaciones del informe.
         metric_unit: str = "TPS",
         acceptance_criteria: Optional[Dict] = None,   # ETAPA 5b (D55)
         lectura_base: str = "",                       # ETAPA R2 (R-D17)
+        contexto: str = "",                           # BLOQUE 2.2
     ) -> Optional[str]:
         """Analisis de graficos individuales con contexto del tipo de prueba"""
         try:
-            test_ctx = self._build_test_type_context(test_type)
 
             chart_names = {
                 'response_times': 'Tiempos de Respuesta por Transaccion',
@@ -1651,19 +1697,13 @@ Los datos traen tambien la serie de cada transaccion: di CUANDO aparecen sus pic
             chart_name = chart_names.get(chart_type, chart_type)
             specific = chart_specific_instructions.get(chart_type, "Analiza los datos de esta grafica en detalle.")
 
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria, lectura_base)}
+SECCION: GRAFICA "{chart_name}"
 
-DATOS DE LA GRAFICA "{chart_name}":
+DATOS DE LA GRAFICA:
 {data_summary}
-{tier_context}{bloque_completo(acceptance_criteria)}{bloque_lectura_base(lectura_base)}
-Escribe el analisis de esta grafica. Maximo 130 palabras.
-NO repitas los datos: interpreta lo que muestran.
-
-{specific}
-
-No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
-las conclusiones y recomendaciones del informe."""
+{tier_context}
+{INSTRUCCION_GRAFICA.format(especifico=specific)}"""
             return self._generate(prompt, section_name=f"chart_{chart_type}")
 
         except Exception as e:
@@ -1677,16 +1717,16 @@ las conclusiones y recomendaciones del informe."""
         test_type: str = "load",
         test_date: str = "N/A",
         metric_unit: str = "TPS",
+        contexto: str = "",   # BLOQUE 2.2
     ) -> Optional[str]:
         """Analisis de redirecciones separadas del trafico principal"""
         try:
-            test_ctx = self._build_test_type_context(test_type)
             table = self._build_transactions_table(redirect_summary_df)
 
             logger.info(f"Enviando {len(redirect_summary_df)} redirecciones a Gemini")
 
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type)}
+SECCION: REDIRECCIONES
 
 Se han detectado REDIRECCIONES HTTP separadas del trafico principal.
 
@@ -1698,24 +1738,46 @@ CONTEXTO DEL TRAFICO PRINCIPAL:
 - Muestras de redireccion: {num(main_metrics.get('total_redirects', 0))}
 - Nombres de las redirecciones: {', '.join(main_metrics.get('redirect_labels', []))}
 
-Escribe el analisis de las redirecciones. Maximo 130 palabras. Nombra cada una.
-NO repitas la tabla: interpreta lo que dice.
-
-1. Cuantas son, que parte del trafico representan y en que punto del flujo
-   aparecen.
-2. Cuanto tiempo anaden a lo que espera el usuario frente a las transacciones
-   principales, con su cifra.
-3. Si su presencia es coherente con el diseno de la aplicacion o apunta a algo
-   mal configurado, marcado como hipotesis.
-
-No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
-las conclusiones y recomendaciones del informe.
-"""
+{INSTRUCCION_REDIRECCIONES}"""
             return self._generate(prompt, section_name="redirects")
 
         except Exception as e:
             logger.error(f"GEMINI FAILED for redirects: {str(e)}")
             return None
+
+    def _grupos_y_textos(self, insights: Optional[Dict], textos: List[Tuple[str, str]]) -> str:
+        """BLOQUE 2.2: lo que comparten conclusiones y recomendaciones, en el MISMO
+        orden y con el MISMO texto: la segunda llamada reutiliza la cache de la
+        primera casi entera. Antes cada una ordenaba las secciones a su manera."""
+        partes = []
+        if insights:
+            tiers = insights['tiers']
+
+            # ETAPA 3 (D29): sin la palabra "tier" ni "ALTA VARIABILIDAD".
+            def _nombres(lista):
+                return ', '.join(tx['name'] for tx in lista) if lista else 'ninguna'
+            partes.append(f"""LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
+- Tiempos muy altos (por encima de {num(TIER_DEGRADED)} ms): {len(tiers['critical'])} ({_nombres(tiers['critical'])})
+- Tiempos altos (entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms): {len(tiers['degraded'])} ({_nombres(tiers['degraded'])})
+- Tiempos medios (entre {num(TIER_EXCELLENT)} y {num(TIER_ACCEPTABLE)} ms): {len(tiers['acceptable'])} ({_nombres(tiers['acceptable'])})
+- Tiempos bajos (por debajo de {num(TIER_EXCELLENT)} ms): {len(tiers['excellent'])} ({_nombres(tiers['excellent'])})
+- Transacciones donde unos usuarios esperan mucho mas que otros: {len(insights['high_variability'])} ({_nombres(insights['high_variability'])})
+- Transacciones con errores: {len(insights['error_transactions'])} ({_nombres(insights['error_transactions'])})
+""")
+        partes.append("LO QUE YA SE ANALIZO, SECCION POR SECCION:")
+        for titulo, texto in textos:
+            if texto:
+                partes.append(f"\n{titulo}:\n{texto}")
+        return "\n".join(partes)
+
+    @staticmethod
+    def _textos_de_secciones(summary, errors, response_times, latency, error_rate,
+                             codes, tps, threads, redirects) -> List[Tuple[str, str]]:
+        return [("RESUMEN DE LA PRUEBA", summary), ("ERRORES", errors),
+                ("TIEMPOS DE RESPUESTA POR TRANSACCION", response_times),
+                ("LATENCIA", latency), ("TASA DE ERROR", error_rate),
+                ("CODIGOS DE RESPUESTA", codes), ("CAUDAL DE TRANSACCIONES", tps),
+                ("USUARIOS ACTIVOS", threads), ("REDIRECCIONES", redirects)]
 
     def generate_conclusions(
         self,
@@ -1738,103 +1800,27 @@ las conclusiones y recomendaciones del informe.
         test_date: str = "N/A",
         acceptance_criteria: Optional[Dict] = None,
         metric_unit: str = "TPS",
+        contexto: str = "",   # BLOQUE 2.2
     ) -> Optional[str]:
         """Sintetiza TODOS los analisis en conclusiones ejecutivas"""
         try:
-            test_ctx = self._build_test_type_context(test_type)
+            comun = self._grupos_y_textos(insights, self._textos_de_secciones(
+                ai_analysis_summary, ai_analysis_errors, ai_analysis_response_times,
+                ai_analysis_latency, ai_analysis_error_rate, ai_analysis_codes_per_second,
+                ai_analysis_transactions_per_second, ai_analysis_active_threads,
+                ai_analysis_redirects))
 
-            redirect_section = ""
-            if ai_analysis_redirects:
-                redirect_section = f"""
-11. REDIRECCIONES:
-{ai_analysis_redirects}
-"""
-
-            insights_summary = ""
-            if insights:
-                tiers = insights['tiers']
-                # ETAPA 3 (D29): mismo contenido, sin la palabra "tier" ni
-                # "ALTA VARIABILIDAD", que el modelo copiaba al informe.
-                def _nombres(lista):
-                    return ', '.join(tx['name'] for tx in lista) if lista else 'ninguna'
-                insights_summary = f"""
-LAS TRANSACCIONES AGRUPADAS POR SU TIEMPO DE RESPUESTA:
-- Tiempos muy altos (por encima de {num(TIER_DEGRADED)} ms): {len(tiers['critical'])} ({_nombres(tiers['critical'])})
-- Tiempos altos (entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms): {len(tiers['degraded'])} ({_nombres(tiers['degraded'])})
-- Tiempos medios (entre {num(TIER_EXCELLENT)} y {num(TIER_ACCEPTABLE)} ms): {len(tiers['acceptable'])} ({_nombres(tiers['acceptable'])})
-- Tiempos bajos (por debajo de {num(TIER_EXCELLENT)} ms): {len(tiers['excellent'])} ({_nombres(tiers['excellent'])})
-- Transacciones donde unos usuarios esperan mucho mas que otros: {len(insights['high_variability'])} ({_nombres(insights['high_variability'])})
-- Transacciones con errores: {len(insights['error_transactions'])} ({_nombres(insights['error_transactions'])})
-"""
-
-            # Build acceptance criteria section for Gemini
-            criteria_section = ""
+            resultado = ""
             if acceptance_criteria and not acceptance_criteria.get('raw_text'):
                 verdict = compute_verdict(metrics, acceptance_criteria)
-                criteria_section = f"""
-CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
-- Concurrencia esperada: {num(acceptance_criteria.get('concurrency', 0))} usuarios
-- Tiempo de respuesta maximo: {ms(acceptance_criteria.get('response_time', 0))}
-- Disponibilidad minima: {pct(acceptance_criteria.get('availability', 0), 1)}
-- RESULTADO CALCULADO: {verdict}
+                resultado = INSTRUCCION_RESULTADO.format(verdict=verdict)
 
-IMPORTANTE: tu primera conclusion DEBE ser ese resultado, "{verdict}", comparando
-las cifras contra estos criterios. Si es NO APTO, di que criterios se incumplen.
-Si es APTO CON RESERVAS, di que cifras quedan cerca del limite.
-{bloque_general(acceptance_criteria)}"""
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria)}
+{comun}
 
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
-
-Has terminado de analizar una prueba de performance. Sintetiza TODO en las
-conclusiones ejecutivas del informe. Esta es la parte del informe donde SI se
-dictamina.
-
-CIFRAS CLAVE DE LA PRUEBA:
-- Total de peticiones: {num(metrics['total_requests'])}
-- Tasa de error global: {pct(metrics['error_rate'])}
-- Tiempo promedio global: {ms(metrics['avg_response_time'])}
-- Caudal global: {num(metrics['throughput'], 2)} por segundo
-- Duracion de la prueba: {num(metrics['duration_seconds'])} segundos
-- Muestras principales: {num(metrics.get('total_main_samples', metrics['total_requests']))}
-- Redirecciones: {num(metrics.get('total_redirects', 0))}
-LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
-{percentiles_bloque(metrics.get('median_response_time', 0), metrics['p90_response_time'], metrics['p95_response_time'], metrics['p99_response_time'])}
-{insights_summary}{criteria_section}
-LO QUE YA SE ANALIZO, SECCION POR SECCION:
-
-1. RESUMEN DE LA PRUEBA:
-{ai_analysis_summary}
-
-2. ERRORES:
-{ai_analysis_errors}
-
-3. TIEMPOS DE RESPUESTA POR TRANSACCION:
-{ai_analysis_response_times}
-
-4. LATENCIA:
-{ai_analysis_latency}
-
-5. TASA DE ERROR:
-{ai_analysis_error_rate}
-
-6. CODIGOS DE RESPUESTA:
-{ai_analysis_codes_per_second}
-
-7. CAUDAL DE TRANSACCIONES:
-{ai_analysis_transactions_per_second}
-
-8. USUARIOS ACTIVOS:
-{ai_analysis_active_threads}
-{redirect_section}
-Escribe 6 conclusiones, cada una un parrafo completo de 3 a 5 oraciones,
-numeradas. Maximo 350 palabras en total. Cubre: el resultado frente a los
-criterios, los tiempos, los errores, la capacidad, la estabilidad y lo que hay
-que resolver primero.
-
-Cada conclusion cruza varias secciones y nombra transacciones concretas con sus
-cifras. No repitas literalmente lo que ya dijo una seccion: sintetiza.
-"""
+SECCION: CONCLUSIONES
+{resultado}
+{INSTRUCCION_CONCLUSIONES}"""
             return self._generate(prompt, section_name="conclusions", permite_veredicto=True)
 
         except Exception as e:
@@ -1862,92 +1848,21 @@ cifras. No repitas literalmente lo que ya dijo una seccion: sintetiza.
         test_date: str = "N/A",
         acceptance_criteria: Optional[Dict] = None,
         metric_unit: str = "TPS",
+        contexto: str = "",   # BLOQUE 2.2
     ) -> Optional[str]:
         """Genera recomendaciones tecnicas basadas en TODOS los analisis"""
         try:
-            test_ctx = self._build_test_type_context(test_type)
+            comun = self._grupos_y_textos(insights, self._textos_de_secciones(
+                ai_analysis_summary, ai_analysis_errors, ai_analysis_response_times,
+                ai_analysis_latency, ai_analysis_error_rate, ai_analysis_codes_per_second,
+                ai_analysis_transactions_per_second, ai_analysis_active_threads,
+                ai_analysis_redirects))
 
-            redirect_section = ""
-            if ai_analysis_redirects:
-                redirect_section = f"""
-REDIRECCIONES:
-{ai_analysis_redirects}
-"""
+            prompt = f"""{self._cabeza(contexto, metric_unit, test_type, acceptance_criteria)}
+{comun}
 
-            action_items = ""
-            if insights:
-                tiers = insights['tiers']
-                items = []
-                # ETAPA 3 (D29): los mismos grupos, sin jerga.
-                if tiers['critical']:
-                    items.append(f"Tiempos muy altos - {len(tiers['critical'])} transacciones por encima de {num(TIER_DEGRADED)} ms: {', '.join(tx['name'] for tx in tiers['critical'])}")
-                if tiers['degraded']:
-                    items.append(f"Tiempos altos - {len(tiers['degraded'])} transacciones entre {num(TIER_ACCEPTABLE)} y {num(TIER_DEGRADED)} ms: {', '.join(tx['name'] for tx in tiers['degraded'])}")
-                if insights['high_variability']:
-                    items.append(f"Unos usuarios esperan mucho mas que otros - {len(insights['high_variability'])} transacciones: {', '.join(tx['name'] for tx in insights['high_variability'])}")
-                if insights['error_transactions']:
-                    items.append(f"Con errores - {len(insights['error_transactions'])} transacciones: {', '.join(tx['name'] for tx in insights['error_transactions'])}")
-                if items:
-                    action_items = "\nPROBLEMAS DETECTADOS EN LA PRUEBA:\n" + "\n".join(f"  {i}" for i in items) + "\n"
-
-            # Build acceptance criteria context for recommendations
-            criteria_section = ""
-            if acceptance_criteria and not acceptance_criteria.get('raw_text'):
-                criteria_section = f"""
-CRITERIOS DE ACEPTACION ACORDADOS CON EL CLIENTE:
-- Concurrencia esperada: {num(acceptance_criteria.get('concurrency', 0))} usuarios
-- Tiempo de respuesta maximo: {ms(acceptance_criteria.get('response_time', 0))}
-- Disponibilidad minima: {pct(acceptance_criteria.get('availability', 0), 1)}
-
-Las recomendaciones tienen que apuntar a cumplir esos criterios concretos.
-{bloque_general(acceptance_criteria)}"""
-
-            prompt = f"""{get_metric_unit_instruction(metric_unit)}
-{test_ctx}
-
-Escribe las recomendaciones del informe a partir de los resultados de la prueba.
-Esta es una de las dos partes del informe donde SI se dictamina.
-
-CIFRAS CLAVE DE LA PRUEBA:
-- Total de peticiones: {num(metrics['total_requests'])}
-- Tasa de error global: {pct(metrics['error_rate'])}
-- Tiempo promedio global: {ms(metrics['avg_response_time'])}
-- Caudal global: {num(metrics['throughput'], 2)} por segundo
-LECTURA DE LOS PERCENTILES GLOBALES (copia estas frases tal cual):
-{percentiles_bloque(p95=metrics['p95_response_time'], p99=metrics['p99_response_time'])}
-{action_items}{criteria_section}
-LO QUE DICEN LOS ANALISIS:
-
-RESUMEN Y TRANSACCIONES:
-{ai_analysis_summary}
-
-ERRORES:
-{ai_analysis_errors}
-
-TASA DE ERROR EN EL TIEMPO:
-{ai_analysis_error_rate}
-
-CODIGOS DE RESPUESTA:
-{ai_analysis_codes_per_second}
-
-TIEMPOS DE RESPUESTA:
-{ai_analysis_response_times}
-
-CAPACIDAD:
-{ai_analysis_transactions_per_second}
-
-INFRAESTRUCTURA:
-{ai_analysis_latency}
-{ai_analysis_active_threads}
-{redirect_section}
-Escribe las recomendaciones ordenadas por prioridad. Maximo 350 palabras.
-CRITICAS (2 o 3): hay que resolverlas antes de salir a produccion.
-ALTAS (2 o 3): hay que resolverlas pronto.
-MEDIAS (1 o 2): mejoras que pueden esperar.
-
-Cada recomendacion es un parrafo de 3 o 4 oraciones con el problema, la accion
-concreta y las transacciones afectadas con sus cifras.
-"""
+SECCION: RECOMENDACIONES
+{INSTRUCCION_RECOMENDACIONES}"""
             return self._generate(prompt, section_name="recommendations", permite_veredicto=True)
 
         except Exception as e:

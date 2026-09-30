@@ -49,6 +49,8 @@ from app.services.ai.criterios import bloque_de_transaccion
 # ETAPA R2: la serie resumida (R-D10) y la lectura base (R-D17).
 from app.services.ai import resumen_serie
 from app.services.ai.gemini import bloque_lectura_base
+# BLOQUE 2.2: el bloque de la ejecucion, el mismo que el del informe general.
+from app.services.ai.contexto_prompt import nota_intervalo
 # F1 (aviso de respaldo): de donde sale cada texto, y por que.
 from app.services.ai import origen
 
@@ -69,6 +71,15 @@ COMO SE LEE LA LATENCIA EN JMETER (definicion obligatoria, no la inviertas):
 # N4.6b, defecto 3: el pico aparecia en las 8 secciones. Aqui es obligatorio; en
 # las otras cuatro se menciona solo si aporta a ESA grafica. La leccion GRAF1
 # sigue intacta porque estas cuatro cubren el mini-informe de punta a punta.
+TITULOS = {
+    "summary": "RESUMEN DE LA TRANSACCION",
+    "chart_response_times": "TIEMPOS DE RESPUESTA DE LA TRANSACCION",
+    "chart_latency": "LATENCIA DE LA TRANSACCION",
+    "chart_error_rate": "TASA DE ERROR DE LA TRANSACCION",
+    "chart_codes": "CODIGOS DE RESPUESTA DE LA TRANSACCION",
+    "chart_tps": "CAUDAL DE LA TRANSACCION",
+}
+
 PICO_OBLIGATORIO = ("summary", "chart_response_times", "conclusions", "recommendations")
 
 
@@ -110,9 +121,12 @@ def _serie_digest(series: Dict[str, Any], df_tx=None, fases=None) -> Dict[str, s
     """
     if df_tx is not None and len(df_tx):
         try:
-            b = resumen_serie.bloques_transaccion(df_tx, int(series.get("interval_seconds", 1) or 1),
-                                                  fases=fases)
-            b["_cabecera"] = b.pop("cabecera")   # va una sola vez por prompt
+            paso = int(series.get("interval_seconds", 1) or 1)
+            b = resumen_serie.bloques_transaccion(df_tx, paso, fases=fases)
+            # BLOQUE 2.2: la linea de tiempo y las fases van en el bloque de la
+            # ejecucion; aqui solo queda lo que agrupa cada punto.
+            b.pop("cabecera")
+            b["_cabecera"] = nota_intervalo(paso)
             return b
         except Exception as e:
             logger.warning(f"R2: sin serie resumida para la transaccion ({e}); se usa la de N4.6")
@@ -154,7 +168,8 @@ def _serie_digest(series: Dict[str, Any], df_tx=None, fases=None) -> Dict[str, s
 def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
                           test_type: str = "load",
                           acceptance_criteria: Optional[Dict[str, Any]] = None,
-                          df_tx=None, lectura_base: str = "", fases=None) -> Dict[str, str]:
+                          df_tx=None, lectura_base: str = "", fases=None,
+                          contexto: str = "") -> Dict[str, str]:
     """Los prompts de una transaccion, con SUS metricas reales.
 
     ETAPA 3 (D33/D34): las cifras siguen saliendo formateadas a la espanola —
@@ -167,6 +182,11 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
     si lo tiene, el general si no— y lo dice en el prompt. Sin criterios, o con
     criterios en prosa (`raw_text`), devuelve cadena vacia y los seis prompts
     salen exactamente como antes de esta etapa.
+
+    BLOQUE 2.2: el orden es el del informe general. Delante, `contexto` (el
+    bloque de la ejecucion, identico al de las diez secciones generales); luego
+    la cabecera de ESTA transaccion, igual en sus seis secciones; luego la
+    lectura base; y al final la serie y la instruccion de la seccion.
     """
     avg, mx = float(m.get("promedio", 0) or 0), float(m.get("max", 0) or 0)
     ratio = veces(mx / avg) + " su promedio" if avg > 0 else "sin promedio de referencia"
@@ -204,11 +224,13 @@ LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
         extra = DEFINICION_LATENCIA if section == "chart_latency" else ""
         # R-D17: las cinco graficas reciben el resumen ya escrito de ESTA transaccion.
         lectura = bloque_lectura_base(lectura_base) if section != "summary" else ""
-        prompts[section] = f"""{metricas}
-
+        prompts[section] = f"""{(contexto.rstrip() + chr(10) + chr(10)) if contexto else ''}{metricas}
+{lectura}
+SECCION: {TITULOS[section]}
+{extra}
 DATOS DE LA SERIE TEMPORAL:
 {serie_txt}
-{extra}{lectura}
+
 {instruccion}
 Maximo {tope} palabras. Habla SOLO de esta transaccion, no del test completo.
 {pico}
@@ -255,6 +277,7 @@ async def generate_transaction_report(
     acceptance_criteria: Optional[Dict[str, Any]] = None,
     df_tx=None,
     fases=None,   # BLOQUE 2.1: `fases.calcular(df)` de la prueba entera
+    contexto: str = "",   # BLOQUE 2.2: `contexto_prompt.contexto_de_parser(...)[0]`
 ) -> Dict[str, Any]:
     """Genera y persiste las secciones. Nunca lanza por un fallo de IA.
 
@@ -271,7 +294,7 @@ async def generate_transaction_report(
     # ETAPA 5b (D55): los criterios de la ejecucion entran en los seis prompts.
     # ETAPA R2: `df_tx` son las muestras de la transaccion, para resumir su serie.
     prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria, df_tx,
-                                    fases=fases)
+                                    fases=fases, contexto=contexto)
 
     # R-D17: el resumen va primero (SECTIONS_GENERADAS empieza por el) y su
     # texto es la lectura base de las otras cinco. Si solo se rehace una grafica,
@@ -288,7 +311,7 @@ async def generate_transaction_report(
         except Exception as e:
             logger.warning(f"R2: sin resumen guardado de '{label}' para la lectura base ({e})")
         prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria,
-                                        df_tx, lectura_base, fases=fases)
+                                        df_tx, lectura_base, fases=fases, contexto=contexto)
 
     fallo_sin_ia: Dict[str, str] = {}   # F1: por que no hay analizador, si no lo hay
     if analyzer is None:
@@ -328,7 +351,7 @@ async def generate_transaction_report(
                     lectura_base = texto
                     prompts = build_section_prompts(label, metrics, series, test_type,
                                                     acceptance_criteria, df_tx, lectura_base,
-                                                    fases=fases)
+                                                    fases=fases, contexto=contexto)
             except Exception as e:
                 # Tolerancia por seccion: se registra vacia y el resto sigue.
                 logger.error(f"N4.6: fallo la seccion '{section}' de '{label}': {e}")

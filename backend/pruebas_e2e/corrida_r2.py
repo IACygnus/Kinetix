@@ -143,6 +143,7 @@ async def main(etiqueta: str, ejecucion: str) -> int:
         ex = (await db.execute(select(TestExecution).where(TestExecution.id == ejecucion))).scalar_one()
         # Se lee YA: tras el rollback del final, `ex` queda expirado y leerlo lanza.
         ESTADO["ejecucion_nombre"] = ex.name
+        ex_tipo, ex_unidad = ex.test_type or "load", ex.metric_unit or "TPS"
         criterios = copy.deepcopy(ex.acceptance_criteria_json or {})
         criterios.pop("verdict", None)
         criterios.pop("verdicts_per_transaction", None)
@@ -174,7 +175,11 @@ async def main(etiqueta: str, ejecucion: str) -> int:
             # El codigo de HEAD (la corrida «antes») no conoce `df_tx`.
             firma = inspect.signature(TR.generate_transaction_report).parameters
             extra = {"df_tx": df[df["label"] == label]} if "df_tx" in firma else {}
-            if "fases" in firma:   # BLOQUE 2.1: las fases de la prueba entera
+            if "contexto" in firma:   # BLOQUE 2.2: el bloque de la ejecucion y sus fases
+                from app.services.ai.contexto_prompt import contexto_de_parser
+                extra["contexto"], extra["fases"] = contexto_de_parser(
+                    parser, ex_tipo, ex_unidad, criterios, metrics=metrics)
+            elif "fases" in firma:   # BLOQUE 2.1: las fases de la prueba entera
                 from app.services.ai import fases as F
                 extra["fases"] = F.calcular(df)
             await TR.generate_transaction_report(

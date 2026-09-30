@@ -462,8 +462,11 @@ def bloques_transaccion(df_tx: pd.DataFrame, intervalo: int = 1,
     BLOQUE 2.1 (decision 1): `fases` son las de la PRUEBA ENTERA, las mismas del
     informe general. Solo si no llegan se calculan con las muestras de la
     transaccion, que pueden desplazar el final de la subida unos segundos."""
-    t0 = df_tx["timestamp"].min()
     fases = fases if fases is not None else F.calcular(df_tx)
+    # BLOQUE 2.2: los minutos, desde el inicio de la PRUEBA (el de las fases), no
+    # desde la primera muestra de la transaccion: el bloque de la ejecucion dice
+    # «min M:SS desde el inicio de la prueba» y las fases se cuentan asi.
+    t0 = fases.t0 if fases.t0 is not None else df_tx["timestamp"].min()
     return {
         "cabecera": cabecera(df_tx, intervalo, fases),
         "chart_response_times": serie_tiempos(df_tx, intervalo, "Tiempo medio por segundo", t0=t0, fases=fases)

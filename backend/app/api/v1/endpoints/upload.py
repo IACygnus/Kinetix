@@ -36,7 +36,7 @@ from app.services.jtl.transaction_series import (                               
     DEFAULT_INTERVAL_SECONDS,
 )
 from app.services.ai.transaction_report import generate_transaction_report       # N4.6
-from app.services.ai.fases import calcular as calcular_fases                       # BLOQUE 2.1
+from app.services.ai.contexto_prompt import contexto_de_parser                     # BLOQUE 2.2
 from app.services.ai import origen as origen_ia                                  # F1 (aviso de respaldo)
 from app.services.ai.estilo import (                                             # ETAPA 3 (D35) + ETAPA 5 (D45)
     avisos_de_ejecucion, detectar_estilo, ms, num, pct, terminos_de, veces)
@@ -906,7 +906,11 @@ async def _generar_mini_informes_bg(execution_id, labels: List[str]) -> None:
             parser, df = _parse_execution_df(execution)     # mismo camino que el POST manual
             summary_df = parser.get_summary_table_data()
             por_label = {str(r["label"]): r for _, r in summary_df.iterrows()}
-            fases_prueba = calcular_fases(df)   # BLOQUE 2.1: una vez, para todas las transacciones
+            # BLOQUE 2.1 y 2.2: las fases y el bloque de la ejecucion, una vez para
+            # todas las transacciones; el bloque es el mismo del informe general.
+            contexto, fases_prueba = contexto_de_parser(
+                parser, execution.test_type or "load", execution.metric_unit or "TPS",
+                execution.acceptance_criteria_json)
 
             for label in labels:
                 t0 = time.perf_counter()
@@ -925,6 +929,7 @@ async def _generar_mini_informes_bg(execution_id, labels: List[str]) -> None:
                         acceptance_criteria=execution.acceptance_criteria_json,
                         df_tx=df[df["label"] == label],   # ETAPA R2: su serie resumida
                         fases=fases_prueba,                # BLOQUE 2.1: las de la prueba entera
+                        contexto=contexto,                 # BLOQUE 2.2
                     )
                     logger.info(f"N4.10: '{label}' listo en {round((time.perf_counter() - t0) * 1000)} ms {counters}")
                 except Exception as e:
@@ -1008,13 +1013,18 @@ async def generate_transaction_report_endpoint(
         raise HTTPException(404, f"La transaccion '{label}' no tiene metricas en este JTL")
     metrics = {k: fila[k] for k in METRIC_KEYS}
 
+    contexto, fases_prueba = contexto_de_parser(   # BLOQUE 2.2
+        parser, execution.test_type or "load", execution.metric_unit or "TPS",
+        execution.acceptance_criteria_json)
+
     t0 = time.perf_counter()
     counters = await generate_transaction_report(
         db=db, execution_id=execution.id, label=label, metrics=metrics,
         series=series, test_type=execution.test_type or "load", sections=pedidas,
         acceptance_criteria=execution.acceptance_criteria_json,   # ETAPA 5b (D55)
         df_tx=df[df["label"] == label],                             # ETAPA R2
-        fases=calcular_fases(df),                                   # BLOQUE 2.1
+        fases=fases_prueba,                                         # BLOQUE 2.1
+        contexto=contexto,                                          # BLOQUE 2.2
     )
     counters["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
     counters["label"] = label
