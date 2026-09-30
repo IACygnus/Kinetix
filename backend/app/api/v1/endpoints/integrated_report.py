@@ -1740,6 +1740,7 @@ Instrucciones:
 - Luego las recomendaciones prioritarias como puntos numerados (maximo 7).
 - Cruza las metricas de infraestructura (CPU, memoria, hilos) con el rendimiento observado.
 - Quita lo repetido. Ordena por impacto. No copies lo que ya dicen las secciones individuales.
+- Maximo 600 palabras en total.
 """
             unified = await asyncio.to_thread(
                 gemini._generate, prompt, section_name="unified_conclusions",

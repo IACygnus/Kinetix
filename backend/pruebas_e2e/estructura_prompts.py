@@ -153,6 +153,47 @@ async def main():
     ok(all(u.index("LECTURA BASE") > len(contexto) for u in graf), "en las graficas, detras del bloque")
     ok(all(u.index("LECTURA BASE") < u.index("SECCION:") for u in graf), "y delante de lo propio")
 
+    print("7. Las incoherencias del 137 §5")
+    LLAMADAS.clear()
+    capturas = []
+
+    def _falso_vision(client, model_name, messages, limit, **kw):
+        capturas.append((messages, limit, kw))
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Se ve una grafica."),
+                                                        finish_reason="stop")], usage=None)
+    G.openai_chat_completion = _falso_vision
+    an.analyze_image(b"\x89PNG", "image/png", "cpu", "CPU", "", "monitoring")
+    msgs, limite, kw = capturas[0]
+    ok(msgs[0]["role"] == "system" and msgs[0]["content"] == G.SYSTEM_PROMPT, "captura: el mismo sistema que el informe")
+    ok("REGLAS DE ESTILO" not in msgs[1]["content"][0]["text"] and "GUIA DE ESTILO" not in msgs[1]["content"][0]["text"],
+       "captura: el estilo ya no va dentro del mensaje del usuario")
+    ok(kw.get("reasoning_effort") == "medium", f"captura: reasoning_effort de la configuracion ({kw.get('reasoning_effort')})")
+    ok(limite == G._openai_max_tokens_for("gpt-5.5") and limite > 1024, f"captura: tope de salida {limite}, no 1.024")
+    G.openai_chat_completion = _falso_openai
+    import inspect
+    ocr = inspect.getsource(G.GeminiAnalyzer._analyze_image_ocr_fallback)
+    ok("no fue posible analizar el contenido" not in ocr and "sin disculparte" in ocr, "OCR: sin la disculpa")
+    ok("'throughput'" not in inspect.getsource(G.GeminiAnalyzer.analyze_chart)
+       and "'response_time_over_time'" not in inspect.getsource(G.GeminiAnalyzer.analyze_chart),
+       "analyze_chart: sin las instrucciones de las graficas retiradas (D19)")
+    ok("conclusions" not in TR.INSTRUCCIONES and "recommendations" not in TR.INSTRUCCIONES,
+       "transaccion: sin las instrucciones de conclusiones y recomendaciones (D20)")
+    from app.services.ai.estilo import SECCIONES_CON_VEREDICTO
+    ok({"monitoring_analysis", "evidence_analysis", "comparison_analysis"} <= SECCIONES_CON_VEREDICTO,
+       "globales de capturas y comparativa: el detector no les marca el dictamen")
+    from app.api.v1.endpoints import analysis_ai as AA
+    src = inspect.getsource(AA)
+    ok(src.count("permite_veredicto=True") == 2, "globales de monitoreo y evidencias: con permiso de dictamen")
+    import app.api.v1.endpoints.upload as UP
+    real = UP._parse_execution_df
+    UP._parse_execution_df = lambda ex: (p, p.df_main)
+    linea = AA._linea_de_tiempo(SimpleNamespace())
+    UP._parse_execution_df = real
+    ok("LINEA DE TIEMPO" in linea and "FASES DE LA PRUEBA" in linea and "/2026" in linea,
+       "global de monitoreo: recibe la linea de tiempo con fecha y las fases")
+    from app.api.v1.endpoints import integrated_report as IR
+    ok("Maximo 600 palabras" in inspect.getsource(IR), "conclusiones unificadas: con limite")
+
     print()
     print("ESTRUCTURA: TODO PASA" if not FALLOS else f"ESTRUCTURA: {len(FALLOS)} FALLOS")
     return 0 if not FALLOS else 1

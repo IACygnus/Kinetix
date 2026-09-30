@@ -68,16 +68,23 @@ def bloque_ejecucion(metrics: Dict[str, Any], test_type: str, metric_unit: str,
     crit = bloque_completo(acceptance_criteria).strip()
     lineas += ["", crit if crit else "CRITERIOS DE ACEPTACION: no se definieron."]
     if df_todo is not None and len(df_todo):
-        t0, t1 = df_todo["timestamp"].min(), df_todo["timestamp"].max()
-        lineas += ["", f"LINEA DE TIEMPO: la prueba va de {t0.strftime('%H:%M:%S')} a "
-                       f"{t1.strftime('%H:%M:%S')} ({num((t1 - t0).total_seconds() / 60, 1)} minutos). "
-                       f"Cada momento se da como «min M:SS» desde el inicio de la prueba, con la "
-                       f"hora del reloj entre parentesis."]
+        lineas += ["", linea_de_tiempo(df_todo)]
     if hechos:
         lineas += ["", hechos.strip()]
     elif fases is not None:
         lineas += ["", fases.linea()]
     return "\n".join(lineas)
+
+
+def linea_de_tiempo(df_todo, con_fecha: bool = False) -> str:
+    """Cuando empezo y acabo la prueba. `con_fecha` para quien la cruza con
+    capturas de otras herramientas (el global de monitoreo), que miran el reloj."""
+    t0, t1 = df_todo["timestamp"].min(), df_todo["timestamp"].max()
+    fecha = f" del {t0.strftime('%d/%m/%Y')}" if con_fecha else ""
+    return (f"LINEA DE TIEMPO: la prueba va de {t0.strftime('%H:%M:%S')} a "
+            f"{t1.strftime('%H:%M:%S')}{fecha} ({num((t1 - t0).total_seconds() / 60, 1)} minutos). "
+            f"Cada momento se da como «min M:SS» desde el inicio de la prueba, con la "
+            f"hora del reloj entre parentesis.")
 
 
 def metricas_de_parser(parser) -> Dict[str, Any]:

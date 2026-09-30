@@ -296,6 +296,8 @@ SECCIONES_CON_VEREDICTO = {
     "consolidated_conclusions", "consolidated_recommendations",
     "consolidated_load", "consolidated_stress",
     "unified_conclusions",
+    # BLOQUE 2.2 (137 §5.1): proponen umbrales y acciones; reciben el permiso.
+    "monitoring_analysis", "evidence_analysis", "comparison_analysis",
 }
 
 _VEREDICTO = [

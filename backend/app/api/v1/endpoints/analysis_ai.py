@@ -37,6 +37,20 @@ def _save_capacity_data(execution, data: dict) -> None:
     execution.capacity_analysis_json = json.dumps(data)
 
 
+def _linea_de_tiempo(execution) -> str:
+    """BLOQUE 2.2: la linea de tiempo y las fases de la prueba, desde su JTL.
+    Cadena vacia si el JTL ya no esta: el analisis sigue sin ella."""
+    try:
+        from app.api.v1.endpoints.upload import _parse_execution_df
+        from app.services.ai import fases as F
+        from app.services.ai.contexto_prompt import linea_de_tiempo
+        parser, df = _parse_execution_df(execution)
+        return f"{linea_de_tiempo(parser.df, con_fecha=True)}\n{F.calcular(df).linea()}\n\n"
+    except Exception as e:
+        logger.warning(f"Monitoreo: sin linea de tiempo de la prueba ({e})")
+        return ""
+
+
 @router.post("/{execution_id}/monitoring-analysis")
 async def generate_monitoring_analysis(
     execution_id: uuid.UUID,
@@ -70,6 +84,11 @@ async def generate_monitoring_analysis(
                 f"[{(att.category or '').upper()} - {att.title or att.filename}]: {att.ai_analysis}"
             )
 
+    # BLOQUE 2.2 (137 §5.2): se le pedia relacionar los picos de consumo con los
+    # momentos de mayor carga sin decirle cuando fue la prueba ni donde estaban
+    # sus fases. Sin el JTL, el prompt sale como antes.
+    tiempo = await asyncio.to_thread(_linea_de_tiempo, execution)
+
     # ETAPA 3 (D32/D33): los datos de la prueba se entregan en formato espanol y
     # con los percentiles ya traducidos a personas, igual que en el informe.
     prompt = (
@@ -86,6 +105,7 @@ async def generate_monitoring_analysis(
         f"- Duracion: {num(execution.duration_seconds or 0)} segundos\n"
         f"LECTURA DE LOS PERCENTILES (copia estas frases tal cual):\n"
         f"{percentiles_bloque(p90=execution.p90_response_time, p95=execution.p95_response_time, p99=execution.p99_response_time)}\n\n"
+        f"{tiempo}"
         f"ANALISIS INDIVIDUALES DE LAS IMAGENES DE MONITOREO:\n"
         f"{chr(10).join(image_analyses) if image_analyses else 'No hay analisis individuales de imagenes disponibles.'}\n\n"
         f"INSTRUCCIONES:\n"
@@ -109,7 +129,9 @@ async def generate_monitoring_analysis(
             reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
         # ETAPA 3 (D34): el bloque de estilo lo pone `_generate`, una sola vez.
-        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="monitoring_analysis") or ""
+        # BLOQUE 2.2 (137 §5.1): propone umbrales, asi que lleva el permiso.
+        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="monitoring_analysis",
+                                           permite_veredicto=True) or ""
     except Exception as e:
         logger.error(f"Monitoring AI analysis failed: {e}")
         analysis = (
@@ -217,7 +239,9 @@ async def generate_evidence_analysis(
             reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
         )
         # ETAPA 3 (D34): el bloque de estilo lo pone `_generate`, una sola vez.
-        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="evidence_analysis") or ""
+        # BLOQUE 2.2 (137 §5.1): propone acciones, asi que lleva el permiso.
+        analysis = await asyncio.to_thread(gemini._generate, prompt, section_name="evidence_analysis",
+                                           permite_veredicto=True) or ""
     except Exception as e:
         logger.error(f"Evidence AI analysis failed: {e}")
         analysis = (

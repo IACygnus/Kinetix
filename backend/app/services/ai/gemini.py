@@ -1378,12 +1378,9 @@ class GeminiAnalyzer:
                 "Sugiere posible causa raiz basandote en lo visible."
             )
 
-        # ETAPA 3 (D27/D28): el analisis de imagen es uno de los textos que
-        # aparecen en el informe, asi que recibe el MISMO bloque de estilo que
-        # todos los demas. Antes no recibia ninguno: era la unica salida de IA
-        # del producto que escribia sin reglas.
+        # BLOQUE 2.2 (137 §5.4): el estilo llega por el MISMO mensaje de sistema
+        # que el resto del informe, no pegado dentro del mensaje del usuario.
         prompt = (
-            f"{BLOQUE_ESTILO}\n\n"
             f"Analiza esta imagen de {type_label}.\n{context}\n\n"
             f"INSTRUCCIONES:\n{instructions}\n"
             f"Parrafos narrativos de 3 a 5 oraciones. Maximo 300 palabras. "
@@ -1396,8 +1393,9 @@ class GeminiAnalyzer:
             try:
                 image_part = {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode("utf-8")}
                 response = self.model.generate_content(
-                    [prompt, image_part],
-                    generation_config={"max_output_tokens": 1024, "temperature": 0.3},
+                    [f"{SYSTEM_PROMPT}\n\n{prompt}", image_part],
+                    generation_config={"max_output_tokens": GENERATION_CONFIG["max_output_tokens"],
+                                       "temperature": 0.3},
                 )
                 if response and response.text:
                     result = sanitize_ai_text(response.text)
@@ -1409,10 +1407,16 @@ class GeminiAnalyzer:
         elif self.provider == "openai":
             try:
                 b64_data = base64.b64encode(image_bytes).decode("utf-8")
+                _t0 = datetime.now(timezone.utc)
+                # BLOQUE 2.2 (137 §5.4): antes el tope era 1.024 tokens y en gpt-5.5
+                # el razonamiento cuenta dentro; ahora el del modelo, con el
+                # `reasoning_effort` de la configuracion, como el resto del informe.
+                limite = _openai_max_tokens_for(self.model_name)
                 response = openai_chat_completion(   # B6.2
                     self._openai_client,
                     self.model_name,
-                    [{
+                    [{"role": "system", "content": SYSTEM_PROMPT},
+                     {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
@@ -1421,10 +1425,20 @@ class GeminiAnalyzer:
                             }}
                         ]
                     }],
-                    min(_openai_max_tokens_for(self.model_name), 1024),
+                    limite,
                     temperature=0.3,
+                    **_openai_reasoning_kwarg(self.model_name, getattr(self, "reasoning_effort", None)),
                 )
                 text = response.choices[0].message.content if response.choices else None
+                fin = getattr(response.choices[0], "finish_reason", None) if response.choices else "sin choices"
+                _emit_ai_telemetry(
+                    f"image_{attachment_type}", self.provider, self.model_name, _t0, 1, limite,
+                    len(SYSTEM_PROMPT) + len(prompt), "ok" if text else "empty", response, fin,
+                    _openai_reasoning_kwarg(self.model_name, getattr(self, "reasoning_effort", None)
+                                            ).get("reasoning_effort"))
+                if fin == "length":
+                    # Cortada por el tope: se dice en el log, no se publica a medias sin saberlo.
+                    logger.warning(f"OpenAI Vision: respuesta CORTADA por el tope ({limite}) en {category}/{title}")
                 if text:
                     result = sanitize_ai_text(text)
                     logger.info(f"OpenAI Vision OK: {len(result)} chars for {category}/{title}")
@@ -1462,8 +1476,8 @@ class GeminiAnalyzer:
             f"{f'Descripcion: {description}' if description else ''}\n\n"
             f"Texto extraido:\n---\n{extracted_text}\n---\n\n"
             f"Genera el analisis a partir del texto extraido. Parrafos narrativos, "
-            f"maximo 200 palabras. Si el texto es pobre o esta vacio, di que no fue "
-            f"posible analizar el contenido."
+            f"maximo 200 palabras. Si el texto no permite analizar, di que se ve y "
+            f"que falta, sin disculparte."
         )
 
         result = self._generate(prompt, section_name=f"ocr_fallback_{category}")
@@ -1644,8 +1658,6 @@ ERRORES DETECTADOS:
 
             chart_names = {
                 'response_times': 'Tiempos de Respuesta por Transaccion',
-                'response_time_over_time': 'Tiempo de Respuesta en el Tiempo',
-                'throughput': 'Throughput Over Time',
                 'latency': 'Latencia Over Time',
                 'error_rate': 'Tasa de Error Over Time',
                 'codes_per_second': 'Codigos HTTP por Segundo',
@@ -1678,10 +1690,6 @@ Contrasta la mas rapida con la mas lenta usando la cifra de "LA MAS LENTA ES ...
 El grupo se asigna por el promedio, pero mira SIEMPRE tambien el maximo: si el maximo supera de largo al promedio (diez veces o mas), senala ese pico con su cifra y su causa probable (esperas, tiempos agotados, contencion) aunque el promedio se vea sano. Los ratios llegan calculados como "[PICO: el maximo es N veces el promedio]": usalos tal cual.
 Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas que viene en los datos.
 Los datos traen tambien la serie de cada transaccion: di CUANDO aparecen sus picos (minuto y hora), si coinciden entre transacciones y si hay tramos sostenidos o solo puntos aislados.""",
-
-                'response_time_over_time': """Cubre: si los tiempos se mantienen o empeoran segun avanza la prueba, en que momento cambian, y que picos aparecen y por que.""",
-
-                'throughput': """Cubre: cuanto trafico aguanto el sistema, si lo sostuvo, cuando cayo y cuanto margen queda frente a la carga esperada.""",
 
                 'latency': """Cubre: cuanto del tiempo total es espera hasta el primer byte y cuanto es descarga, como se mueve la latencia a lo largo de la prueba (tramos y tendencia) y cuando aparecen sus picos. La latencia incluye el procesamiento del servidor: no la atribuyas solo a la red.""",
 

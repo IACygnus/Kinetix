@@ -80,7 +80,7 @@ TITULOS = {
     "chart_tps": "CAUDAL DE LA TRANSACCION",
 }
 
-PICO_OBLIGATORIO = ("summary", "chart_response_times", "conclusions", "recommendations")
+PICO_OBLIGATORIO = ("summary", "chart_response_times")
 
 
 # Que se le pide a cada seccion y su tope de palabras. Las graficas mantienen el
@@ -100,10 +100,8 @@ INSTRUCCIONES: Dict[str, tuple] = {
     "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba con los minutos de la serie: entre que valores se movio la mayor parte del tiempo, su peor y su mejor minuto, y si el fallo es constante, intermitente o se concentra en un tramo.", 130),
     "chart_codes": ("Analiza los codigos de respuesta de esta transaccion: que indica su reparto sobre la salud del servicio, cuando aparece cada codigo de fallo y si se reparte por toda la prueba o se concentra en un tramo.", 130),
     "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene o cae y en que minutos, y como fue el arranque.", 130),
-    # D30: estas dos ya no se generan (D20), pero si alguien las reactiva no
-    # pueden dictaminar sobre produccion desde el bloque de UNA transaccion.
-    "conclusions": ("Escribe las conclusiones de ESTA transaccion: que quedo demostrado, con sus cifras.", 200),
-    "recommendations": ("Escribe las recomendaciones para ESTA transaccion, priorizadas, accionables y justificadas con sus cifras.", 200),
+    # BLOQUE 2.2: aqui estaban «conclusions» y «recommendations», que no se
+    # generan desde D20. Instrucciones muertas: fuera.
 }
 
 
