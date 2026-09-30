@@ -15,7 +15,7 @@ Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
 ### Plan de análisis (en este orden)
 
 1. **R2** — la serie de tiempo resumida en cada sección (`resumen_serie.py`), commit `243900c`. Corrida con IA antes/después en curso: reporte **136**.
-2. **Prompts de estilo.** Bloque 2.1 (fases y concentración), 2.2 (un solo sistema y el bloque de la ejecución delante) y 2.3 (la guía de estilo de Fredy) hechos; corrida 2.4 en el reporte **139**, pendiente de la lectura de Fredy (`Kinetix_pruebas\r2\comparacion2.html`).
+2. **Prompts de estilo.** Bloque 2.1 (fases y concentración), 2.2 (un solo sistema y el bloque de la ejecución delante) y 2.3 (la guía de estilo de Fredy) hechos; 2.5 (máximo 4 cifras, rampas marcadas, caché) en el **140**; pendientes la lectura de Fredy de `comparacion3.html` y sus comentarios (no llegaron) (`Kinetix_pruebas\r2\comparacion2.html`).
 3. **Conclusión única.**
 4. **Mockups.**
 5. **Contexto y conversación.**

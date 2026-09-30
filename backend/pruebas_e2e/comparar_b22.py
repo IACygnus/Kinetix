@@ -35,8 +35,15 @@ from comparar_r2 import GENERAL, CSS, pares, respaldo_de, tokens, es_plantilla  
 from fases_r2 import _ejecucion, MIN, RELOJ, INICIO           # noqa: E402
 
 DIR = "/tmp/r2"
-VIEJA, NUEVA = "despues", os.environ.get("KX_NUEVA", "b22")
-NOMBRE = {VIEJA: "Después del 136", NUEVA: "Versión nueva (2.2 + 2.3)"}
+# BLOQUE 2.5: las dos versiones y la salida, por entorno. Por defecto, la 2.4.
+VIEJA = os.environ.get("KX_VIEJA", "despues")
+NUEVA = os.environ.get("KX_NUEVA", "b22")
+SALIDA = os.environ.get("KX_SALIDA", "2")          # comparacion<SALIDA>.html, resumen<SALIDA>.json
+NOMBRE = {VIEJA: os.environ.get("KX_NOMBRE_VIEJA", "Después del 136"),
+          NUEVA: os.environ.get("KX_NOMBRE_NUEVA", "Versión nueva (2.2 + 2.3)")}
+# Un momento en rampa «dicho como rampa»: su frase habla del arranque o del cierre.
+COMO_RAMPA = re.compile(r"rampa|arranque|subida|inicio de la prueba|al comenzar|cierre|bajada|"
+                        r"final de la prueba|al terminar|estabiliz", re.I)
 SINTESIS = {"ai_conclusions", "ai_recommendations"}
 VINETA = re.compile(r"^\s*(?:[•\-*]|\d{1,2}[.)])\s+")
 
@@ -61,7 +68,7 @@ def momentos(t, f, inicio):
     out, usados = [], []
     for m in MIN.finditer(t or ""):
         seg = int(m[1]) * 60 + int(m[2] or 0)
-        out.append((m[0], f.fase_de(seg)))
+        out.append((m[0], f.fase_de(seg), _frase(t, m.start())))
         usados.append(m.span())
     for m in RELOJ.finditer(t or ""):
         if any(a <= m.start() < b for a, b in usados):
@@ -75,8 +82,14 @@ def momentos(t, f, inicio):
                 continue   # no es una hora de la prueba
         else:
             continue
-        out.append((m[0], f.fase_de(seg)))
+        out.append((m[0], f.fase_de(seg), _frase(t, m.start())))
     return out
+
+
+def _frase(t, i):
+    a = max(t.rfind(". ", 0, i), t.rfind("\n", 0, i)) + 1
+    b = min([x for x in (t.find(". ", i), t.find("\n", i)) if x >= 0] or [len(t)])
+    return t[a:b]
 
 
 def medir(corrida, f, labels):
@@ -92,8 +105,9 @@ def medir(corrida, f, labels):
         if not texto or (tx, interna) in resp or (tx is None and es_plantilla(col, texto)):
             continue
         disc += sum(1 for a in detectar_estilo(texto, interna) if a["tipo"] == "disculpa")
-        for c, fase in momentos(texto, f, inicio):
+        for c, fase, frase in momentos(texto, f, inicio):
             citados.append({"seccion": interna, "transaccion": bool(tx), "fase": fase,
+                            "como_rampa": bool(COMO_RAMPA.search(frase)),
                             "conclusiones": col == "ai_conclusions"})
         ps = parrafos(texto)
         if tx is None and col in SINTESIS:
@@ -127,6 +141,9 @@ def medir(corrida, f, labels):
         "sintesis": sint,
         "disculpas": disc,
         "momentos": {"total": len(citados), "en_rampa": len(rampa),
+                     "en_rampa_dichos_como_rampa": sum(c["como_rampa"] for c in rampa),
+                     "en_rampa_por_seccion": dict(__import__("collections").Counter(
+                         ("tx:" if c["transaccion"] else "") + c["seccion"] for c in rampa)),
                      "en_conclusiones": sum(c["conclusiones"] for c in citados),
                      "en_rampa_en_conclusiones": sum(c["conclusiones"] for c in rampa),
                      "por_fase": {k: sum(1 for c in citados if c["fase"] == k) for k in ("subida", "sostenida", "bajada")}},
@@ -166,7 +183,7 @@ def main(ids):
     def celda(a, b, dec=False):
         return f"<td>{a}</td><td>{b}</td>"
 
-    tabla = ["<table class='cifras'><tr><th>Ejecución · medida</th><th>Después del 136</th><th>Versión nueva</th></tr>"]
+    tabla = ["<table class='cifras'><tr><th>Ejecución · medida</th><th>" + html.escape(NOMBRE[VIEJA]) + "</th><th>" + html.escape(NOMBRE[NUEVA]) + "</th></tr>"]
     for nombre, mv, mn in filas:
         tabla.append(f"<tr><th colspan='3' style='text-align:left'>{html.escape(nombre)}</th></tr>")
         for etiqueta, g in (
@@ -182,17 +199,18 @@ def main(ids):
                 ("Conclusiones: viñetas · cifras", lambda m: f"{m['sintesis'].get('ai_conclusions', {}).get('vinetas', '—')} · {m['sintesis'].get('ai_conclusions', {}).get('cifras', '—')}"),
                 ("Recomendaciones: viñetas · cifras", lambda m: f"{m['sintesis'].get('ai_recommendations', {}).get('vinetas', '—')} · {m['sintesis'].get('ai_recommendations', {}).get('cifras', '—')}"),
                 ("Disculpas", lambda m: m["disculpas"]),
-                ("Momentos citados · en rampa", lambda m: f"{m['momentos']['total']} · {m['momentos']['en_rampa']}"),
+                ("Momentos citados · en rampa · de ellos, dichos como rampa",
+                 lambda m: f"{m['momentos']['total']} · {m['momentos']['en_rampa']} · {m['momentos']['en_rampa_dichos_como_rampa']}"),
         ):
             tabla.append(f"<tr><td>{etiqueta}</td>{celda(g(mv), g(mn))}</tr>")
     tabla.append("</table>")
 
     nav = " ".join(f"<a href='#e{e['id']}'>{html.escape(nm)}</a>" for e, (nm, _, _) in zip(resumen["ejecuciones"], filas))
     doc = f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Comparación 2.4</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Comparación {SALIDA}</title>
 <style>{CSS}</style></head><body><main>
-<h1>Bloque 2.4 — después del 136 frente a la versión nueva</h1>
-<p class="nota">Izquierda: el «después» del reporte 136. Derecha: la estructura común (2.2) y la guía de estilo (2.3).
+<h1>{html.escape(NOMBRE[VIEJA])} frente a {html.escape(NOMBRE[NUEVA])}</h1>
+<p class="nota">Izquierda: {html.escape(NOMBRE[VIEJA])}. Derecha: {html.escape(NOMBRE[NUEVA])}.
 Mismo modelo (gpt-5.5, razonamiento medium), mismas ejecuciones, sin escribir en la base.
 Una sección que cayó al respaldo sale en rojo y no entra en las cifras de texto.</p>
 <nav>{nav}</nav>
@@ -200,8 +218,8 @@ Una sección que cayó al respaldo sale en rojo y no entra en las cifras de text
 {''.join(tabla)}
 {''.join(bloques)}
 </main></body></html>"""
-    open(f"{DIR}/comparacion2.html", "w", encoding="utf-8").write(doc)
-    json.dump(resumen, open(f"{DIR}/resumen2.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    open(f"{DIR}/comparacion{SALIDA}.html", "w", encoding="utf-8").write(doc)
+    json.dump(resumen, open(f"{DIR}/resumen{SALIDA}.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(json.dumps(resumen, ensure_ascii=False, indent=1))
 
 
