@@ -57,6 +57,7 @@ from app.services.ai.gemini import (
     openai_chat_completion,   # B6.2
     load_ai_config_from_db,
 )
+from app.services.observabilidad import listener_influxdb
 from app.services.ai.har_flow_analyzer import (
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -870,11 +871,8 @@ OPERACIONES SOPORTADAS
     - summary_report: resumen agregado por sampler.
     - aggregate_report: percentiles y throughput detallados.
     - response_time_graph: grafico de tiempos en el tiempo.
-    - backend_listener: envia metricas en tiempo real a InfluxDB del stack Kinetix (por defecto apunta a http://influxdb:8086, bucket=jmeter, org=performance).
-
-    Para customizar el Backend Listener (otro InfluxDB/Graphite/etc.):
-    { "op": "add_listener", "listener_kind": "backend_listener", "name": "Mi backend",
-      "backend_listener_config": { "implementation": "...", "arguments": [{"name":"influxdbUrl","value":"..."}] } }
+    - backend_listener: envia metricas en tiempo real al InfluxDB de Kinetix. Kinetix
+      lo configura entero (URL, token y nombre de la corrida): no pongas argumentos.
 
 ═══════════════════════════════════════════════════════════════════════════════
 FALLBACK
@@ -2635,7 +2633,16 @@ async def refine_jmx_surgical(
             explanation=op_set.explanation,
         )
 
-    # 8. Apply the operations to the structure
+    # 8. Apply the operations to the structure. S2.2: si alguna pide un Backend
+    # Listener, sus datos de escritura se resuelven AQUI (el aplicador no ve la
+    # base) y viajan en el buzon del modulo del listener.
+    buzon = None
+    if any(getattr(op, "op", "") == "add_listener"
+           and getattr(op, "listener_kind", "") == "backend_listener"
+           for op in op_set.operations):
+        datos = await listener_influxdb.resolver(
+            db, payload.client_id, payload.proyecto, plan=structure.test_plan.name)
+        buzon = listener_influxdb.BUZON.set(datos)
     try:
         structure, applied = apply_operations(structure, op_set.operations)
     except OperationError as e:
@@ -2645,6 +2652,9 @@ async def refine_jmx_surgical(
             error=f"No se pudo aplicar la operacion: {e}",
             explanation=op_set.explanation,
         )
+    finally:
+        if buzon is not None:
+            listener_influxdb.BUZON.reset(buzon)
 
     # 9. Regenerate the JMX locally from the mutated structure
     try:

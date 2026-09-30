@@ -11,6 +11,7 @@ la IA puede devolver fallback_to_full_refine=true para que el backend
 automaticamente caiga al endpoint /refine clasico del HF5.
 """
 from typing import Optional, Dict, Any, List, Literal, Union
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -270,10 +271,9 @@ class AddListenerOp(BaseModel):
     backend_listener_config: Optional[Dict[str, Any]] = Field(
         None,
         description=(
-            "Solo para backend_listener: "
-            "{ 'implementation': 'org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient', "
-            "'arguments': [{'name': 'influxdbUrl', 'value': '...'}] }. "
-            "Si None, se usan los defaults apuntando al InfluxDB del stack Kinetix."
+            "Se IGNORA (S2.2): el Backend Listener lo construye entero "
+            "services/observabilidad/listener_influxdb.py. Se acepta para que "
+            "una respuesta vieja del modelo no falle al validarse."
         ),
     )
 
@@ -337,6 +337,10 @@ class RefineSurgicalRequest(BaseModel):
     file_content: Optional[str] = Field(
         None, description="Archivo de referencia opcional"
     )
+    # S2.2: para el `application` del Backend Listener (regla de O-D4). Si no
+    # llegan, cliente `sin-nombre` y, como proyecto, el nombre del Test Plan.
+    client_id: Optional[UUID] = None
+    proyecto: Optional[str] = None
 
 
 class RefineSurgicalResponse(BaseModel):

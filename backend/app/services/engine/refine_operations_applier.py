@@ -42,6 +42,7 @@ from app.schemas.refine_operations import (
     UpdateThreadGroupOp,
     UpdateUdvsOp,
 )
+from app.services.observabilidad.listener_influxdb import listener_del_buzon
 
 logger = logging.getLogger(__name__)
 
@@ -815,32 +816,6 @@ LISTENER_KIND_DEFAULTS = {
     },
 }
 
-# Backend Listener defaults — apuntan al InfluxDB del stack Kinetix
-# (containers `jmeter_influxdb` con bucket `jmeter`, org `performance`,
-# token `jmeter-token-2024-super-secret` definidos en CLAUDE.md).
-DEFAULT_BACKEND_LISTENER_IMPL = (
-    "org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient"
-)
-DEFAULT_BACKEND_LISTENER_ARGS = [
-    {
-        "name": "influxdbMetricsSender",
-        "value": "org.apache.jmeter.visualizers.backend.influxdb.HttpMetricsSender",
-    },
-    {
-        "name": "influxdbUrl",
-        "value": "http://influxdb:8086/api/v2/write?org=performance&bucket=jmeter&precision=ms",
-    },
-    {"name": "application", "value": "${__P(application,Kinetix Test)}"},
-    {"name": "measurement", "value": "jmeter"},
-    {"name": "summaryOnly", "value": "false"},
-    {"name": "samplersRegex", "value": ".*"},
-    {"name": "percentiles", "value": "90;95;99"},
-    {"name": "testTitle", "value": "Test name"},
-    {"name": "eventTags", "value": ""},
-    {"name": "TOKEN", "value": "jmeter-token-2024-super-secret"},
-]
-
-
 def _xml_escape(value: str) -> str:
     """Mini XML-escape para los pocos lugares donde inyectamos texto del usuario."""
     return (
@@ -964,40 +939,6 @@ def _corrected_result_collector_raw_xml(
     )
 
 
-def _backend_listener_raw_xml(
-    name: str,
-    implementation: str,
-    arguments: List[Dict[str, str]],
-) -> str:
-    """Construye un <BackendListener> con argumentos InfluxDB."""
-    name_esc = _xml_escape(name)
-    impl_esc = _xml_escape(implementation)
-    args_xml_lines: List[str] = []
-    for a in arguments:
-        arg_name = _xml_escape(a.get("name", ""))
-        arg_value = _xml_escape(a.get("value", ""))
-        args_xml_lines.append(
-            f'          <elementProp name="{arg_name}" elementType="Argument">\n'
-            f'            <stringProp name="Argument.name">{arg_name}</stringProp>\n'
-            f'            <stringProp name="Argument.value">{arg_value}</stringProp>\n'
-            f'            <stringProp name="Argument.metadata">=</stringProp>\n'
-            f"          </elementProp>"
-        )
-    args_xml = "\n".join(args_xml_lines)
-    return (
-        f'<BackendListener guiclass="BackendListenerGui" testclass="BackendListener" '
-        f'testname="{name_esc}" enabled="true">\n'
-        '  <elementProp name="arguments" elementType="Arguments" guiclass="ArgumentsPanel" '
-        'testclass="Arguments" testname="User Defined Variables" enabled="true">\n'
-        '    <collectionProp name="Arguments.arguments">\n'
-        f"{args_xml}\n"
-        "    </collectionProp>\n"
-        "  </elementProp>\n"
-        f'  <stringProp name="classname">{impl_esc}</stringProp>\n'
-        "</BackendListener>"
-    )
-
-
 def _build_listener_raw_xml(
     kind: str,
     name: str,
@@ -1006,10 +947,8 @@ def _build_listener_raw_xml(
 ) -> str:
     """Despacha la construccion del raw_xml inicial segun el listener_kind."""
     if kind == "backend_listener":
-        cfg = backend_config or {}
-        impl = cfg.get("implementation", DEFAULT_BACKEND_LISTENER_IMPL)
-        args = cfg.get("arguments", DEFAULT_BACKEND_LISTENER_ARGS)
-        return _backend_listener_raw_xml(name, impl, args)
+        # S2.2: una sola fuente. `backend_config` del modelo se ignora.
+        return listener_del_buzon(name)
 
     defaults = LISTENER_KIND_DEFAULTS.get(kind)
     if not defaults:

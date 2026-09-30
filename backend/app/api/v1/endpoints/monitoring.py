@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.db.models.user import User
 from app.db.models.client import Client
 from app.db.models.test import TestExecution
+from app.services.observabilidad import listener_influxdb
 
 logger = logging.getLogger(__name__)
 
@@ -304,9 +305,6 @@ async def _configuracion_jmeter(
             token = ""
 
     application = nombre_de_corrida(cliente.name, proyecto)
-    base = _url_para_el_navegador(config.influxdb_url) or "http://localhost:8086"
-    org = config.influxdb_org or "performance"
-    cubo = config.influxdb_bucket or "jmeter"
 
     argumentos = [
         ArgumentoJMeter(
@@ -314,7 +312,8 @@ async def _configuracion_jmeter(
             explicacion="El que envía por HTTP. Viene con JMeter."),
         ArgumentoJMeter(
             nombre="influxdbUrl",
-            valor=f"{base}/api/v2/write?org={org}&bucket={cubo}",
+            valor=listener_influxdb.url_de_escritura(
+                config.influxdb_url, config.influxdb_org, config.influxdb_bucket),
             explicacion="La dirección de escritura, con su organización y su cubo."),
         ArgumentoJMeter(
             nombre="influxdbToken", valor=token, secreto=True,
@@ -379,41 +378,20 @@ async def fragmento_jmx(
 ):
     """El mismo Backend Listener ya escrito en XML, para pegar en un `.jmx`.
 
-    Es texto armado a mano: no hace falta ninguna biblioteca nueva. Se pega
-    **dentro** del Thread Group, junto a los demás elementos.
+    S2.2: lo escribe `listener_influxdb`, el mismo módulo que usa el diseñador.
+    Se pega **dentro** del Thread Group, junto a los demás elementos. Sin token
+    de escritura no hay fragmento: un listener sin token no manda nada.
     """
     cfg = await _configuracion_jmeter(db, client_id, proyecto)
-
-    def _xml(texto: str) -> str:
-        return (texto.replace("&", "&amp;").replace("<", "&lt;")
-                     .replace(">", "&gt;").replace('"', "&quot;"))
-
-    lineas = [
-        "<!-- Backend Listener generado por Kinetix Pro -->",
-        f"<!-- Corrida: {cfg.application} -->",
-        '<BackendListener guiclass="BackendListenerGui" testclass="BackendListener"'
-        ' testname="InfluxDB de Kinetix" enabled="true">',
-        '  <elementProp name="arguments" elementType="Arguments"'
-        ' guiclass="ArgumentsPanel" testclass="Arguments" enabled="true">',
-        '    <collectionProp name="Arguments.arguments">',
-    ]
-    for arg in cfg.argumentos:
-        lineas += [
-            f'      <elementProp name="{_xml(arg.nombre)}" elementType="Argument">',
-            f'        <stringProp name="Argument.name">{_xml(arg.nombre)}</stringProp>',
-            f'        <stringProp name="Argument.value">{_xml(arg.valor)}</stringProp>',
-            "      </elementProp>",
-        ]
-    lineas += [
-        "    </collectionProp>",
-        "  </elementProp>",
-        f'  <stringProp name="classname">{_xml(cfg.clase_listener)}</stringProp>',
-        "</BackendListener>",
-        "<hashTree/>",
-        "",
-    ]
+    valores = {arg.nombre: arg.valor for arg in cfg.argumentos}
+    try:
+        texto = listener_influxdb.fragmento(listener_influxdb.DatosListener(
+            url=valores["influxdbUrl"], token=valores["influxdbToken"],
+            application=cfg.application))
+    except listener_influxdb.ListenerSinDatos as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return Response(
-        content="\n".join(lineas),
+        content=texto,
         media_type="application/xml; charset=utf-8",
         headers={"Content-Disposition":
                  f'attachment; filename="backend-listener-{cfg.application}.jmx"'},
