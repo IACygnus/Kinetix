@@ -114,12 +114,19 @@ async def main():
     await TR.generate_transaction_report(
         db=_SinBase(), execution_id=None, label=TX, metrics={k: fila[k] for k in METRIC_KEYS},
         series=build_transaction_series(p.df_main, TX), analyzer=G.GeminiAnalyzer.__new__(G.GeminiAnalyzer),
-        df_tx=p.df_main[p.df_main["label"] == TX])
+        df_tx=p.df_main[p.df_main["label"] == TX],
+        fases=__import__("app.services.ai.fases", fromlist=["calcular"]).calcular(p.df_main))   # BLOQUE 2.1d
     comprobar(len(LLAMADAS) == 6, f"R-D11: transaccion con {len(LLAMADAS)} llamadas (eran 6)")
     comprobar(LLAMADAS[0][0] == "txreport_summary", "el resumen va primero")
     for s, pr in LLAMADAS[1:]:
         comprobar(f"{MARCA} de txreport_summary" in pr, f"{s} recibe la lectura base")
     comprobar(LLAMADAS[0][1].count("LINEA DE TIEMPO") == 1, "la linea de tiempo va una sola vez")
+    # BLOQUE 2.1d: las fases de la PRUEBA ENTERA, las mismas del general, en las seis.
+    for s, pr in LLAMADAS:
+        comprobar("Subida 0:00–3:14 · Carga sostenida 3:14–30:00 · Sin bajada" in pr
+                  and pr.count("FASES DE LA PRUEBA") == 1, f"{s} recibe las fases de la prueba entera, una vez")
+    comprobar("el primero min 0:05 (20:05:00) y el ultimo" not in LLAMADAS[0][1],
+              "transaccion: los fallos sin el primero y el ultimo")
     comprobar("pesa la red" not in " ".join(pr for _, pr in LLAMADAS), "R-D13: fuera «cuanto pesa la red»")
 
     print("5. Detector de disculpas")

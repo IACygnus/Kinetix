@@ -96,7 +96,7 @@ INSTRUCCIONES: Dict[str, tuple] = {
 }
 
 
-def _serie_digest(series: Dict[str, Any], df_tx=None) -> Dict[str, str]:
+def _serie_digest(series: Dict[str, Any], df_tx=None, fases=None) -> Dict[str, str]:
     """Resume las 5 series. El prompt no puede llevar los ~500 KB de puntos que
     devuelve N4.3, pero si su forma: pico, promedio y cuando pasa lo relevante.
 
@@ -104,10 +104,14 @@ def _serie_digest(series: Dict[str, Any], df_tx=None) -> Dict[str, str]:
     sale en el formato de `resumen_serie` —extremos con su minuto, tramos,
     episodios sostenidos y tendencia—, los codigos incluidos EN EL TIEMPO. Sin
     ellas se conserva el resumen de una linea de N4.6, que no decia cuando.
+
+    BLOQUE 2.1 (decision 1): `fases` son las de la PRUEBA ENTERA, las mismas que
+    recibe el informe general; las calcula quien tiene el DataFrame completo.
     """
     if df_tx is not None and len(df_tx):
         try:
-            b = resumen_serie.bloques_transaccion(df_tx, int(series.get("interval_seconds", 1) or 1))
+            b = resumen_serie.bloques_transaccion(df_tx, int(series.get("interval_seconds", 1) or 1),
+                                                  fases=fases)
             b["_cabecera"] = b.pop("cabecera")   # va una sola vez por prompt
             return b
         except Exception as e:
@@ -150,7 +154,7 @@ def _serie_digest(series: Dict[str, Any], df_tx=None) -> Dict[str, str]:
 def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
                           test_type: str = "load",
                           acceptance_criteria: Optional[Dict[str, Any]] = None,
-                          df_tx=None, lectura_base: str = "") -> Dict[str, str]:
+                          df_tx=None, lectura_base: str = "", fases=None) -> Dict[str, str]:
     """Los prompts de una transaccion, con SUS metricas reales.
 
     ETAPA 3 (D33/D34): las cifras siguen saliendo formateadas a la espanola —
@@ -166,7 +170,7 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
     """
     avg, mx = float(m.get("promedio", 0) or 0), float(m.get("max", 0) or 0)
     ratio = veces(mx / avg) + " su promedio" if avg > 0 else "sin promedio de referencia"
-    digest = _serie_digest(series, df_tx)
+    digest = _serie_digest(series, df_tx, fases)
     metricas = f"""METRICAS REALES DE LA TRANSACCION "{label}" (prueba de {test_type}):
 - Muestras ejecutadas: {_n(m.get('muestras', 0))}
 - Tiempo promedio: {ms(avg)} | Minimo: {ms(m.get('min', 0))}
@@ -250,6 +254,7 @@ async def generate_transaction_report(
     test_type: str = "load", analyzer=None, sections: Optional[List[str]] = None,
     acceptance_criteria: Optional[Dict[str, Any]] = None,
     df_tx=None,
+    fases=None,   # BLOQUE 2.1: `fases.calcular(df)` de la prueba entera
 ) -> Dict[str, Any]:
     """Genera y persiste las secciones. Nunca lanza por un fallo de IA.
 
@@ -265,7 +270,8 @@ async def generate_transaction_report(
     counters = {"total": len(objetivo), "generated": 0, "failed": 0}
     # ETAPA 5b (D55): los criterios de la ejecucion entran en los seis prompts.
     # ETAPA R2: `df_tx` son las muestras de la transaccion, para resumir su serie.
-    prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria, df_tx)
+    prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria, df_tx,
+                                    fases=fases)
 
     # R-D17: el resumen va primero (SECTIONS_GENERADAS empieza por el) y su
     # texto es la lectura base de las otras cinco. Si solo se rehace una grafica,
@@ -282,7 +288,7 @@ async def generate_transaction_report(
         except Exception as e:
             logger.warning(f"R2: sin resumen guardado de '{label}' para la lectura base ({e})")
         prompts = build_section_prompts(label, metrics, series, test_type, acceptance_criteria,
-                                        df_tx, lectura_base)
+                                        df_tx, lectura_base, fases=fases)
 
     fallo_sin_ia: Dict[str, str] = {}   # F1: por que no hay analizador, si no lo hay
     if analyzer is None:
@@ -321,7 +327,8 @@ async def generate_transaction_report(
                     # graficas para que lo lleven. Sin llamada nueva: solo texto.
                     lectura_base = texto
                     prompts = build_section_prompts(label, metrics, series, test_type,
-                                                    acceptance_criteria, df_tx, lectura_base)
+                                                    acceptance_criteria, df_tx, lectura_base,
+                                                    fases=fases)
             except Exception as e:
                 # Tolerancia por seccion: se registra vacia y el resto sigue.
                 logger.error(f"N4.6: fallo la seccion '{section}' de '{label}': {e}")

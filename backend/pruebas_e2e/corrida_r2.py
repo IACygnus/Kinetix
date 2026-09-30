@@ -172,8 +172,11 @@ async def main(etiqueta: str, ejecucion: str) -> int:
             fila = por_label[label]
             m = {k: fila[k] for k in METRIC_KEYS}
             # El codigo de HEAD (la corrida «antes») no conoce `df_tx`.
-            extra = ({"df_tx": df[df["label"] == label]}
-                     if "df_tx" in inspect.signature(TR.generate_transaction_report).parameters else {})
+            firma = inspect.signature(TR.generate_transaction_report).parameters
+            extra = {"df_tx": df[df["label"] == label]} if "df_tx" in firma else {}
+            if "fases" in firma:   # BLOQUE 2.1: las fases de la prueba entera
+                from app.services.ai import fases as F
+                extra["fases"] = F.calcular(df)
             await TR.generate_transaction_report(
                 db=db, execution_id=ex.id, label=label, metrics=m,
                 series=build_transaction_series(df, label),
