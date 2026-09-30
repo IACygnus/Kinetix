@@ -129,15 +129,52 @@ sostienen.**
 - **En el «después», ese prefijo común existe y es más largo, y aun así no se cachea.** Supera con creces
   el mínimo de 1.024 tokens de OpenAI.
 
-**Conclusión honesta: no sé por qué.** Desde fuera, con lo que se ha medido, el prompt del «después» no
-explica que no se cachee. OpenAI no garantiza la caché, pero 0 de 66 frente a 56 de 66 es demasiado
-sistemático para ser azar.
+### 4.1 La prueba controlada (4 llamadas, con tu visto bueno)
 
-**Cómo saberlo:** una prueba controlada de **4 llamadas mínimas**, con la salida limitada a pocos tokens.
-Se manda dos veces el mismo prompt de transacción de cada versión y se mira si la segunda sale con
-caché. Si la del «después» tampoco se cachea repitiendo exactamente el mismo texto, la causa está en su
-contenido y hay que partirlo. Si se cachea, la causa es el orden o el ritmo de las llamadas. **No se ha
-hecho**: espera tu decisión. No se arregla aquí: va al bloque de prompts.
+`backend/pruebas_e2e/prueba_cache_r2.py`, después de terminar el lote:
+
+- **Qué se mandó:** el mensaje de sistema de cada versión con el prompt de la llamada 13 de Nova
+  (latencia de la primera transacción), **dos veces seguidas**, a 2 s de distancia.
+- **Cómo:** mismo modelo y mismos parámetros que `_generate`, con la salida limitada a 64 tokens.
+- **Sin tocar nada:** no pasa por `_generate`, así que no toca contadores, circuito ni buzón. La clave
+  se lee en una sesión de solo lectura.
+
+| Versión | Llamada | Tokens de entrada | En caché |
+|---|---|---|---|
+| antes | 1.ª | 2.331 | 1.792 |
+| antes | 2.ª (el mismo texto) | 2.331 | 1.792 |
+| después | 1.ª | 3.383 | **2.816** |
+| después | 2.ª (el mismo texto) | 3.383 | **2.816** |
+
+### 4.2 Qué demuestra, y la causa
+
+1. **El prompt del «después» sí se cachea, y más que el del «antes».** Repetido tal cual, reutiliza
+   2.816 tokens, el 83 %. **No hay nada en su contenido que lo impida.** La hipótesis de que la serie
+   rompe el prefijo queda descartada dos veces: por el prefijo común (tabla de arriba) y por esta
+   prueba.
+2. **La caché del «después» se escribió durante el lote.** La 1.ª llamada de cada par ya salió con
+   caché: es el mismo texto que el lote había mandado unos 45 minutos antes, y seguía guardado.
+3. **La caché se reutiliza por bloques, no hasta el último token.** Ni repitiendo el mismo texto se
+   reaprovecha entero: 1.792 de 2.331 en el «antes» y 2.816 de 3.383 en el «después».
+
+**La causa, hasta donde llega lo medido:** en el lote, cada sección del «después» **guardó** su prefijo,
+pero **ninguna sección distinta encontró un bloque guardado que coincidiera con el suyo**, aunque
+comparten con las anteriores más de 1.024 tokens. En el «antes», el bloque de 1.792 tokens sí era común
+a todas las secciones de transacción y se reutilizaba de una a otra. **Es una cuestión de dónde caen los
+cortes de los bloques respecto al punto en que dos secciones empiezan a diferenciarse, no de que el
+texto no se pueda cachear.**
+
+**Lo que no está comprobado:** el tamaño exacto en tokens del mensaje de sistema y del prefijo común.
+La regresión de §4 da ~1.720 en las dos versiones y no distingue bien, porque las cifras se tokenizan
+más densas que el texto. Para cerrarlo haría falta contar los tokens de verdad: `tiktoken`, que no está
+en el contenedor, o una llamada con solo el mensaje de sistema.
+
+**No se arregla aquí: va al bloque de prompts.** La vía que sugiere la prueba es la estructura del
+prompt:
+
+- lo común a todas las secciones (sistema y cabecera de la transacción) lo bastante largo como para
+  cubrir un bloque entero, y todo delante;
+- lo propio de cada sección (instrucción, lectura base y serie), detrás.
 
 ---
 
@@ -183,12 +220,64 @@ Es lo que faltaba en el diagnóstico 120. Se mide **frase a frase** en las concl
 **Es un recuento por patrones, no una lectura.** Una frase como «al final de la prueba» no cuenta como
 cuándo, y un nombre de transacción abreviado a mano no cuenta como transacción.
 
+### 6.1 ¿En qué fase de la prueba cae cada momento citado? (para el bloque de prompts, sin corregir)
+
+`backend/pruebas_e2e/fases_r2.py` saca las fases de cada JTL con los hilos activos (`allThreads`), por
+segundo:
+
+- **rampa de subida:** hasta alcanzar el 95 % del máximo de hilos;
+- **meseta:** mientras se está en el 95 % o más;
+- **rampa de bajada:** desde la última vez en el 95 % hasta el final.
+
+Después clasifica cada momento que citan las conclusiones del «después»:
+
+- `min M:SS`, y el `M:SS` suelto que cierra un intervalo («entre min A y B»), como minuto de la prueba;
+- `hh:mm:ss`, como hora del reloj, convertida con el inicio de la línea de tiempo.
+
+| Ejecución | Fases |
+|---|---|
+| Nova (30:00, máx. 4 hilos) | subida 0:00–3:14 · meseta 3:14–30:00 · **sin rampa de bajada**: termina a plena carga |
+| prueba 6 (5:01, máx. 5 hilos) | subida 0:00–2:19 · meseta 2:19–4:24 · bajada 4:24–5:01 |
+| prueba avianca (3:00, máx. 50 hilos) | subida 0:00–0:27 · meseta 0:27–2:59 · bajada de un segundo |
+
+| Ejecución | Momento citado | Fase |
+|---|---|---|
+| Nova | min 0:05 | **rampa de subida** |
+| Nova | min 10:18 · 10:19 (intervalo) | meseta |
+| Nova | min 29:59 | meseta, pero es **el último segundo de la prueba** |
+| prueba 6 | min 0:01 (dos veces) | **rampa de subida** |
+| prueba 6 | min 2:30 · 3:21 (intervalo) · min 3:45 · min 4:11 | meseta |
+| prueba 6 | min 5:01 (dos veces, una como fin de intervalo) | **rampa de bajada** (el último segundo) |
+| prueba avianca | min 0:29 · min 0:30 · 20:49:00 (= 0:29) | meseta, a **2-3 s del final de la subida** |
+| prueba avianca | min 2:00 · 2:01 (×2) · 2:02 · 2:07 (×2) · 20:50:32 · 20:50:38 | meseta |
+
+**En total, 23 momentos citados:**
+
+- **5 caen en una rampa**: 3 en la de subida y 2 en la de bajada.
+- **18 caen en la meseta**, pero **4 de ellos están en un borde**: 3 a 2-3 s de acabar la subida y el
+  último segundo de Nova.
+- Solo **14 caen de lleno en la carga sostenida**, que es donde un momento dice algo del sistema bajo
+  carga.
+
+**Lo que asoma, y no se corrige aquí:**
+
+- Varios de los momentos de rampa son **el primer y el último fallo** («de min 0:01 hasta min 5:01»,
+  «min 0:05 … min 29:59»). La serie da el primer y el último fallo, y el modelo los cita tal cual: dicen
+  *que* hubo fallos durante toda la prueba, no *cuándo* se concentraron.
+- **El prompt no le dice al modelo dónde están las rampas.** Si la serie marcara las fases, el modelo
+  podría separar lo que pasa al subir la carga de lo que pasa con la carga sostenida.
+
+Va al bloque de prompts.
+
 ---
 
 ## 7. Lo que no se pudo comprobar
 
 - **Si el texto es mejor.** Es tuyo: `comparacion.html`.
-- **La causa de la caché** (§4). Pendiente de la prueba controlada de 4 llamadas.
+- **El tamaño exacto en tokens del prefijo común** (§4.2). La prueba controlada descartó el contenido
+  como causa, pero la última pieza necesita contar tokens de verdad.
+- **Las fases se sacan con un umbral del 95 % de los hilos.** Con otro umbral, los momentos de los bordes
+  cambiarían de fase.
 - **El coste en dólares.** Sin tarifa; queda la fórmula de §3.2.
 - **La variabilidad del modelo.** Hay una corrida por versión y ejecución. Una diferencia pequeña, como
   el +8 % de tiempo o el ±1 en disculpas, puede ser ruido. No se repitió para no gastar más llamadas.
@@ -202,11 +291,12 @@ cuándo, y un nombre de transacción abreviado a mano no cuenta como transacció
 |---|---|
 | `backend/pruebas_e2e/corrida_r2.py` | Recibe la ejecución como argumento, cuenta tokens por intento, detecta el respaldo, para en el primer 429 o transitorio, conexión de solo lectura, modo en seco, guarda lo parcial |
 | `backend/pruebas_e2e/comparar_r2.py` | Nuevo: `comparacion.html` y `resumen.json` desde los seis JSON. No llama a la IA ni abre la base |
+| `backend/pruebas_e2e/prueba_cache_r2.py` | Nuevo: la prueba controlada de la caché (§4.1). 2 llamadas por ejecución del script |
+| `backend/pruebas_e2e/fases_r2.py` | Nuevo: fases de la prueba por hilos activos y la fase de cada momento citado (§6.1). Sin IA; lee el JTL en solo lectura |
 | `C:\proyectos\Kinetix_pruebas\r2\` (fuera del repositorio) | `comparacion.html`, `resumen.json`, los seis `corrida_*.json` (con prompts y respuestas) y los dos logs del lote |
 
 ## 9. Pendiente de tu decisión
 
 1. **Tu lectura de `comparacion.html`**: si R2 queda validada o hay que ajustar algo.
-2. **La prueba controlada de la caché**, 4 llamadas mínimas (§4).
-3. **`docs/reports/repo/`**: los reportes que alguien movió allí, con el 132 y el token maestro en claro.
+2. **`docs/reports/repo/`**: los reportes que alguien movió allí, con el 132 y el token maestro en claro.
    Sigue en el árbol y sin versionar.
