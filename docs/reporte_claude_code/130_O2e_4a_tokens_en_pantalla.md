@@ -1,4 +1,4 @@
-Commit base `4832052` (O2e.4a **sin commit**: espera la validación de Fredy en pantalla) · 29 de septiembre de 2026
+Pendiente de validación visual de Fredy · commit base `4832052` · 29 de septiembre de 2026
 
 # O2e.4a — Los tokens de ingesta en la pantalla de Servidores
 
