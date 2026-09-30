@@ -413,8 +413,10 @@ def sanitize_ai_text(text: str) -> str:
     text = _re.sub(r'__(.+?)__', r'\1', text)
     # Remove italic markdown (careful with contractions)
     text = _re.sub(r'(?<!\w)\*(.+?)\*(?!\w)', r'\1', text)
-    # Remove bullet markers at start of line
-    text = _re.sub(r'^[\*\-]\s+', '', text, flags=_re.MULTILINE)
+    # BLOQUE 2.3: una vineta de markdown pasa a «• », no se borra. Las
+    # conclusiones y recomendaciones van en vinetas; borrar la marca las dejaba
+    # como lineas sueltas. Las reglas horizontales se quitan abajo.
+    text = _re.sub(r'^[\*\-](?![\*\-])\s+', '• ', text, flags=_re.MULTILINE)
     # Remove backticks
     text = _re.sub(r'`(.+?)`', r'\1', text)
     # Remove horizontal rules
@@ -982,85 +984,49 @@ def build_tier_summary(insights: Dict) -> str:
 # hechos) va delante y es igual en todas; estas instrucciones son lo unico que
 # cambia de una seccion a otra, junto con sus datos.
 
-INSTRUCCION_RESUMEN = """Escribe el analisis del resumen de la prueba. Maximo 180 palabras.
+INSTRUCCION_RESUMEN = """Escribe el analisis del resumen de la prueba siguiendo la guia de estilo: un
+solo parrafo de unas 120 a 160 palabras.
 Este texto es la LECTURA BASE del informe: las demas secciones lo reciben y no
-pueden contradecirlo. Deja claro, con sus cifras, que transaccion concentra los
-fallos, si el problema es puntual o sostenido a lo largo de la prueba, y cual es
-el cuello de botella.
-NO repitas la tabla: interpreta lo que dice.
+pueden contradecirlo. Tiene que quedar claro que transaccion concentra los
+fallos, si el problema es puntual o sostenido durante la carga sostenida y cual
+es el cuello de botella. Nombra las transacciones que destacan y agrupa las que
+se comportan igual (son {n} en total); no repitas la tabla."""
 
-Cuenta el recorrido del usuario en el orden en que ocurre, agrupando las
-transacciones que se comportan igual en vez de listarlas una a una:
+INSTRUCCION_ERRORES = """Escribe el analisis de los errores siguiendo la guia de estilo: un solo parrafo
+de unas 120 a 160 palabras. Cuenta que transacciones fallan y en que parte del
+flujo y de la prueba, agrupando las que fallan por el mismo motivo; que significa
+cada codigo para el negocio y que dice su mensaje; la causa probable, como
+hipotesis; y que gravedad tiene para la operacion. No repitas la tabla."""
 
-1. Cuantas transacciones se ejecutaron, cuanto tardaron en conjunto y que parte
-   del flujo funciono bien.
-2. Donde se rompe: nombra las transacciones con errores o con tiempos altos, con
-   sus cifras, y di que significa funcionalmente que fallen justo ahi.
-3. Si unos usuarios esperan mucho mas que otros, dilo con la frase de personas y
-   su cifra.
+INSTRUCCION_GRAFICA = """Escribe el analisis de esta grafica siguiendo la guia de estilo: un solo
+parrafo de unas 120 a 160 palabras. No repitas los datos: cuenta lo que muestran.
+{especifico}"""
 
-Las {n} transacciones tienen que aparecer por su nombre, aunque sea agrupadas.
-No digas si el sistema esta listo para produccion: eso va en las conclusiones
-del informe."""
-
-INSTRUCCION_ERRORES = """Escribe el analisis de los errores. Maximo 140 palabras. Nombra CADA transaccion
-con error. NO repitas la tabla: interpreta lo que dice.
-
-1. Cuantos fallos hubo y en que punto del flujo de negocio aparecen. Agrupa las
-   transacciones que fallan por el mismo motivo.
-2. Que significa cada codigo en terminos de negocio y que dice su mensaje; la
-   causa probable, marcada como hipotesis, sale de ese mensaje.
-3. Que gravedad tiene para la operacion.
-
-No digas si el sistema esta listo para produccion ni propongas un plan de
-trabajo: eso va en las conclusiones y recomendaciones del informe."""
-
-INSTRUCCION_GRAFICA = """Escribe el analisis de esta grafica. Maximo 130 palabras.
-NO repitas los datos: interpreta lo que muestran.
-
-{especifico}
-
-No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
-las conclusiones y recomendaciones del informe."""
-
-INSTRUCCION_REDIRECCIONES = """Escribe el analisis de las redirecciones. Maximo 130 palabras. Nombra cada una.
-NO repitas la tabla: interpreta lo que dice.
-
-1. Cuantas son, que parte del trafico representan y en que punto del flujo
-   aparecen.
-2. Cuanto tiempo anaden a lo que espera el usuario frente a las transacciones
-   principales, con su cifra.
-3. Si su presencia es coherente con el diseno de la aplicacion o apunta a algo
-   mal configurado, marcado como hipotesis.
-
-No digas si el sistema esta listo para produccion ni propongas tareas: eso va en
-las conclusiones y recomendaciones del informe."""
+INSTRUCCION_REDIRECCIONES = """Escribe el analisis de las redirecciones siguiendo la guia de estilo: un solo
+parrafo de unas 120 a 160 palabras. Cuenta cuantas son y en que punto del flujo
+aparecen, cuanto le anaden a la espera del usuario frente a las transacciones
+principales, y si su presencia es coherente con el diseno de la aplicacion o
+apunta a algo mal configurado, como hipotesis. No repitas la tabla."""
 
 INSTRUCCION_RESULTADO = """RESULTADO CALCULADO FRENTE A LOS CRITERIOS: {verdict}
-IMPORTANTE: tu primera conclusion DEBE ser ese resultado, "{verdict}", comparando
-las cifras contra los criterios. Si es NO APTO, di que criterios se incumplen.
-Si es APTO CON RESERVAS, di que cifras quedan cerca del limite.
+El dictamen de viabilidad va en la ultima vineta, coherente con ese resultado y
+explicado con su razon: que criterio se cumple o se incumple, y por que.
 """
 
-INSTRUCCION_CONCLUSIONES = """Has terminado de analizar una prueba de performance. Sintetiza TODO en las
-conclusiones ejecutivas del informe.
-Escribe 6 conclusiones, cada una un parrafo completo de 3 a 5 oraciones,
-numeradas. Maximo 350 palabras en total. Cubre: el resultado frente a los
-criterios, los tiempos, los errores, la capacidad, la estabilidad y lo que hay
-que resolver primero.
+INSTRUCCION_CONCLUSIONES = """Escribe las conclusiones del informe siguiendo la guia de estilo:
+- entre 4 y 7 vinetas, cada una en su propia linea y empezando por «• »;
+- cada vineta, un hallazgo con su porque, cruzando lo que dicen varias secciones;
+- sin repetir las cifras de las secciones;
+- la ultima vineta, el dictamen de viabilidad explicado con su razon.
+Sin titulo, sin parrafo de introduccion y sin numerar."""
 
-Cada conclusion cruza varias secciones y nombra transacciones concretas con sus
-cifras. No repitas literalmente lo que ya dijo una seccion: sintetiza."""
-
-INSTRUCCION_RECOMENDACIONES = """Escribe las recomendaciones del informe a partir de los resultados de la
-prueba, apuntando a cumplir los criterios de aceptacion si los hay.
-Ordenalas por prioridad. Maximo 350 palabras.
-CRITICAS (2 o 3): hay que resolverlas antes de salir a produccion.
-ALTAS (2 o 3): hay que resolverlas pronto.
-MEDIAS (1 o 2): mejoras que pueden esperar.
-
-Cada recomendacion es un parrafo de 3 o 4 oraciones con el problema, la accion
-concreta y las transacciones afectadas con sus cifras."""
+INSTRUCCION_RECOMENDACIONES = """Escribe las recomendaciones del informe siguiendo la guia de estilo:
+- entre 4 y 7 vinetas, cada una en su propia linea y empezando por «• »;
+- cada una ligada a un hallazgo concreto de esta prueba (que transaccion, que
+  error, que componente) y accionable;
+- nada generico que valga para cualquier prueba, y sin repetir cifras;
+- si hay criterios de aceptacion, apuntan a cumplirlos.
+Sin titulo, sin parrafo de introduccion y sin numerar."""
 
 
 class GeminiAnalyzer:
@@ -1383,9 +1349,8 @@ class GeminiAnalyzer:
         prompt = (
             f"Analiza esta imagen de {type_label}.\n{context}\n\n"
             f"INSTRUCCIONES:\n{instructions}\n"
-            f"Parrafos narrativos de 3 a 5 oraciones. Maximo 300 palabras. "
-            f"Se especifico con los datos que ves y no inventes cifras que no "
-            f"aparezcan en la imagen."
+            f"Sigue la guia de estilo: un solo parrafo de unas 120 a 160 palabras. "
+            f"No inventes cifras que no aparezcan en la imagen."
         )
 
         # ---- Multimodal analysis by provider ----
@@ -1475,9 +1440,9 @@ class GeminiAnalyzer:
             f"{f'Titulo: {title}' if title else ''}\n"
             f"{f'Descripcion: {description}' if description else ''}\n\n"
             f"Texto extraido:\n---\n{extracted_text}\n---\n\n"
-            f"Genera el analisis a partir del texto extraido. Parrafos narrativos, "
-            f"maximo 200 palabras. Si el texto no permite analizar, di que se ve y "
-            f"que falta, sin disculparte."
+            f"Genera el analisis a partir del texto extraido siguiendo la guia de "
+            f"estilo: un solo parrafo de unas 120 a 160 palabras. Si el texto no "
+            f"permite analizar, di que se ve y que falta, sin disculparte."
         )
 
         result = self._generate(prompt, section_name=f"ocr_fallback_{category}")
@@ -1684,22 +1649,19 @@ ERRORES DETECTADOS:
             # palabras en el informe (reporte 30 §2). Ahora piden lo mismo dicho
             # como lo tiene que leer un gerente.
             chart_specific_instructions = {
-                'response_times': f"""Los datos traen las {insights['total_transactions'] if insights else ''} transacciones agrupadas por su tiempo de respuesta.
-Nombra todas, aunque sea agrupando las que se comportan igual, y sigue el orden del flujo de negocio.
-Contrasta la mas rapida con la mas lenta usando la cifra de "LA MAS LENTA ES ... LA MAS RAPIDA" que ya viene calculada.
-El grupo se asigna por el promedio, pero mira SIEMPRE tambien el maximo: si el maximo supera de largo al promedio (diez veces o mas), senala ese pico con su cifra y su causa probable (esperas, tiempos agotados, contencion) aunque el promedio se vea sano. Los ratios llegan calculados como "[PICO: el maximo es N veces el promedio]": usalos tal cual.
-Cuando unos usuarios esperen mucho mas que otros, dilo con la frase de personas que viene en los datos.
-Los datos traen tambien la serie de cada transaccion: di CUANDO aparecen sus picos (minuto y hora), si coinciden entre transacciones y si hay tramos sostenidos o solo puntos aislados.""",
+                'response_times': f"""Agrupa las {insights['total_transactions'] if insights else ''} transacciones por como se comportan y sigue el orden del flujo de negocio; nombra las que destacan.
+Si el maximo de alguna se dispara frente a su promedio (viene marcado como "[PICO: el maximo es N veces el promedio]"), cuentalo con esa relacion y su causa probable, aunque el promedio se vea sano.
+Di cuando aparecen los picos, si coinciden entre transacciones y si se sostienen o son puntos aislados.""",
 
-                'latency': """Cubre: cuanto del tiempo total es espera hasta el primer byte y cuanto es descarga, como se mueve la latencia a lo largo de la prueba (tramos y tendencia) y cuando aparecen sus picos. La latencia incluye el procesamiento del servidor: no la atribuyas solo a la red.""",
+                'latency': """Cuenta cuanto del tiempo total es espera hasta el primer byte y cuanto descarga, como se mueve la latencia durante la carga sostenida y cuando aparecen sus picos. La latencia incluye el procesamiento del servidor: no la atribuyas solo a la red.""",
 
-                'error_rate': """Cubre, con los minutos y las cifras de la serie: entre que valores se movio la tasa de error la mayor parte del tiempo, sus picos y cuando ocurrieron, si hubo tramos sostenidos o solo puntos aislados (es decir, si el fallo es constante, intermitente o va a mas), si hubo momentos sin fallos, y que disponibilidad real deja eso.""",
+                'error_rate': """Cuenta si el fallo es constante, intermitente o va a mas durante la carga sostenida, donde se concentra y que disponibilidad real deja.""",
 
-                'codes_per_second': """Cubre: que responde el sistema y en que proporcion, que significa cada codigo en terminos de negocio, cuando aparece por primera vez cada codigo de fallo y si se concentra en algun tramo o se reparte por toda la prueba.""",
+                'codes_per_second': """Cuenta que responde el sistema y en que proporcion, que significa cada codigo de fallo para el negocio y si se concentra en algun momento o se reparte por toda la prueba.""",
 
-                'transactions_per_second': """Cubre: como se reparte el trabajo entre transacciones, si el caudal se sostiene o cae y en que minutos, como fue el arranque, y si alguna operacion se queda atras.""",
+                'transactions_per_second': """Cuenta como se reparte el trabajo entre transacciones, si el caudal se sostiene o cae durante la carga sostenida y si alguna operacion se queda atras.""",
 
-                'active_threads': """Cubre, con los minutos de la serie: como entraron los usuarios (subida, meseta y bajada si la hubo), cuantos llegaron a la vez y cuanto tiempo se sostuvo ese maximo, y como se comportaron el tiempo de respuesta y los errores en cada nivel de concurrencia.""",
+                'active_threads': """Cuenta como entraron los usuarios (subida, carga sostenida y bajada), cuantos llegaron a la vez y cuanto se sostuvo ese maximo, y como se comportaron los tiempos y los errores en cada nivel de concurrencia.""",
             }
 
             chart_name = chart_names.get(chart_type, chart_type)

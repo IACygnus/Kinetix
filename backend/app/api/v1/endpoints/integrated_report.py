@@ -1734,12 +1734,17 @@ UNIFICADAS que correlacionen todo lo anterior.
 
 {chr(10).join(all_conclusions)}
 
-Instrucciones:
-- Empieza con 2 o 3 parrafos que sinteticen TODAS las pruebas y las crucen con el monitoreo.
-- Luego las conclusiones consolidadas como puntos numerados (maximo 7).
-- Luego las recomendaciones prioritarias como puntos numerados (maximo 7).
-- Cruza las metricas de infraestructura (CPU, memoria, hilos) con el rendimiento observado.
-- Quita lo repetido. Ordena por impacto. No copies lo que ya dicen las secciones individuales.
+Instrucciones (sigue la guia de estilo; es UN solo analisis para todas las pruebas,
+nunca un bloque por ejecucion):
+- Primero, un parrafo de unas 120 a 160 palabras que sintetice todas las pruebas y
+  las cruce con el monitoreo y las evidencias.
+- Despues, «Conclusiones:» y de 4 a 7 vinetas; la ultima, el dictamen de
+  viabilidad explicado con su razon.
+- Despues, «Recomendaciones:» y de 4 a 7 vinetas, cada una ligada a un hallazgo
+  concreto de estas pruebas.
+- Cada vineta en su propia linea y empezando por «• ».
+- Cruza las metricas de infraestructura (CPU, memoria, hilos) con el rendimiento
+  observado. Quita lo repetido y no copies lo que ya dicen las secciones.
 - Maximo 600 palabras en total.
 """
             unified = await asyncio.to_thread(
@@ -2252,13 +2257,18 @@ Analisis de evidencias visuales:
 INSTRUCCIONES:
 1. Genera DOS bloques separados con estos encabezados EXACTOS:
    ===CONCLUSIONES_CONSOLIDADAS===
-   (conclusiones cruzando las cifras con el monitoreo y las evidencias, maximo 400 palabras)
+   (de 4 a 7 vinetas, un hallazgo con su porque en cada una, cruzando la prueba
+   con el monitoreo y las evidencias; la ultima, el dictamen de viabilidad
+   explicado con su razon)
    ===RECOMENDACIONES_CONSOLIDADAS===
-   (recomendaciones accionables ordenadas por impacto, maximo 400 palabras)
+   (de 4 a 7 vinetas, cada una ligada a un hallazgo concreto y accionable, por
+   orden de impacto)
 
-2. Cruza las cifras de la prueba con lo que muestran el monitoreo y las evidencias.
-3. NO repitas literalmente las conclusiones originales: refinalas y enriquecelas.
-4. Las recomendaciones van ordenadas por prioridad (Critica, Alta, Media).
+2. Sigue la guia de estilo. Si hay varias ejecuciones, es UN solo analisis para
+   todas, nunca un bloque por ejecucion.
+3. Cada vineta en su propia linea y empezando por «• ». Sin repetir las cifras
+   de las secciones.
+4. NO repitas literalmente las conclusiones originales: refinalas y enriquecelas.
 """
 
         try:

@@ -194,6 +194,28 @@ async def main():
     from app.api.v1.endpoints import integrated_report as IR
     ok("Maximo 600 palabras" in inspect.getsource(IR), "conclusiones unificadas: con limite")
 
+    print("8. La guia de estilo (BLOQUE 2.3)")
+    from app.services.ai.estilo import detectar_estilo, REFERENCIA_ESTILO
+    sistema = G.SYSTEM_PROMPT
+    ok("GUÍA DE ESTILO" in sistema and "primera persona del plural" in sistema, "el sistema lleva la guia de Fredy")
+    for vieja in ("APERTURA CON DATO", "2 a 4 oraciones", "CIERRE CON IMPACTO", "CIFRAS EXACTAS",
+                  "10.075 transacciones"):
+        ok(vieja not in sistema, f"fuera del sistema: «{vieja}»")
+    seccion = REFERENCIA_ESTILO.split("«", 1)[1].split("»", 1)[0]
+    ok(detectar_estilo(seccion, "summary_table") == [], "el ejemplo de seccion no da avisos al detector")
+    bloque = REFERENCIA_ESTILO.split("Conclusiones:", 1)[1].split("PROHIBIDO ABSOLUTAMENTE", 1)[0]
+    ok(detectar_estilo(bloque, "conclusions") == [], "las vinetas del ejemplo no dan avisos al detector")
+    ok(G.sanitize_ai_text("- uno\n- dos\n---\n**tres**") == "• uno\n• dos\n\ntres".replace("\n\n", "\n\n"),
+       "el saneado convierte las vinetas en «• » y sigue quitando lo demas")
+    generales = {s: u for s, _, u in general}
+    ok(all("120 a 160 palabras" in u for s, u in generales.items() if s not in ("conclusions", "recommendations")),
+       "las 8 secciones generales piden un solo parrafo de 120 a 160 palabras")
+    ok(all("entre 4 y 7 vinetas" in generales[s] for s in ("conclusions", "recommendations")),
+       "conclusiones y recomendaciones piden de 4 a 7 vinetas")
+    ok(all("120 a 160 palabras" in u for g in por_tx for _, _, u in g), "las 6 de transaccion, tambien")
+    ok(not any("Maximo 130 palabras" in u or "Maximo 180 palabras" in u for _, _, u in general),
+       "ya no quedan los topes viejos")
+
     print()
     print("ESTRUCTURA: TODO PASA" if not FALLOS else f"ESTRUCTURA: {len(FALLOS)} FALLOS")
     return 0 if not FALLOS else 1

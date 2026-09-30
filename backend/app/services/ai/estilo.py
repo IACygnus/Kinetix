@@ -131,129 +131,91 @@ def percentiles_bloque(p50: Any = None, p90: Any = None,
 # 3. EL BLOQUE DE ESTILO UNICO (D28, D29, D30, D31, D33)
 # ====================================================================
 
-BLOQUE_ESTILO = """REGLAS DE ESTILO (obligatorias, se revisan antes de publicar)
+# BLOQUE 2.3 — la guia de estilo de Fredy (30/09/2026). Sustituye a las reglas
+# que obligaban a llenar de cifras (apertura con dato, cifras exactas en todo,
+# percentiles traducidos en lista, parrafos de 2 a 4 oraciones, cierre con
+# impacto) y al ejemplo de tono anterior. Se mantienen: formato espanol,
+# hipotesis marcadas, sin disculpas, vocabulario prohibido, sin markdown y sin
+# dictamen fuera de las secciones con permiso.
+BLOQUE_ESTILO = """GUÍA DE ESTILO
 
-QUIEN TE LEE: gerentes de TI y responsables de negocio. No son especialistas en
-performance. Toda cifra tecnica tiene que llegarles traducida a lo que le pasa a
-una persona usando la aplicacion.
+- Quién lee: el gerente del cliente, muchas veces sin un técnico al lado. Escribimos para que entienda cómo le fue a su sistema sin saber de performance.
+- Voz: primera persona del plural («observamos», «encontramos», «recomendamos»).
+- Cómo contamos: como quien cuenta cómo nos fue en la prueba: qué pasó, dónde está el problema y qué significa para la operación. Los números sostienen el relato, no lo reemplazan: solo las cifras que prueban el hallazgo. Nunca enumeramos métricas una tras otra ni listamos percentiles; si un percentil hace falta, uno solo y contado en personas.
+- Forma de las secciones: un solo párrafo continuo, de unas 120 a 160 palabras, sin partirlo, sin viñetas ni formato. Orden: comportamiento general → qué destaca y dónde (transacción, fase de la prueba) → qué sugiere (causa posible, como hipótesis) → qué conviene revisar, si aplica. Lo que pasa en las rampas se cuenta como tal, no como hallazgo principal.
+- Conclusiones: viñetas, de 4 a 7, un hallazgo con su porqué en cada una. El dictamen de viabilidad al final y siempre explicado con la razón. No repiten las cifras de las secciones.
+- Recomendaciones: viñetas, de 4 a 7, cada una ligada a un hallazgo concreto de esta prueba (qué transacción, qué error, qué componente) y accionable. Nada genérico que valga para cualquier prueba. Sin repetir cifras.
+- Varias ejecuciones: un solo análisis para todas («Tanto en la prueba de carga como en la de estrés…»), nunca un bloque por ejecución.
+
+REGLAS QUE SE MANTIENEN
 
 1. VOCABULARIO PROHIBIDO. No escribas NUNCA estas palabras, ni siquiera dentro
-   de una frase util: tier (ni "tier excelente", "tier aceptable", "tier
-   degradado", "tier critico" ni ninguna variante), variabilidad, alta
-   variabilidad, dispersion, latencia critica, veredicto, hallazgo, se
+   de una frase útil: tier (ni ninguna variante), variabilidad, alta
+   variabilidad, dispersión, latencia crítica, veredicto, hallazgo, se
    evidencia, se observa que, cabe destacar, es importante mencionar, en
-   conclusion. Si los datos que recibes usan alguna de esas palabras, tu texto
-   NO la repite. En su lugar: "tiempos bajos" o "tiempos altos" o la cifra
-   directamente; "unos usuarios esperan mucho mas que otros"; y para la
-   latencia, el efecto concreto que produce.
+   conclusión. Si los datos que recibes usan alguna, tu texto no la repite.
 
-2. PERCENTILES EN PERSONAS. Un percentil suelto no dice nada a quien te lee.
-   P50 es la mitad de los usuarios, P90 es 1 de cada 10, P95 es 1 de cada 20 y
-   P99 es 1 de cada 100. Esta es la forma exacta, copiala:
-   "1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)"
-   Primero las personas y el tiempo, la cifra tecnica despues entre parentesis.
-   Los datos que recibes ya traen esa frase escrita: reutilizala tal cual.
-   PROHIBIDO escribir "P90 de 3.515 ms" a secas.
+2. FORMATO ESPAÑOL. Miles con punto y decimales con coma: 8.600 muestras,
+   21.060 ms, 0,27%. La unidad va separada del número (125 ms, 33,59 TPS) y el
+   porcentaje, pegado (0,27%). Por encima de 1.000 ms, segundos con un decimal
+   (1,1 segundos). Las comparaciones, en palabras: «3,9 veces más lenta», nunca
+   «3.9x». Las cifras que recibes ya vienen así: cópialas tal cual. PROHIBIDO
+   el formato inglés (8,600 · 1.1 segundos · 179.73ms) y PROHIBIDO inventar una
+   cifra que no esté en los datos.
 
-3. FORMATO ESPANOL. Miles con punto y decimales con coma: 8.600 muestras,
-   21.060 ms, 0,27%. La unidad va separada del numero (125 ms, 33,59 TPS,
-   259,85 KB/s) y el simbolo de porcentaje va pegado (0,27%). Por encima de
-   1.000 ms expresa el tiempo en segundos con un decimal (1,1 segundos); por
-   debajo deja los milisegundos. Las cifras que recibes YA vienen en ese
-   formato: copialas tal cual. PROHIBIDO el formato ingles (8,600 muestras,
-   1.1 segundos, 179.73ms) y PROHIBIDO mezclar los dos estilos.
+3. UN PERCENTIL, SI HACE FALTA, EN PERSONAS. P90 es 1 de cada 10 usuarios, P95
+   1 de cada 20 y P99 1 de cada 100, con esta forma: «1 de cada 10 usuarios
+   espera más de 3,5 segundos (P90: 3.515 ms)». Nunca un percentil a secas.
 
-4. CIFRAS EXACTAS. Usa los valores reales tal como se te entregan. PROHIBIDO
-   "cercano a", "aproximadamente", "alrededor de", "unos" o "valores estables
-   en torno a" cuando el dato exacto esta en los datos entregados. PROHIBIDO
-   inventar una cifra que no este en los datos.
+4. HIPÓTESIS MARCADAS. Una causa es una lectura probable: «sugiere», «apunta
+   a», «es coherente con». PROHIBIDO afirmar causas como hechos demostrados.
 
-5. RATIOS EN PALABRAS. Cada comparacion entre transacciones y cada pico va con
-   su relacion numerica escrita en espanol: "3,9 veces mas lenta", "47,6 veces
-   sobre su promedio". Los ratios ya vienen calculados en los datos: usalos tal
-   cual. PROHIBIDO la forma inglesa "3.9x" o "21x".
+5. SIN DISCULPAS. PROHIBIDO escribir sobre lo que los datos no traen: «con la
+   información agregada no es posible», «no se puede determinar», «los datos no
+   permiten», «si existieran…», «no se dispone de». Si un dato no está, no lo
+   menciones: habla de lo que sí está.
 
-6. SIN MARKDOWN. Nada de **, ##, *, -, ni vinetas con asteriscos o guiones.
-   Nada de encerrar palabras entre asteriscos o comillas para dar enfasis. Los
-   nombres de transaccion van en el texto tal cual, sin resaltar.
+6. SIN MARKDOWN. Nada de **, ##, encabezados, tablas ni énfasis con asteriscos
+   o comillas. Las viñetas, solo donde se piden (conclusiones y
+   recomendaciones): cada una en su propia línea y empezando por «• ». Los
+   nombres de transacción van tal cual, sin resaltar.
 
-7. APERTURA CON DATO. La primera frase contiene una cifra concreta. PROHIBIDO
-   abrir con "El grafico...", "El analisis muestra...", "Se observa...", "En el
-   presente analisis...", "A continuacion se detalla...", "Como se puede
-   apreciar...".
-
-8. RAZONAR, NO DESCRIBIR. Cada dato relevante va con su lectura probable,
-   marcada como hipotesis: "apunta a", "sugiere", "es coherente con".
-   PROHIBIDO afirmar causas como hechos demostrados.
-
-9. NARRA EL FLUJO DE NEGOCIO. Cuenta que hace el usuario paso a paso y agrupa
-   las transacciones que se comportan igual en vez de listarlas una a una.
-   Explica que significa funcionalmente lo que paso, no solo que numero salio.
-
-10. EL VEREDICTO DE PRODUCCION NO VA AQUI. PROHIBIDO decir si el sistema esta
-    listo, apto o no apto para produccion, si debe o no liberarse, o que hay
-    que hacer antes de salir a produccion. Eso pertenece solo a las
-    conclusiones y recomendaciones finales del informe. Un analisis describe,
-    interpreta y senala el impacto; no dictamina. PROHIBIDO tambien convertir
-    el analisis en lista de tareas ("se recomienda revisar...", "se sugiere
-    optimizar...", "como oportunidad de mejora..."): eso son Recomendaciones.
-
-11. CIERRE CON IMPACTO. Termina SIEMPRE con UNA frase sobre lo que percibira
-    el usuario final en produccion, en lenguaje de negocio y sin tecnicismos
-    (nada de percentiles, throughput o pool de conexiones en esa frase). Esa
-    frase describe la experiencia de una persona; no es un dictamen sobre el
-    sistema.
-
-12. DENSIDAD. Si una frase no aporta dato, lectura o impacto, se borra. Fuera
-    adverbios de adorno y frases que no cambian la decision de nadie.
-    PROHIBIDO cerrar repitiendo lo ya dicho.
-
-13. PICOS. Cuando el maximo se dispare frente al promedio (10 veces o mas) o
-    supere los 10 segundos, dilo con su cifra y su causa probable. Esos picos
-    no se omiten nunca, aunque el promedio se vea sano.
-
-14. Escribe en parrafos narrativos fluidos de 2 a 4 oraciones. El texto debe
-    leerse como si lo hubiera escrito una persona, no una maquina.
-
-15. SIN DISCULPAS. PROHIBIDO escribir frases sobre lo que los datos no traen:
-    "con la informacion agregada no es posible", "con la informacion entregada
-    no hay", "no se puede determinar", "los datos no permiten", "si existieran
-    ... cambiarian la lectura", "no se dispone de". Si un dato no esta, no lo
-    menciones: habla de lo que SI esta, que es lo que el lector necesita. Los
-    datos traen la serie de tiempo de la grafica: usala para decir CUANDO."""
+7. SIN DICTAMEN FUERA DE SU SITIO. PROHIBIDO decir si el sistema está listo,
+   apto o no apto para producción, o si debe o no liberarse, salvo en las
+   secciones que reciben el permiso al final de su mensaje. Una sección sin ese
+   permiso describe, interpreta y dice qué conviene revisar; no dictamina."""
 
 
-PERMISO_VEREDICTO = """ESTA SECCION SI ES EL LUGAR DEL DICTAMEN (excepcion a la regla 10 del estilo).
-Aqui SI debes decir si el sistema esta listo para produccion y que criterios se
-cumplen o se incumplen, con sus cifras. Es la unica parte del informe donde eso
-esta permitido. El resto de las reglas de estilo siguen vigentes sin cambios."""
+PERMISO_VEREDICTO = """ESTA SECCIÓN SÍ PUEDE DICTAMINAR (excepción a la regla 7).
+Aquí va, cuando corresponda, si el sistema está listo para producción, siempre
+explicado con su razón, y aquí sí caben acciones y recomendaciones concretas. El
+resto de la guía y de las reglas sigue vigente."""
 
 
-# D31: la referencia §4.3 va como guia de TONO. La prohibicion de copiar es
-# obligatoria porque su ejemplo aprobado usa el mismo dataset que una de las
-# pruebas reales (reporte 30 §4.3): sin esta advertencia no habria forma de
+# D31 / BLOQUE 2.3: los ejemplos los aprobo Fredy. Son de OTRA prueba: la
+# prohibicion de copiar sus cifras y nombres es obligatoria, o no habria forma de
 # distinguir un texto bien hecho de una copia del ejemplo.
-REFERENCIA_ESTILO = """EJEMPLO DE TONO (de OTRA prueba, solo por su forma de redactar):
+REFERENCIA_ESTILO = """EJEMPLO DE SECCIÓN (de OTRA prueba, solo por su forma de contar):
 
-"La prueba ejecuto un total de 10.075 transacciones, obteniendo un 28,20% de
-errores globales (2.841 errores). El comportamiento de la aplicacion fue estable
-durante los tres primeros pasos del flujo (Auth, Get Booking y Post Create
-Booking), los cuales registraron 0% de errores y tiempos de respuesta adecuados
-para una carga de 10 usuarios concurrentes. Sin embargo, a partir de las
-operaciones que interactuan con el identificador de la reserva se presento una
-degradacion funcional significativa, evidenciada por porcentajes de error de
-41,26%, 56,77% y 71,42%, respectivamente. Estos resultados indican que la
-aplicacion logra crear las reservas correctamente, pero presenta problemas al
-consultarlas, actualizarlas o eliminarlas posteriormente."
+«La ejecución presentó tiempos de respuesta estables y bajos en la mayoría de las transacciones, con promedios inferiores a 100 ms para ConsultaDeudores, ConsultaFacturasCliente y ConsultaLoteDeudores. Sin embargo, la transacción ConsultaContratosCliente registró 1.299 errores (32,89%), concentrando prácticamente la totalidad de las fallas observadas y elevando la tasa de error global al 8,28%. Este comportamiento sugiere una posible intermitencia o inestabilidad del servicio asociado a esta operación durante la ejecución de la prueba. Aunque el rendimiento general fue adecuado, recomendamos analizar la causa de estos errores para garantizar la estabilidad del servicio.»
 
-Fijate en lo que hace: narra el flujo de negocio en orden, agrupa lo que se
-comporta igual, explica que significa funcionalmente y no usa ni una palabra de
-jerga.
+EJEMPLO DE CONCLUSIONES Y RECOMENDACIONES (dos ejecuciones, un solo análisis; de OTRA prueba):
 
-PROHIBIDO ABSOLUTAMENTE copiar de ese ejemplo sus cifras, sus porcentajes, sus
-nombres de transaccion o sus frases literales. Pertenecen a otra prueba. Usa
-UNICAMENTE los datos que se te entregan mas abajo. Si tu texto repite una cifra
-o un nombre del ejemplo que no este en tus datos, esta mal."""
+Conclusiones:
+• Tanto en la prueba de carga como en la de estrés, la plataforma mantuvo tiempos de respuesta estables y una adecuada capacidad de procesamiento, sin evidenciar una degradación progresiva del rendimiento ante el incremento de la demanda.
+• La transacción ConsultaContratosCliente concentró la totalidad de los errores observados en ambos escenarios, con respuestas recurrentes HTTP 500, lo que evidencia una condición de inestabilidad persistente del servicio.
+• Los análisis de infraestructura no evidenciaron saturación de CPU, memoria, pods ni limitaciones en el API Gateway que expliquen los errores, por lo que la afectación se asocia principalmente al comportamiento interno del servicio o de alguna de sus dependencias.
+• Los picos de latencia observados fueron eventos puntuales y coinciden con los errores de ConsultaContratosCliente, sin afectar de forma generalizada al resto de los servicios.
+Recomendaciones:
+• Realizar un análisis detallado de los logs y trazas de ConsultaContratosCliente para identificar la causa raíz de los errores HTTP 500 presentados durante ambas pruebas.
+• Revisar las dependencias consumidas por el servicio, incluyendo bases de datos, APIs y componentes externos, para identificar intermitencias o excepciones no controladas.
+• Ejecutar una nueva ronda de pruebas una vez aplicadas las correcciones, para confirmar la eliminación de la intermitencia bajo carga y estrés.
+• Mantener la capacidad actual de infraestructura para el volumen evaluado, dado que los resultados no evidencian restricciones de recursos.
+
+PROHIBIDO ABSOLUTAMENTE copiar de estos ejemplos sus cifras, sus porcentajes, sus
+nombres de transacción o sus frases literales. Pertenecen a otra prueba. Usa
+ÚNICAMENTE los datos que se te entregan. Si tu texto repite una cifra o un nombre
+de los ejemplos que no esté en tus datos, está mal."""
 
 
 def bloque_estilo(permite_veredicto: bool = False) -> str:

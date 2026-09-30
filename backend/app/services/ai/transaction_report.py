@@ -92,14 +92,15 @@ PICO_OBLIGATORIO = ("summary", "chart_response_times")
 # las dos cosas y ningun dato las separa: ver DEFINICION_LATENCIA) y «como se
 # relaciona con sus tiempos» del caudal, que no recibe la serie de tiempos.
 INSTRUCCIONES: Dict[str, tuple] = {
-    "summary": ("Resumen del comportamiento de esta transaccion: como respondio, que la separa de un servicio sano y a cuantos usuarios les duele la espera. "
+    # BLOQUE 2.3: el tope es el de la guia de estilo (un parrafo de 120 a 160).
+    "summary": ("Cuenta como se comporto esta transaccion: como respondio, que la separa de un servicio sano y a cuantos usuarios les duele la espera. "
                 "Este texto es la LECTURA BASE de la transaccion: las otras cinco secciones lo reciben y no pueden contradecirlo. "
-                "Deja claro, con los minutos de las series, si sus fallos y sus picos son puntuales o sostenidos.", 200),
-    "chart_response_times": ("Analiza la evolucion de sus tiempos de respuesta en el tiempo: nivel base, picos y en que minuto aparecen, y si hay tramos sostenidos o solo puntos aislados.", 130),
-    "chart_latency": ("Analiza su latencia frente al tiempo total: cuanto es espera hasta el primer byte y cuanto es descarga, y como se mueve a lo largo de la prueba.", 130),
-    "chart_error_rate": ("Analiza su tasa de error a lo largo de la prueba con los minutos de la serie: entre que valores se movio la mayor parte del tiempo, su peor y su mejor minuto, y si el fallo es constante, intermitente o se concentra en un tramo.", 130),
-    "chart_codes": ("Analiza los codigos de respuesta de esta transaccion: que indica su reparto sobre la salud del servicio, cuando aparece cada codigo de fallo y si se reparte por toda la prueba o se concentra en un tramo.", 130),
-    "chart_tps": ("Analiza su caudal de transacciones por segundo: si se sostiene o cae y en que minutos, y como fue el arranque.", 130),
+                "Tiene que quedar claro si sus fallos y sus picos son puntuales o sostenidos durante la carga sostenida.", 160),
+    "chart_response_times": ("Cuenta como evolucionan sus tiempos de respuesta: su nivel habitual, cuando aparecen los picos y si se sostienen o son puntos aislados.", 160),
+    "chart_latency": ("Cuenta su latencia frente al tiempo total: cuanto es espera hasta el primer byte y cuanto descarga, y como se mueve durante la prueba.", 160),
+    "chart_error_rate": ("Cuenta su tasa de error: si el fallo es constante, intermitente o se concentra en algun momento de la carga sostenida.", 160),
+    "chart_codes": ("Cuenta sus codigos de respuesta: que dice su reparto sobre la salud del servicio y si los de fallo se concentran o se reparten por toda la prueba.", 160),
+    "chart_tps": ("Cuenta su caudal: si se sostiene o cae durante la carga sostenida.", 160),
     # BLOQUE 2.2: aqui estaban «conclusions» y «recommendations», que no se
     # generan desde D20. Instrucciones muertas: fuera.
 }
@@ -230,7 +231,8 @@ DATOS DE LA SERIE TEMPORAL:
 {serie_txt}
 
 {instruccion}
-Maximo {tope} palabras. Habla SOLO de esta transaccion, no del test completo.
+Sigue la guia de estilo: un solo parrafo de unas 120 a {tope} palabras. Habla SOLO
+de esta transaccion, no de la prueba completa.
 {pico}
 No digas si el servicio esta listo para produccion: eso va en las conclusiones
 del informe, no en el bloque de una transaccion."""

@@ -131,11 +131,15 @@ CUANTO CAMBIA EL ESTRES FRENTE A LA CARGA
 - Tasa de error: {pct(comparison['error_rate_change_pct'] or 0, 1)}
 - Caudal: {pct(comparison['throughput_change_pct'] or 0, 1)}
 
-Escribe la comparativa. Maximo 500 palabras.
-1. Que cambia entre una prueba y otra, contado como lo vive el usuario.
-2. Donde se rompe el sistema y con que cifras.
-3. Si aguanta o no, y hasta donde.
-4. Que hace falta en capacidad y escalabilidad.
+Escribe la comparativa siguiendo la guia de estilo. Es UN solo analisis de las dos
+pruebas, no un bloque por prueba:
+- primero, un parrafo de unas 120 a 160 palabras con lo que cambia entre una prueba
+  y otra contado como lo vive el usuario, y donde se rompe el sistema;
+- despues, «Conclusiones:» y de 4 a 7 vinetas; la ultima, si aguanta o no y hasta
+  donde, explicado con su razon;
+- despues, «Recomendaciones:» y de 4 a 7 vinetas sobre capacidad y escalabilidad,
+  ligadas a lo que mostraron estas dos pruebas.
+Cada vineta en su propia linea y empezando por «• ».
 """
         ai_analysis = await asyncio.to_thread(
             gemini._generate, prompt, section_name="comparison_analysis",
