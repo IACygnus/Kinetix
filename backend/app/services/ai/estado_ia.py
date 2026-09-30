@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -83,7 +84,7 @@ def _tipo_gemini(err) -> str:
         return "modelo"
     if nombre == "ResourceExhausted":
         return "limite_proveedor"
-    if nombre in ("ServiceUnavailable", "DeadlineExceeded", "InternalServerError"):
+    if nombre in ("ServiceUnavailable", "DeadlineExceeded", "InternalServerError", "TimeoutError"):
         return "transitorio"
     return "error"
 
@@ -112,7 +113,16 @@ def comprobar(conf: Dict[str, Any], forzar: bool = False) -> Dict[str, Any]:
         elif provider == "gemini":
             import google.generativeai as genai
             genai.configure(api_key=clave, transport="rest")   # regla 12
-            genai.get_model(f"models/{model}", request_options={"timeout": TIMEOUT_S})
+            # google-generativeai 0.3.1 no acepta `request_options`: el limite de
+            # tiempo se pone esperando la respuesta en otro hilo. Si vence, ese
+            # hilo sigue hasta que el SDK responda, pero la pantalla no espera.
+            hilo = ThreadPoolExecutor(max_workers=1)
+            try:
+                hilo.submit(genai.get_model, f"models/{model}").result(timeout=TIMEOUT_S)
+            except TimeoutError:
+                raise TimeoutError(f"sin respuesta en {TIMEOUT_S:g} s") from None
+            finally:
+                hilo.shutdown(wait=False)
         else:
             return _resultado(False, provider, model, "error", f"Proveedor no soportado: {provider}")
         res = _resultado(True, provider, model)
