@@ -201,6 +201,10 @@ def parte_b():
                                                      report_id=rid)
                     t = await IR._resolve_unified_conclusions(db, req)
                     ok(t == plano, "D-a: la exportacion lee lo guardado, no el texto que manda la pantalla")
+                    import inspect
+                    fuente = inspect.getsource(IR.generate_integrated_report)
+                    ok("_generate" not in fuente and "get_gemini_analyzer" not in fuente,
+                       "D1: «Generar Informe Integrado» ya no llama a la IA (fuera el unificado)")
             finally:
                 r = await db.get(IntegratedReport, _uuid.UUID(rid))
                 r.consolidated_analysis = original

@@ -192,7 +192,9 @@ async def main():
     ok("LINEA DE TIEMPO" in linea and "FASES DE LA PRUEBA" in linea and "/2026" in linea,
        "global de monitoreo: recibe la linea de tiempo con fecha y las fases")
     from app.api.v1.endpoints import integrated_report as IR
-    ok("Maximo 600 palabras" in inspect.getsource(IR), "conclusiones unificadas: con limite")
+    # BLOQUE 3.4: las unificadas desaparecen; la conclusion del integrado es la unica.
+    ok("A partir de los siguientes analisis" not in inspect.getsource(IR),
+       "conclusiones unificadas: fuera (bloque 3.4)")
 
     print("8. La guia de estilo (BLOQUE 2.3)")
     from app.services.ai.estilo import detectar_estilo, REFERENCIA_ESTILO

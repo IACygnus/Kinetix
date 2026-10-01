@@ -1475,8 +1475,12 @@ async def _resolve_unified_conclusions(db: AsyncSession, request) -> str:
     pasaba, el PDF salia sin el bloque y sin avisar. Si el request llega vacio se
     lee de la DB, igual que F6 hace con los textos editados de cada seccion.
     """
+    # BLOQUE 3.4 (D-a): con registro, SIEMPRE lo guardado. Antes ganaba el texto
+    # que mandaba la pagina, y tras «Generar Informe Integrado» ese era el
+    # unificado que nadie habia visto, aunque hubiera un consolidado editado.
+    # El texto de la peticion solo vale para un informe sin registro.
     text = (request.unified_conclusions or "").strip()
-    if text or not getattr(request, "report_id", None):
+    if not getattr(request, "report_id", None):
         return text
     try:
         from app.db.models.integrated_report import IntegratedReport
@@ -1489,6 +1493,10 @@ async def _resolve_unified_conclusions(db: AsyncSession, request) -> str:
     else:
         logger.warning("_resolve_unified_conclusions: el informe no tiene consolidado generado")
     return text
+
+
+# BLOQUE 3.4: nombre que dice lo que hace; lo usa la suite conclusion_unica.py.
+_texto_conclusiones_para_exportar = _resolve_unified_conclusions
 
 
 def _extract_style_from_individual_report(full_html: str) -> str:
@@ -1680,7 +1688,6 @@ async def generate_integrated_report(
 ):
     """Generate integrated report from multiple sections in user-defined order."""
     sections_html = []
-    all_conclusions = []
 
     for section in sorted(request.sections, key=lambda s: s.order):
         try:
@@ -1695,8 +1702,6 @@ async def generate_integrated_report(
 
         if section.type in ("load_test", "stress_test"):
             sections_html.append(_build_exec_html(execution, section))
-            if execution.ai_conclusions:
-                all_conclusions.append(f"[{section.source_name}]: {execution.ai_conclusions}")
 
         elif section.type == "monitoring":
             atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))   # R1
@@ -1704,12 +1709,6 @@ async def generate_integrated_report(
             global_ai = cap_data.get("monitoring_ai_analysis", "")
             # Monitoring section: show images + per-image AI. Global analysis goes to conclusions only.
             sections_html.append(_build_att_html(section, atts, "", "Capturas de infraestructura"))   # O-D42
-            # Collect individual image analyses + global analysis for conclusions
-            for att in atts:
-                if att.ai_analysis:
-                    all_conclusions.append(f"[Monitoreo — {att.category or ''}: {att.title or att.filename}]: {att.ai_analysis}")
-            if global_ai:
-                all_conclusions.append(f"[Analisis Global Monitoreo — {section.source_name}]: {global_ai}")
 
         elif section.type == "evidence":
             atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1
@@ -1717,53 +1716,13 @@ async def generate_integrated_report(
             global_ai = cap_data.get("evidence_ai_analysis", "")
             # Evidence section: show images + per-image AI. Global analysis goes to conclusions only.
             sections_html.append(_build_att_html(section, atts, "", "Evidencias y Hallazgos"))
-            for att in atts:
-                if att.ai_analysis:
-                    all_conclusions.append(f"[Evidencia — {att.category or ''}: {att.title or att.filename}]: {att.ai_analysis}")
-            if global_ai:
-                all_conclusions.append(f"[Analisis Global Evidencias — {section.source_name}]: {global_ai}")
 
-    # Generate unified conclusions with AI — includes execution, monitoring and evidence analyses
+    # BLOQUE 3.4 (reporte 141, D1): aqui se pedia a la IA un texto «unificado» que
+    # no se veia, no se editaba ni se guardaba, y aun asi salia en el PDF y el HTML
+    # si estaba en la pagina (D-a). Las conclusiones del integrado son ahora solo
+    # la caja unica del consolidado, que se ve, se edita y se guarda. Una llamada
+    # menos por cada «Generar Informe Integrado».
     unified = ""
-    if all_conclusions:
-        try:
-            from app.services.ai.gemini import get_gemini_analyzer, load_ai_config_from_db
-            ai_conf = await load_ai_config_from_db(db)
-            gemini = get_gemini_analyzer(
-                provider=ai_conf.get("provider", ""),
-                model_name=ai_conf.get("model_name", ""),
-                api_key=ai_conf.get("api_key", ""),
-                reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
-            )
-            # ETAPA 3 (D30/D34): esta SI es una de las partes que dictamina; el
-            # estilo lo pone `_generate`. Sin la palabra "hallazgo", que el
-            # propio bloque de estilo prohibe.
-            prompt = f"""A partir de los siguientes analisis de varias pruebas de performance del
-mismo sistema, incluyendo datos de ejecucion, metricas de monitoreo de
-infraestructura y evidencias recopiladas, redacta conclusiones y recomendaciones
-UNIFICADAS que correlacionen todo lo anterior.
-
-{chr(10).join(all_conclusions)}
-
-Instrucciones (sigue la guia de estilo; es UN solo analisis para todas las pruebas,
-nunca un bloque por ejecucion):
-- Primero, un parrafo de unas 120 a 160 palabras que sintetice todas las pruebas y
-  las cruce con el monitoreo y las evidencias.
-- Despues, «Conclusiones:» y de 4 a 7 vinetas; la ultima, el dictamen de
-  viabilidad explicado con su razon.
-- Despues, «Recomendaciones:» y de 4 a 7 vinetas, cada una ligada a un hallazgo
-  concreto de estas pruebas.
-- Cada vineta en su propia linea y empezando por «• ».
-- Cruza las metricas de infraestructura (CPU, memoria, hilos) con el rendimiento
-  observado. Quita lo repetido y no copies lo que ya dicen las secciones.
-- Maximo 600 palabras en total.
-"""
-            unified = await asyncio.to_thread(
-                gemini._generate, prompt, section_name="unified_conclusions",
-                permite_veredicto=True) or ""
-        except Exception as e:
-            logger.error(f"Unified conclusions AI failed: {e}")
-            unified = "Conclusiones unificadas no disponibles."
 
     # F1: crear (o reusar) el registro en integrated_reports apenas se genera el
     # informe, para que las ediciones tengan una fila destino desde el minuto cero.
