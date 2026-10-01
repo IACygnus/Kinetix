@@ -2157,6 +2157,7 @@ async def _reunir_conclusion_unica(db: AsyncSession, request_sections, overrides
     prueba). Respeta el selector de R1 y las ediciones del analista."""
     por_id: dict = {}
     orden: List[str] = []
+    nombres: dict = {}   # source_id -> nombre de la ejecucion en la base
     for section in sorted(request_sections, key=lambda s: s.order):
         try:
             exec_id = uuid.UUID(section.source_id)
@@ -2197,6 +2198,22 @@ async def _reunir_conclusion_unica(db: AsyncSession, request_sections, overrides
             if glob:
                 textos.append(f"[Global]: {glob}")
             (e.monitoreo if section.type == "monitoring" else e.evidencias).extend(textos)
+        nombres[sid] = execution.name
+
+    # Capturas de una ejecucion que NO esta en el documento como prueba (pasa: la
+    # misma prueba subida dos veces, y el integrado toma la carga de una y las
+    # capturas de otra). Se atan a la prueba del mismo nombre o, si no la hay, a
+    # la unica de su tipo. Si no hay a donde, quedan aparte, con su nombre.
+    pruebas = [i for i in orden if por_id[i].tx_detalladas is not None]
+    for i in [i for i in orden if por_id[i].tx_detalladas is None]:
+        suelta = por_id[i]
+        mismo = [j for j in pruebas if nombres.get(j) == nombres.get(i)]
+        tipo = [j for j in pruebas if por_id[j].tipo == suelta.tipo]
+        destino = mismo[0] if len(mismo) == 1 else (tipo[0] if len(tipo) == 1 else None)
+        if destino:
+            por_id[destino].monitoreo.extend(suelta.monitoreo)
+            por_id[destino].evidencias.extend(suelta.evidencias)
+            orden.remove(i)
     return [por_id[i] for i in orden]
 
 
