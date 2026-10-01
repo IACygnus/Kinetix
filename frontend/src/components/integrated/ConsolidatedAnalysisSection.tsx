@@ -1,6 +1,11 @@
 /**
  * HF9 — Consolidated Analysis Section for Integrated Report.
  * Supports dual Load/Stress blocks. Editable textareas with onBlur persistence.
+ *
+ * BLOQUE 3.5 (reporte 141): si el integrado tiene la caja unica (`unico`), se
+ * pintan solo «Conclusiones» y «Recomendaciones», a lo ancho. Los integrados no
+ * regenerados siguen con sus cajas por tipo de prueba (D3). El consolidado
+ * anterior (`_legado`) va plegado debajo y de solo lectura (D2).
  */
 import { useState, useEffect } from 'react';
 
@@ -21,6 +26,16 @@ interface Props {
   // F3: notifica cada tecla al padre para el autosave con debounce. Opcional:
   // sin esta prop el componente se comporta exactamente igual que en F7.
   onDraftChange?: (testType: string, field: 'conclusions' | 'recommendations', value: string) => void;
+  // BLOQUE 3.5 (D2): el consolidado por tipo de antes de regenerar. Solo lectura.
+  consolidadoAnterior?: Record<string, ConsolidatedData> | null;
+}
+
+const UNICO = 'unico';
+
+function fechaLegible(iso: string | null | undefined): string {
+  if (!iso) return 'sin fecha';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 const TEST_TYPE_LABELS: Record<string, string> = {
@@ -34,6 +49,7 @@ export default function ConsolidatedAnalysisSection({
   onGenerated,
   onEdit,
   onDraftChange,
+  consolidadoAnterior,
 }: Props) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +62,11 @@ export default function ConsolidatedAnalysisSection({
   const [draft, setDraft] = useState<Record<string, ConsolidatedData>>(consolidatedAnalysis || {});
   useEffect(() => { setDraft(consolidatedAnalysis || {}); }, [consolidatedAnalysis]);
 
-  const hasAnalysis = Object.keys(consolidatedAnalysis || {}).length > 0;
+  // Las claves que empiezan por «_» no son cajas (el legado nunca llega aqui).
+  const visibles = Object.entries(draft || {}).filter(([k]) => !k.startsWith('_'));
+  const hasAnalysis = Object.keys(consolidatedAnalysis || {}).some((k) => !k.startsWith('_'));
+  const esUnico = !!(draft || {})[UNICO];
+  const anterior = Object.entries(consolidadoAnterior || {}).filter(([, d]) => d && typeof d === 'object');
 
   const getCsrfToken = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '';
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
@@ -91,8 +111,8 @@ export default function ConsolidatedAnalysisSection({
           </h3>
           <p className="text-lg text-gray-600 mb-5">
             Genera un analisis consolidado que correlaciona KPIs, conclusiones, monitoreo y evidencias.
-            {sections.some(s => s.type === 'load_test') && sections.some(s => s.type === 'stress_test')
-              ? ' Se generaran analisis separados para Carga y Estres.'
+            {sections.filter(s => s.type === 'load_test' || s.type === 'stress_test').length > 1
+              ? ' Se generará un solo análisis para todas las pruebas.'
               : ''}
           </p>
           <button
@@ -111,7 +131,7 @@ export default function ConsolidatedAnalysisSection({
   return (
     <div className="border-t-4 pt-8 mt-8" style={{ borderColor: '#f5a623' }}>
       <div className="flex justify-between items-center mb-6">
-        <h3 className="text-2xl font-bold text-[#0a1628]">Analisis Consolidado</h3>
+        <h3 className="text-2xl font-bold text-[#0a1628]">{esUnico ? 'Conclusiones y Recomendaciones' : 'Analisis Consolidado'}</h3>
         <button
           onClick={() => (hasManualEdits ? setConfirmOpen(true) : handleGenerate())}
           disabled={generating}
@@ -120,6 +140,14 @@ export default function ConsolidatedAnalysisSection({
           {generating ? 'Regenerando...' : 'Regenerar'}
         </button>
       </div>
+
+      {/* BLOQUE 3.5: si la generacion falla (502), el motivo, arriba y visible.
+          Las cajas siguen con lo que tenian: onGenerated no se llama. */}
+      {error && (
+        <div role="alert" className="mb-6 rounded-lg border border-red-300 bg-red-50 px-5 py-4 text-base text-red-800">
+          {error}
+        </div>
+      )}
 
       {/* F5 (B2, Opcion D): confirmacion antes de reemplazar ediciones manuales.
           Mismo patron que el modal de confirmacion de ClientsPage. */}
@@ -149,7 +177,33 @@ export default function ConsolidatedAnalysisSection({
         </div>
       )}
 
-      {Object.entries(draft).map(([testType, data]) => (
+      {esUnico && (
+        <div className="space-y-6 mb-8" data-caja="unico">
+          {(['conclusions', 'recommendations'] as const).map((campo) => (
+            <div key={campo} className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className={`${campo === 'conclusions' ? 'bg-[#0a1628]' : 'bg-emerald-700'} text-white px-5 py-3`}>
+                <h5 className="font-bold text-lg">{campo === 'conclusions' ? 'Conclusiones' : 'Recomendaciones'}</h5>
+              </div>
+              <div className="p-4 bg-white">
+                <textarea
+                  data-campo={campo}
+                  className="w-full min-h-[260px] p-3 border border-slate-200 rounded text-base text-slate-800 leading-relaxed focus:outline-none focus:border-[#f5a623] resize-y"
+                  value={draft[UNICO]?.[campo] ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraft(prev => ({ ...prev, [UNICO]: { ...prev[UNICO], [campo]: v } }));
+                    onDraftChange?.(UNICO, campo, v);
+                  }}
+                  onBlur={(e) => onEdit(UNICO, campo, e.target.value)}
+                  placeholder={campo === 'conclusions' ? 'Click para editar conclusiones...' : 'Click para editar recomendaciones...'}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!esUnico && visibles.map(([testType, data]) => (
         <div key={testType} className="mb-8">
           <h4 className="text-xl font-semibold text-gray-700 mb-4">
             {TEST_TYPE_LABELS[testType] || testType}
@@ -196,7 +250,37 @@ export default function ConsolidatedAnalysisSection({
         </div>
       ))}
 
-      {error && <p className="mt-3 text-red-600">{error}</p>}
+      {/* BLOQUE 3.5 (D2): la version anterior, plegada y de solo lectura. Texto
+          seleccionable para copiar; nada se edita ni se guarda desde aqui. */}
+      {anterior.length > 0 && (
+        <details className="mt-2 border border-slate-200 rounded-lg bg-slate-50" data-legado>
+          <summary className="cursor-pointer select-none px-5 py-3 text-lg font-semibold text-slate-700">
+            Versión anterior (solo lectura)
+          </summary>
+          <div className="px-5 pb-5 space-y-6">
+            {anterior.map(([tt, d]) => (
+              <div key={tt}>
+                <h4 className="text-lg font-semibold text-gray-700 mt-4 mb-2">
+                  {TEST_TYPE_LABELS[tt] || tt}
+                  <span className="ml-3 text-sm font-normal text-gray-500">
+                    {fechaLegible(d.generated_at)}{d.edited ? ' · editada a mano' : ''}
+                  </span>
+                </h4>
+                {(['conclusions', 'recommendations'] as const).map((campo) => (
+                  <div key={campo} className="mb-3">
+                    <div className="text-sm font-semibold text-slate-600 mb-1">
+                      {campo === 'conclusions' ? 'Conclusiones' : 'Recomendaciones'}
+                    </div>
+                    <div className="whitespace-pre-wrap select-text rounded border border-slate-200 bg-white p-3 text-base text-slate-800 leading-relaxed">
+                      {d[campo] || '—'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

@@ -85,7 +85,14 @@ function copiaYaGuardada(copia: CopiaLocal, server: any): boolean {
 }
 
 // F3: aplana el consolidado al texto plano que consumen los exports.
+// BLOQUE 3.5: la caja unica, sin rotulo por tipo; las claves «_» (el legado) se saltan.
+// Mismo formato que `_flatten_consolidated` del backend, que es lo que exporta.
 function flattenConsolidated(data: Record<string, any>): string {
+  const unico = (data || {}).unico;
+  if (unico && typeof unico === 'object') {
+    const c = (unico.conclusions || '').trim(), r = (unico.recommendations || '').trim();
+    return c || r ? `Conclusiones:\n${c}\n\nRecomendaciones:\n${r}` : '';
+  }
   return Object.entries(data || {})
     .filter(([k]) => !k.startsWith('_'))
     .map(([tt, d]: [string, any]) => {
@@ -143,6 +150,7 @@ export default function IntegratedReportPage() {
   const [reportHtml, setReportHtml] = useState('');
   const [conclusions, setConclusions] = useState('');
   const [consolidatedAnalysis, setConsolidatedAnalysis] = useState<Record<string, any>>({});
+  const [consolidadoAnterior, setConsolidadoAnterior] = useState<Record<string, any> | null>(null);   // BLOQUE 3.5 (D2)
   const [attCounts, setAttCounts] = useState<Record<string, { monitoring: number; evidence: number }>>({});
 
   // HF9.1: Persistence state
@@ -405,6 +413,7 @@ export default function IntegratedReportPage() {
           setPersistedId(data.id);
           setReportName(data.name || '');
           setConsolidatedAnalysis(data.consolidated_analysis || {});
+          setConsolidadoAnterior(data.consolidado_anterior || null);   // BLOQUE 3.5 (D2)
           // Rebuild sections from saved data
           const savedSections: ReportSection[] = (data.sections || []).map((s: any, idx: number) => ({
             id: `${s.type}-${idx}-${Date.now()}`,
@@ -430,11 +439,7 @@ export default function IntegratedReportPage() {
           if (savedSections.length > 0) setReportHtml('hydrated');
           // Flatten consolidated for exports
           if (data.consolidated_analysis && Object.keys(data.consolidated_analysis).length > 0) {
-            const allText = Object.entries(data.consolidated_analysis).map(([tt, d]: [string, any]) => {
-              const label = tt === 'load' ? 'PRUEBA DE CARGA' : 'PRUEBA DE ESTRES';
-              return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
-            }).join('\n\n---\n\n');
-            setConclusions(allText);
+            setConclusions(flattenConsolidated(data.consolidated_analysis));   // BLOQUE 3.5
           }
           // R1 (R-D3): ¿quedo algo de la visita anterior sin llegar al servidor?
           const copia = leerCopia(data.id);
@@ -523,7 +528,8 @@ export default function IntegratedReportPage() {
       if (res.ok) {
         const data = await res.json();
         setReportHtml(data.report_html || '');
-        setConclusions(data.unified_conclusions || '');
+        // BLOQUE 3.5 (D1): ya no hay texto unificado; las conclusiones son las del
+        // consolidado guardado, que es lo que exportan el PDF y el HTML.
         // F1: guardar el id del registro para que persistEdit deje de ser no-op
         if (data.report_id) {
           if (!persistedId) {
@@ -792,6 +798,7 @@ export default function IntegratedReportPage() {
           {/* HF9: Consolidated Analysis — dual Load/Stress support */}
           <ConsolidatedAnalysisSection
             consolidatedAnalysis={consolidatedAnalysis}
+            consolidadoAnterior={consolidadoAnterior}
             sections={[
               ...sections.map(s => ({ type: s.type, source_id: s.sourceId, source_name: s.sourceName, seleccion: s.seleccion || {} })),
               ...(persistedId ? [{ type: '__meta', source_id: persistedId, source_name: reportName || '' }] : []),
@@ -805,9 +812,12 @@ export default function IntegratedReportPage() {
               // HF9.1: Extract embedded __report_id and __report_name from response
               const rid = (rawData as any).__report_id;
               const rname = (rawData as any).__report_name;
+              const anterior = (rawData as any).__consolidado_anterior;
               const cleanData = { ...rawData };
               delete (cleanData as any).__report_id;
               delete (cleanData as any).__report_name;
+              delete (cleanData as any).__consolidado_anterior;
+              if (anterior !== undefined) setConsolidadoAnterior(anterior || null);   // BLOQUE 3.5 (D2)
 
               setConsolidatedAnalysis(cleanData);
               // R1: el consolidado nuevo ya esta en la base. Si quedan ediciones
@@ -825,13 +835,7 @@ export default function IntegratedReportPage() {
                 // Regeneration — just update analysis, keep same ID
               }
               // Flatten for exports
-              const allText = Object.entries(cleanData)
-                .filter(([k]) => !k.startsWith('_'))
-                .map(([tt, d]) => {
-                  const label = tt === 'load' ? 'PRUEBA DE CARGA' : 'PRUEBA DE ESTRES';
-                  return `${label}\n\nConclusiones:\n${d.conclusions}\n\nRecomendaciones:\n${d.recommendations}`;
-                }).join('\n\n---\n\n');
-              setConclusions(allText);
+              setConclusions(flattenConsolidated(cleanData));   // BLOQUE 3.5
             }}
             // F3: cada tecla solo rearma el debounce (refs, sin re-render)
             onDraftChange={handleDraftChange}

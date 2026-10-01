@@ -2056,14 +2056,21 @@ async def generate_consolidated_analysis(
     if not any(e.tx_detalladas is not None for e in ejecuciones):
         raise HTTPException(400, "No se encontraron ejecuciones para analizar")
 
-    ai_conf = await load_ai_config_from_db(db)
-    gemini = get_gemini_analyzer(
-        provider=ai_conf.get("provider", ""),
-        model_name=ai_conf.get("model_name", ""),
-        api_key=ai_conf.get("api_key", ""),
-        reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
-    )
     try:
+        # BLOQUE 3.5: sin IA configurada (o sin clave) el analizador puede no
+        # llegar a crearse; tambien eso es un 502 con su motivo, no un 500 mudo.
+        try:
+            ai_conf = await load_ai_config_from_db(db)
+            if ai_conf.get("limit_reached"):
+                raise RuntimeError(f"se alcanzo el limite {ai_conf['limit_reached']} de llamadas de Kinetix")
+            gemini = get_gemini_analyzer(
+                provider=ai_conf.get("provider", ""),
+                model_name=ai_conf.get("model_name", ""),
+                api_key=ai_conf.get("api_key", ""),
+                reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
+            )
+        except Exception as e:
+            raise CU.ConclusionUnicaError(f"no hay una IA disponible ({str(e)[:160]})")
         res = await CU.generar(gemini, ejecuciones)
     except CU.ConclusionUnicaError as e:
         # D-b: error visible y NADA guardado. Antes un texto vacio se partia «por la
@@ -2102,8 +2109,11 @@ async def generate_consolidated_analysis(
             flag_modified(existing, "consolidated_analysis")
             await db.commit()
             await db.refresh(existing)
-            return {"consolidated_analysis": {**_sin_legado(existing.consolidated_analysis),
-                                              "__report_id": str(existing.id), "__report_name": existing.name}}
+            return {"consolidated_analysis": {
+                **_sin_legado(existing.consolidated_analysis),
+                "__report_id": str(existing.id), "__report_name": existing.name,
+                # BLOQUE 3.5 (D2): la pantalla lo pinta plegado y de solo lectura.
+                "__consolidado_anterior": (existing.consolidated_analysis or {}).get(CU.LEGADO) or None}}
 
     # Create new
     default_name = request.name or f"Informe Integrado - {datetime.now(BOGOTA_TZ_SAVE).strftime('%d/%m/%Y %H:%M')}"

@@ -46,8 +46,10 @@ else
   # endpoints que "no existen" (pasó en O1.6, con 404 en /monitoring/jmeter-*).
   DATABASE_URL="postgresql://$USUARIO:$PGPASSWORD@$PGHOST:5432/$BASE_TEST" \
   ENVIRONMENT=development \
+  # --timeout-keep-alive 300, como el 8001: con los 5 s de uvicorn por defecto,
+  # R1.1 perdia el PDF exportado de forma intermitente (reporte 143).
   nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$PUERTO" \
-        --app-dir /app --reload > /tmp/backend_test.log 2>&1 &
+        --app-dir /app --reload --timeout-keep-alive 300 > /tmp/backend_test.log 2>&1 &
   echo "    arrancando…"
   i=0
   while [ $i -lt 40 ]; do
