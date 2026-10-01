@@ -40,6 +40,7 @@ from app.services.export.capas_html import CSS_CAPAS, JS_CAPAS
 from app.services.export.high_cardinality_strategy import apply_top_n_aggregation
 from app.services.export.client_logo import get_client_logo_b64   # N1.5
 from app.config.chart_config import TEST_TYPE_LABELS, CHART_COLORS, HTTP_CODE_COLORS
+from app.services.ai import conclusion_unica as CU   # BLOQUE 3.3
 import pandas as pd
 import json as _json_hf10h
 import re as _re_hf10h
@@ -1443,7 +1444,17 @@ def _strip_pdf_individual_conclusions(html: str) -> str:
 
 def _flatten_consolidated(consolidated: dict) -> str:
     """N2.2-A: aplana el consolidado al texto plano que consumen los exports.
-    Mismo formato que flattenConsolidated() en IntegratedReportPage.tsx."""
+    Mismo formato que flattenConsolidated() en IntegratedReportPage.tsx.
+
+    BLOQUE 3.3: con la caja unica, «Conclusiones» y «Recomendaciones» sin rotulo
+    por tipo de prueba. Un integrado no regenerado sale como siempre (D3)."""
+    unico = (consolidated or {}).get(CU.CLAVE)
+    if isinstance(unico, dict):
+        concl = (unico.get("conclusions") or "").strip()
+        recs = (unico.get("recommendations") or "").strip()
+        if not concl and not recs:
+            return ""
+        return f"Conclusiones:\n{concl}\n\nRecomendaciones:\n{recs}"
     parts = []
     for tt, d in (consolidated or {}).items():
         if tt.startswith("_") or not isinstance(d, dict):
@@ -2080,120 +2091,12 @@ async def generate_consolidated_analysis(
     # no sobre el original de la IA. Misma fuente que usan los exports (F6).
     overrides_by_exec = await _load_section_overrides(db, request.report_id)
 
-    # Group executions by test_type
-    executions_by_type: dict = {}  # { "load": [...], "stress": [...] }
-
-    for section in sorted(request_sections, key=lambda s: s.order):
-        try:
-            exec_id = uuid.UUID(section.source_id)
-        except (ValueError, AttributeError):
-            continue
-
-        result = await db.execute(select(TestExecution).where(TestExecution.id == exec_id))
-        execution = result.scalar_one_or_none()
-        if not execution:
-            continue
-
-        if section.type in ("load_test", "stress_test"):
-            tt = "load" if section.type == "load_test" else "stress"
-            if tt not in executions_by_type:
-                executions_by_type[tt] = []
-
-            # Collect KPIs + AI analyses
-            # ETAPA 3 (D32/D33): los KPIs salian crudos de la base ("Error Rate:
-            # 28.2%") y el modelo los copiaba con el punto decimal ingles.
-            kpis = (
-                f"Total de peticiones: {num(execution.total_requests)}, "
-                f"tasa de error: {pct(execution.error_rate)}, "
-                f"tiempo promedio de respuesta: {ms(execution.avg_response_time)}, "
-                f"caudal: {num(execution.throughput, 2)} por segundo, "
-                f"latencia promedio: {ms(execution.avg_latency or 0)}, "
-                f"duracion: {num(execution.duration_seconds or 0)} segundos.\n"
-                f"Lectura de sus percentiles (copia estas frases tal cual):\n"
-                f"{percentiles_bloque(p90=execution.p90_response_time, p95=execution.p95_response_time, p99=execution.p99_response_time)}"
-            )
-
-            # Get verdict
-            verdict = ""
-            if isinstance(execution.acceptance_criteria_json, dict):
-                verdict = execution.acceptance_criteria_json.get("verdict", "")
-
-            # F5 (B4): si el usuario corrigio el texto de esta seccion, la version
-            # corregida es la que alimenta el prompt. Sin overrides, identico a antes.
-            _ov = (overrides_by_exec.get(section.source_id) or {}).get("analysis") or {}
-            executions_by_type[tt].append({
-                "name": execution.name,
-                "kpis": kpis,
-                "verdict": verdict,
-                "conclusions": _ov.get("ai_conclusions", execution.ai_conclusions) or "",
-                "recommendations": _ov.get("ai_recommendations", execution.ai_recommendations) or "",
-                # F5.2: los analisis de seccion (resumen, errores y graficas) tambien
-                # alimentan el consolidado, con los overrides ya aplicados.
-                "section_analyses": _section_analyses_for_prompt(execution, _ov),
-                # R1 (Fredy, pregunta 3): que transacciones detalla el documento,
-                # para que las conclusiones no prometan un detalle que no esta.
-                "tx_detalladas": await _tx_del_documento(db, section, exec_id),
-            })
-
-        elif section.type == "monitoring":
-            # R1 (R-D7): lo que no entra en el documento no entra en sus conclusiones
-            atts = await _get_attachments(db, exec_id, "monitoring", _sel(section, "adjuntos"))
-            cap_data = json.loads(execution.capacity_analysis_json or "{}")
-            global_ai = cap_data.get("monitoring_ai_analysis", "")
-            # Determine which test_type this execution belongs to
-            tt = "stress" if (execution.test_type or "").lower() in ("stress", "spike") else "load"
-            if tt not in executions_by_type:
-                executions_by_type[tt] = []
-            monitoring_texts = []
-            # R1.4: el texto EDITADO de la captura, el mismo que ya imprimen el PDF y
-            # el HTML. Antes entraba el original y el consolidado podia contradecir
-            # al documento en el que va.
-            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images") or {}
-            for att in atts:
-                _texto = _imgs.get(str(att.id)) or att.ai_analysis
-                if _texto:
-                    monitoring_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {_texto}")
-            if global_ai:
-                monitoring_texts.append(f"[Global]: {global_ai}")
-            if monitoring_texts:
-                # Append to existing entries or create a monitoring-only entry
-                for entry in executions_by_type[tt]:
-                    if "monitoring_analysis" not in entry:
-                        entry["monitoring_analysis"] = "\n".join(monitoring_texts)
-                        break
-                else:
-                    executions_by_type[tt].append({"monitoring_analysis": "\n".join(monitoring_texts)})
-
-        elif section.type == "evidence":
-            atts = await _get_attachments(db, exec_id, "evidence", _sel(section, "adjuntos"))   # R1 (R-D7)
-            cap_data = json.loads(execution.capacity_analysis_json or "{}")
-            global_ai = cap_data.get("evidence_ai_analysis", "")
-            tt = "stress" if (execution.test_type or "").lower() in ("stress", "spike") else "load"
-            if tt not in executions_by_type:
-                executions_by_type[tt] = []
-            evidence_texts = []
-            # R1.4: el texto EDITADO de la captura, el mismo que ya imprimen el PDF y
-            # el HTML. Antes entraba el original y el consolidado podia contradecir
-            # al documento en el que va.
-            _imgs = (overrides_by_exec.get(section.source_id) or {}).get("images") or {}
-            for att in atts:
-                _texto = _imgs.get(str(att.id)) or att.ai_analysis
-                if _texto:
-                    evidence_texts.append(f"[{att.category or ''}: {att.title or att.filename}]: {_texto}")
-            if global_ai:
-                evidence_texts.append(f"[Global]: {global_ai}")
-            if evidence_texts:
-                for entry in executions_by_type[tt]:
-                    if "evidence_analysis" not in entry:
-                        entry["evidence_analysis"] = "\n".join(evidence_texts)
-                        break
-                else:
-                    executions_by_type[tt].append({"evidence_analysis": "\n".join(evidence_texts)})
-
-    if not executions_by_type:
+    # BLOQUE 3.3 (reporte 141, D1-D4): UN solo analisis para todo el integrado.
+    # Antes habia uno por tipo de prueba (con carga y estres, cuatro cajas).
+    ejecuciones = await _reunir_conclusion_unica(db, request_sections, overrides_by_exec)
+    if not any(e.tx_detalladas is not None for e in ejecuciones):
         raise HTTPException(400, "No se encontraron ejecuciones para analizar")
 
-    # Generate consolidated analysis per test type
     ai_conf = await load_ai_config_from_db(db)
     gemini = get_gemini_analyzer(
         provider=ai_conf.get("provider", ""),
@@ -2201,108 +2104,22 @@ async def generate_consolidated_analysis(
         api_key=ai_conf.get("api_key", ""),
         reasoning_effort=(ai_conf.get("reasoning_effort") or ""),   # ETAPA 2 D13c
     )
+    try:
+        res = await CU.generar(gemini, ejecuciones)
+    except CU.ConclusionUnicaError as e:
+        # D-b: error visible y NADA guardado. Antes un texto vacio se partia «por la
+        # mitad» y quedaban dos cajas vacias en la base, sin aviso.
+        logger.error(f"Conclusion unica: {e.motivo} ({e.detalle[:200]})")
+        raise HTTPException(502, f"No se generaron las conclusiones: {e.motivo}. "
+                                 f"No se guardo nada; el texto anterior sigue igual.")
 
-    consolidated = {}
-    for test_type, entries in executions_by_type.items():
-        type_label = "CARGA (LOAD)" if test_type == "load" else "ESTRES (STRESS)"
-
-        # Compile all data for this test type
-        all_kpis = "\n".join(e.get("kpis", "") for e in entries if e.get("kpis"))
-        all_verdicts = ", ".join(e.get("verdict", "N/A") for e in entries if e.get("verdict"))
-        all_conclusions = "\n".join(e.get("conclusions", "") for e in entries if e.get("conclusions"))
-        all_recommendations = "\n".join(e.get("recommendations", "") for e in entries if e.get("recommendations"))
-        all_monitoring = "\n".join(e.get("monitoring_analysis", "") for e in entries if e.get("monitoring_analysis"))
-        all_evidence = "\n".join(e.get("evidence_analysis", "") for e in entries if e.get("evidence_analysis"))
-        all_sections = "\n".join(e.get("section_analyses", "") for e in entries if e.get("section_analyses"))   # F5.2
-        # R1: una linea por ejecucion con lo que el lector encontrara detallado.
-        tx_documento = "\n".join(
-            f"- {e['name']}: " + (", ".join(e["tx_detalladas"]) if e["tx_detalladas"]
-                                  else "ninguna (solo el informe general)")
-            for e in entries if "tx_detalladas" in e)
-
-        # ETAPA 3 (D30/D34): el consolidado SI dictamina; el estilo lo pone
-        # `_generate` una sola vez.
-        prompt = f"""Genera el analisis consolidado de la prueba de tipo {type_label},
-correlacionando las cifras clave, las conclusiones previas, el monitoreo y las evidencias.
-
-DATOS DE LA PRUEBA ({type_label}):
-
-CIFRAS PRINCIPALES:
-{all_kpis or 'No disponibles'}
-
-Resultado frente a los criterios de aceptacion: {all_verdicts or 'No determinado'}
-
-Conclusiones originales del reporte:
-{all_conclusions or 'Sin conclusiones previas.'}
-
-Recomendaciones originales del reporte:
-{all_recommendations or 'Sin recomendaciones previas.'}
-
-Analisis de las secciones del reporte (los marcados como CORREGIDO POR EL USUARIO
-son correcciones suyas: tienen prioridad sobre cualquier otro texto y sobre tu
-propio criterio; los demas van recortados y solo dan contexto):
-{all_sections or 'Sin analisis de secciones disponible.'}
-
-Informes por transaccion que incluye el documento (el lector solo encontrara
-detalle propio de estas; de las demas, solo su fila en la tabla resumen general.
-No remitas a un informe por transaccion que no este en esta lista):
-{tx_documento or 'Ninguno.'}
-
-Analisis del monitoreo de infraestructura:
-{all_monitoring or 'Sin analisis de monitoreo disponible.'}
-
-Analisis de evidencias visuales:
-{all_evidence or 'Sin analisis de evidencias disponible.'}
-
-INSTRUCCIONES:
-1. Genera DOS bloques separados con estos encabezados EXACTOS:
-   ===CONCLUSIONES_CONSOLIDADAS===
-   (de 4 a 7 vinetas, un hallazgo con su porque en cada una, cruzando la prueba
-   con el monitoreo y las evidencias; la ultima, el dictamen de viabilidad
-   explicado con su razon)
-   ===RECOMENDACIONES_CONSOLIDADAS===
-   (de 4 a 7 vinetas, cada una ligada a un hallazgo concreto y accionable, por
-   orden de impacto)
-
-2. Sigue la guia de estilo. Si hay varias ejecuciones, es UN solo analisis para
-   todas, nunca un bloque por ejecucion.
-3. Cada vineta en su propia linea y empezando por «• ». Sin repetir las cifras
-   de las secciones.
-4. NO repitas literalmente las conclusiones originales: refinalas y enriquecelas.
-"""
-
-        try:
-            raw = await asyncio.to_thread(
-                gemini._generate, prompt, section_name=f"consolidated_{test_type}",
-                permite_veredicto=True) or ""
-            raw = sanitize_ai_text(raw)
-
-            # Parse conclusions and recommendations
-            conclusions_text = ""
-            recommendations_text = ""
-            if "===CONCLUSIONES_CONSOLIDADAS===" in raw and "===RECOMENDACIONES_CONSOLIDADAS===" in raw:
-                parts = raw.split("===RECOMENDACIONES_CONSOLIDADAS===")
-                conclusions_text = parts[0].split("===CONCLUSIONES_CONSOLIDADAS===")[-1].strip()
-                recommendations_text = parts[1].strip() if len(parts) > 1 else ""
-            else:
-                midpoint = len(raw) // 2
-                conclusions_text = raw[:midpoint].strip()
-                recommendations_text = raw[midpoint:].strip()
-
-            consolidated[test_type] = {
-                "conclusions": sanitize_ai_text(conclusions_text),
-                "recommendations": sanitize_ai_text(recommendations_text),
-                "generated_at": datetime.now(BOGOTA_TZ).isoformat(),
-                "edited": False,
-            }
-        except Exception as e:
-            logger.error(f"Consolidated analysis for {test_type} failed: {e}")
-            consolidated[test_type] = {
-                "conclusions": f"No fue posible generar las conclusiones consolidadas para {type_label}.",
-                "recommendations": "",
-                "generated_at": datetime.now(BOGOTA_TZ).isoformat(),
-                "edited": False,
-            }
+    unico = {
+        "conclusions": res["conclusions"],
+        "recommendations": res["recommendations"],
+        "generated_at": datetime.now(BOGOTA_TZ).isoformat(),
+        "edited": False,
+        "ejecuciones": [e.nombre for e in ejecuciones if e.tx_detalladas is not None],
+    }
 
     # HF9.1: Auto-save to DB
     from app.db.models.integrated_report import IntegratedReport
@@ -2312,7 +2129,6 @@ INSTRUCCIONES:
     BOGOTA_TZ_SAVE = ZoneInfo("America/Bogota")
 
     if request.report_id:
-        # Update existing
         existing = await db.get(IntegratedReport, uuid.UUID(request.report_id))
         if existing:
             # R1: `db.get` devuelve el objeto que `_load_section_overrides` cargo
@@ -2321,27 +2137,108 @@ INSTRUCCIONES:
             await db.refresh(existing)
             # F4: idem — el consolidado tampoco puede llevarse los overrides
             existing.sections = _merge_overrides(existing.sections, sections_json)
-            existing.consolidated_analysis = consolidated
+            # D2/D3: el consolidado por tipo NO se borra: pasa entero a `_legado`.
+            existing.consolidated_analysis = _con_legado(existing.consolidated_analysis, unico)
             flag_modified(existing, "sections")
             flag_modified(existing, "consolidated_analysis")
             await db.commit()
             await db.refresh(existing)
-            # Embed __report_id and __report_name in consolidated for frontend hydration
-            return {"consolidated_analysis": {**consolidated, "__report_id": str(existing.id), "__report_name": existing.name}}
+            return {"consolidated_analysis": {**_sin_legado(existing.consolidated_analysis),
+                                              "__report_id": str(existing.id), "__report_name": existing.name}}
 
     # Create new
     default_name = request.name or f"Informe Integrado - {datetime.now(BOGOTA_TZ_SAVE).strftime('%d/%m/%Y %H:%M')}"
     new_report = IntegratedReport(
         name=default_name,
         sections=sections_json,
-        consolidated_analysis=consolidated,
+        consolidated_analysis={CU.CLAVE: unico},
         created_by=current_user.id,
     )
     db.add(new_report)
     await db.commit()
     await db.refresh(new_report)
 
-    return {"consolidated_analysis": {**consolidated, "__report_id": str(new_report.id), "__report_name": default_name}}
+    return {"consolidated_analysis": {CU.CLAVE: unico, "__report_id": str(new_report.id), "__report_name": default_name}}
+
+
+def _con_legado(prev: Optional[dict], unico: dict) -> dict:
+    """BLOQUE 3.3 (D2/D3): la caja unica nueva, y lo que hubiera por tipo de prueba
+    guardado entero en `_legado`. Un legado anterior se conserva."""
+    prev = dict(prev or {})
+    legado = dict(prev.get(CU.LEGADO) or {})
+    por_tipo = {k: v for k, v in prev.items() if not k.startswith("_") and k != CU.CLAVE}
+    legado.update(por_tipo)
+    return {CU.CLAVE: unico, **({CU.LEGADO: legado} if legado else {})}
+
+
+def _sin_legado(consolidado: Optional[dict]) -> dict:
+    """Lo que ve y edita la pantalla: el legado es de solo lectura y va aparte."""
+    return {k: v for k, v in (consolidado or {}).items() if k != CU.LEGADO}
+
+
+def _bloque_de_ejecucion(execution):
+    """D4: el bloque de la ejecucion desde su JTL —el mismo de su informe
+    individual—; si el JTL ya no esta, las cifras de la base. Sincrono: va a un hilo."""
+    try:
+        from app.api.v1.endpoints.upload import _parse_execution_df
+        from app.services.ai.contexto_prompt import contexto_de_parser
+        parser, _ = _parse_execution_df(execution)
+        bloque, _f = contexto_de_parser(parser, execution.test_type or "load",
+                                        execution.metric_unit or "TPS",
+                                        execution.acceptance_criteria_json)
+        return bloque, True
+    except Exception as e:
+        logger.warning(f"Conclusion unica: sin JTL para {execution.id} ({e}); cifras de la base")
+        return CU.bloque_desde_base(execution), False
+
+
+async def _reunir_conclusion_unica(db: AsyncSession, request_sections, overrides_by_exec) -> List[CU.Ejecucion]:
+    """BLOQUE 3.3: una `Ejecucion` por ejecucion del integrado, en el orden del
+    documento, con sus capturas y evidencias atadas a ELLA (antes, al tipo de
+    prueba). Respeta el selector de R1 y las ediciones del analista."""
+    por_id: dict = {}
+    orden: List[str] = []
+    for section in sorted(request_sections, key=lambda s: s.order):
+        try:
+            exec_id = uuid.UUID(section.source_id)
+        except (ValueError, AttributeError):
+            continue
+        execution = (await db.execute(select(TestExecution).where(TestExecution.id == exec_id))).scalar_one_or_none()
+        if not execution:
+            continue
+        sid = section.source_id
+        if sid not in por_id:
+            tipo = "stress" if (execution.test_type or "").lower() in ("stress", "spike") else "load"
+            por_id[sid] = CU.Ejecucion(nombre=execution.name, tipo=tipo)
+            orden.append(sid)
+        e = por_id[sid]
+        ov = overrides_by_exec.get(sid) or {}
+
+        if section.type in ("load_test", "stress_test"):
+            _ov = ov.get("analysis") or {}
+            e.nombre = section.source_name or execution.name
+            e.tipo = "load" if section.type == "load_test" else "stress"
+            e.bloque, e.bloque_de_jtl = await asyncio.to_thread(_bloque_de_ejecucion, execution)
+            if isinstance(execution.acceptance_criteria_json, dict):
+                e.veredicto = execution.acceptance_criteria_json.get("verdict", "") or ""
+            e.conclusiones = _ov.get("ai_conclusions", execution.ai_conclusions) or ""
+            e.recomendaciones = _ov.get("ai_recommendations", execution.ai_recommendations) or ""
+            e.secciones = _section_analyses_for_prompt(execution, _ov)          # F5.2
+            e.tx_detalladas = await _tx_del_documento(db, section, exec_id)    # R1
+
+        elif section.type in ("monitoring", "evidence"):
+            # R1 (R-D7): lo que no entra en el documento no entra en sus conclusiones.
+            # R1.4: el texto EDITADO de la captura, el mismo que imprimen PDF y HTML.
+            atts = await _get_attachments(db, exec_id, section.type, _sel(section, "adjuntos"))
+            cap = json.loads(execution.capacity_analysis_json or "{}")
+            imgs = ov.get("images") or {}
+            textos = [f"[{a.category or ''}: {a.title or a.filename}]: {imgs.get(str(a.id)) or a.ai_analysis}"
+                      for a in atts if imgs.get(str(a.id)) or a.ai_analysis]
+            glob = cap.get("monitoring_ai_analysis" if section.type == "monitoring" else "evidence_ai_analysis", "")
+            if glob:
+                textos.append(f"[Global]: {glob}")
+            (e.monitoreo if section.type == "monitoring" else e.evidencias).extend(textos)
+    return [por_id[i] for i in orden]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2412,7 +2309,8 @@ def _resumen_trabajo(report) -> dict:
                 "elegidas": len(sel[clave]),
             })
     consolidado_editado = any(
-        isinstance(d, dict) and d.get("edited") for d in (report.consolidated_analysis or {}).values())
+        isinstance(d, dict) and d.get("edited")
+        for k, d in (report.consolidated_analysis or {}).items() if not k.startswith("_"))
     return {"ediciones_seccion": len(editadas), "consolidado_editado": consolidado_editado,
             "seleccion": seleccion}
 
@@ -2451,7 +2349,7 @@ async def get_integrated_report(
 
     avisos_consolidado: dict = {}
     for tipo, bloque in (report.consolidated_analysis or {}).items():
-        if not isinstance(bloque, dict):
+        if not isinstance(bloque, dict) or tipo.startswith("_"):   # BLOQUE 3.3: el legado no
             continue
         for clave, seccion in (("conclusions", "consolidated_conclusions"),
                                ("recommendations", "consolidated_recommendations")):
@@ -2463,7 +2361,10 @@ async def get_integrated_report(
         "id": str(report.id),
         "name": report.name,
         "sections": report.sections or [],
-        "consolidated_analysis": report.consolidated_analysis or {},
+        # BLOQUE 3.3 (D2): el legado va aparte y de solo lectura; la pantalla
+        # edita solo lo de `consolidated_analysis`.
+        "consolidated_analysis": _sin_legado(report.consolidated_analysis),
+        "consolidado_anterior": (report.consolidated_analysis or {}).get(CU.LEGADO) or None,
         "created_at": report.created_at.isoformat() if report.created_at else None,
         "updated_at": report.updated_at.isoformat() if report.updated_at else None,
         "style_warnings": {"sections": avisos_secciones,
@@ -2492,7 +2393,14 @@ async def update_integrated_report(
         report.sections = payload["sections"]
         flag_modified(report, "sections")
     if "consolidated_analysis" in payload:
-        report.consolidated_analysis = payload["consolidated_analysis"]
+        # BLOQUE 3.3 (D2): la pantalla no ve el legado, asi que no lo manda; se
+        # conserva el guardado. Nunca se escribe desde aqui.
+        nuevo = dict(payload["consolidated_analysis"] or {})
+        nuevo.pop(CU.LEGADO, None)
+        legado = (report.consolidated_analysis or {}).get(CU.LEGADO)
+        if legado:
+            nuevo[CU.LEGADO] = legado
+        report.consolidated_analysis = nuevo
         flag_modified(report, "consolidated_analysis")
 
     await db.commit()
@@ -2501,7 +2409,7 @@ async def update_integrated_report(
         "id": str(report.id),
         "name": report.name,
         "sections": report.sections or [],
-        "consolidated_analysis": report.consolidated_analysis or {},
+        "consolidated_analysis": _sin_legado(report.consolidated_analysis),
         "updated_at": report.updated_at.isoformat() if report.updated_at else None,
     }
 
