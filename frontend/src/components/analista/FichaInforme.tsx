@@ -25,6 +25,51 @@ const RESULTADO: Record<EstadoResultado, { nombre: string; clase: string }> = {
 
 const num = (v: number, d = 0) => v.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+/** Lo medido, con su unidad, como lo escribe el informe. */
+function medida(v: number | null, u: string | null): string {
+  if (v == null || !u) return '';
+  if (u === 'ms') return `${num(v)} ms`;
+  if (u === '%') return `${num(v, 2)} %`;
+  if (u === 'por_segundo') return `${num(v, 2)}/s`;
+  if (u === 'usuarios') return `${num(v)} usuarios`;
+  if (u === 'peticiones' || u === 'registros') return num(v);
+  if (u === 'errores') return `${num(v)} errores`;
+  return `${num(v, 1)} ${u}`;
+}
+
+const VEREDICTO: Record<string, string> = {
+  'APTO': 'bg-green-100 text-green-800 border-green-300',
+  'APTO CON RESERVAS': 'bg-amber-100 text-amber-800 border-amber-300',
+  'NO APTO': 'bg-red-100 text-red-800 border-red-300',
+};
+
+/** 150: los criterios agrupados por transacción, con lo medido en cada una. */
+function PorTransaccion({ grupos }: { grupos: NonNullable<Sesion['ficha']['criterios']['grupos']> }) {
+  return (
+    <div className="space-y-2" data-testid="criterios-grupos">
+      {grupos.map((g) => (
+        <div key={g.grupo} className="rounded-lg border border-gray-200" data-testid="criterios-grupo">
+          <p className="border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-800" data-testid="grupo-nombre">{g.grupo}</p>
+          <ul className="divide-y divide-gray-100">
+            {g.criterios.map((it, i) => {
+              const r = RESULTADO[(it.estado || 'no_evaluado') as EstadoResultado] || RESULTADO.no_evaluado;
+              return (
+                <li key={`${it.id}-${i}`} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs" data-testid="grupo-criterio">
+                  <span className="text-gray-800">{it.describe}</span>
+                  <span className="flex flex-shrink-0 items-center gap-2">
+                    {it.medido != null && <span className="text-gray-600">{medida(it.medido, it.unidad)}</span>}
+                    <span className={`rounded-full border px-2 py-0.5 font-semibold ${r.clase}`}>{r.nombre}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Tarjeta({ titulo, icono, hecho, rojo, ambar, children, testid, extra }: {
   titulo: string; icono: React.ReactNode; hecho?: boolean; rojo?: boolean; ambar?: boolean;
   children: React.ReactNode; testid: string; extra?: React.ReactNode;
@@ -46,8 +91,11 @@ function Tarjeta({ titulo, icono, hecho, rojo, ambar, children, testid, extra }:
 
 function CriterioFila({ c, ocupado, onCambiar }: { c: Criterio; ocupado: boolean; onCambiar: (x: CambiosFicha) => void }) {
   const r = RESULTADO[c.resultado?.estado] || RESULTADO.no_evaluado;
-  const donde = c.alcance.tipo === 'transaccion' ? `«${c.alcance.transaccion}»`
-    : c.alcance.tipo === 'cada_transaccion' ? 'cada transacción' : 'toda la prueba';
+  const txs = c.alcance.transacciones || (c.alcance.transaccion ? [c.alcance.transaccion] : []);
+  const donde = c.alcance.tipo === 'global' ? 'toda la prueba'
+    : c.alcance.tipo === 'cada_transaccion' ? 'cada transacción'
+    : c.alcance.tipo === 'suma' ? `la suma de ${txs.map((t) => `«${t}»`).join(' + ')}`
+    : txs.length ? txs.map((t) => `«${t}»`).join(', ') : 'sin servicio';
   return (
     <li className="rounded-lg border border-gray-200 p-3" data-testid="criterio">
       <div className="flex items-start justify-between gap-2">
@@ -173,10 +221,22 @@ export default function FichaInforme({ sesion, ocupado, generando, resaltarCrite
               className="text-xs font-semibold text-indigo-700 hover:underline disabled:opacity-40">Deshacer</button>
           </div>
         )}
+        {crit.veredicto && (
+          <p className="mb-2 text-xs text-gray-700">
+            Según tus criterios:{' '}
+            <span className={`rounded-full border px-2 py-0.5 font-bold ${VEREDICTO[crit.veredicto.verdict] || ''}`} data-testid="criterios-veredicto">
+              {crit.veredicto.verdict}
+            </span>
+          </p>
+        )}
+        {(crit.grupos?.length || 0) > 0 && <PorTransaccion grupos={crit.grupos!} />}
         {crit.lista.length > 0 && (
-          <ul className="space-y-2">
-            {crit.lista.map((c) => <CriterioFila key={c.id} c={c} ocupado={ocupado || !abierta} onCambiar={onCambiar} />)}
-          </ul>
+          <>
+            <p className="mb-1 mt-3 text-xs font-semibold text-gray-600">Tal como lo dijiste</p>
+            <ul className="space-y-2">
+              {crit.lista.map((c) => <CriterioFila key={c.id} c={c} ocupado={ocupado || !abierta} onCambiar={onCambiar} />)}
+            </ul>
+          </>
         )}
       </Tarjeta>
 

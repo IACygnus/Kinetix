@@ -13,6 +13,9 @@ export interface ResultadoCriterio {
   texto: string;
   motivo: string | null;
   nota: string | null;
+  // 150: el detalle por transacción y las que no cumplen
+  por_transaccion?: { transaccion: string; medido: number; unidad: string; cumple: boolean | null }[];
+  fallan?: string[];
 }
 
 export interface Criterio {
@@ -24,11 +27,18 @@ export interface Criterio {
   valor: number | null;
   unidad: string | null;
   cantidad: number | null;
-  alcance: { tipo: 'global' | 'transaccion' | 'cada_transaccion'; transaccion: string | null };
+  alcance: { tipo: 'global' | 'transacciones' | 'suma' | 'cada_transaccion' | 'transaccion'; transacciones?: string[]; transaccion: string | null };
+  metrica_supuesta?: boolean;
+  ventana?: { valor: number; unidad: string } | null;
   origen: 'chat' | 'manual';
   en_motor: boolean;
   confirmacion: 'cumple' | 'no_cumple' | null;
   resultado: ResultadoCriterio;
+}
+
+export interface GrupoCriterios {
+  grupo: string;
+  criterios: { id: string; describe: string; estado: EstadoResultado | null; medido: number | null; unidad: string | null }[];
 }
 
 export interface Pendiente {
@@ -80,7 +90,14 @@ export interface Ficha {
   fallos: { total: number; concentracion: string | null; concentrados: boolean };
   transacciones: TransaccionFicha[];
   transacciones_tope: number;
-  criterios: { estado: EstadoCriterios; ninguno_acordado: boolean; lista: Criterio[] };
+  criterios: {
+    estado: EstadoCriterios;
+    ninguno_acordado: boolean;
+    lista: Criterio[];
+    // 150: agrupados por transacción (o «Toda la prueba», o «A + B (en suma)»)
+    grupos?: GrupoCriterios[];
+    veredicto?: { verdict: string; verdicts_per_transaction: Record<string, string> } | null;
+  };
   relato: { id: string; texto: string; origen: string; creado: string }[];
   contexto: { ambiente: string | null; version: string | null };
   errores_detalle: { adjuntos: AdjuntoCorto[] };

@@ -26,6 +26,9 @@ export default function ChatAnalista({ mensajes, enviando, adjuntando, deshabili
   onAdjuntar: (f: File) => void;
 }) {
   const [texto, setTexto] = useState('');
+  // 150: soltar un archivo sobre el chat lo adjunta, igual que el botón.
+  const [arrastrando, setArrastrando] = useState(false);
+  const profundidad = useRef(0);
   const fondo = useRef<HTMLDivElement>(null);
   const caja = useRef<HTMLTextAreaElement>(null);
   const archivo = useRef<HTMLInputElement>(null);
@@ -44,7 +47,31 @@ export default function ChatAnalista({ mensajes, enviando, adjuntando, deshabili
   const bloqueado = enviando || deshabilitado;
 
   return (
-    <div className="flex h-full flex-col bg-white" data-testid="chat">
+    <div
+      className="relative flex h-full flex-col bg-white" data-testid="chat"
+      onDragEnter={(e) => { e.preventDefault(); if (bloqueado) return; profundidad.current += 1; setArrastrando(true); }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        profundidad.current = Math.max(0, profundidad.current - 1);
+        if (profundidad.current === 0) setArrastrando(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        profundidad.current = 0;
+        setArrastrando(false);
+        const f = e.dataTransfer.files?.[0];
+        if (f && !bloqueado && !adjuntando) onAdjuntar(f);
+      }}
+    >
+      {arrastrando && (
+        <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-xl border-4 border-dashed border-indigo-500 bg-indigo-50/90"
+          data-testid="chat-soltar">
+          <p className="px-6 text-center text-base font-semibold text-indigo-700">
+            Suelta aquí el archivo de errores de JMeter (CSV o XML)
+          </p>
+        </div>
+      )}
       <div className="flex-1 space-y-3 overflow-y-auto p-4" data-testid="chat-mensajes">
         {mensajes.map((m) => {
           const ia = m.rol === 'ia';

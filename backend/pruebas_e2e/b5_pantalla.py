@@ -183,12 +183,24 @@ def main():
         ok(pg.get_by_test_id("chat-caja").input_value() == "", "la caja se vacía al enviar (Ctrl+Enter)")
         ok(pg.get_by_test_id("rapido-Ambiente y versión").is_visible() and pg.get_by_test_id("rapido-No sé, sigue sin eso").is_visible(),
            "los botones rápidos")
+        # 150: la ficha agrupa los criterios por transacción
+        grupos = pg.get_by_test_id("grupo-nombre").all_inner_texts()
+        ok(len(grupos) == 6 and "1. Auth" in grupos, f"criterios agrupados por transacción ({len(grupos)} grupos)")
+        ok(pg.get_by_test_id("criterios-veredicto").inner_text() == "NO APTO", "con el veredicto según los criterios")
         foto(4, "ficha_con_criterios")
 
         # ---------------------------------------------------------------- 5
-        print("== 5. Adjunto")
-        pg.get_by_test_id("chat-archivo").set_input_files(
-            {"name": "errores_zztest.csv", "mimeType": "text/csv", "buffer": csv_errores()})
+        print("== 5. Adjunto (soltado sobre el chat)")
+        b64e = base64.b64encode(csv_errores()).decode()
+        dte = pg.evaluate_handle("""(b64) => {
+            const bin = atob(b64); const u = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+            const dt = new DataTransfer(); dt.items.add(new File([u], 'errores_zztest.csv')); return dt; }""", b64e)
+        chat = pg.get_by_test_id("chat-mensajes")
+        chat.dispatch_event("dragenter", {"dataTransfer": dte})
+        ok(pg.get_by_test_id("chat-soltar").is_visible(), "al arrastrar sobre el chat, «Suelta aquí el archivo…»")
+        chat.dispatch_event("dragover", {"dataTransfer": dte})
+        chat.dispatch_event("drop", {"dataTransfer": dte})
         pg.get_by_test_id("tarjeta-errores").wait_for(timeout=60000)
         ok("Cuadra con el JTL" in pg.get_by_test_id("adjunto-cruce").inner_text(), "la tarjeta de errores, con el cruce")
         ok(pg.get_by_test_id("chat-aviso-ok").is_visible(), "y el aviso en el chat")
