@@ -154,7 +154,8 @@ async def proceso():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://kx",
                                  cookies=ck, headers={"X-CSRF-Token": cab["x-csrf-token"]}, timeout=600) as c:
         base = "/api/v1/analista/sesiones"
-        GUION.append("Leí 4.811 peticiones y un 41 % de errores.\n¿Qué criterios se acordaron?")
+        GUION.append(json.dumps({"respuesta": "Leí 4.811 peticiones y un 41 % de errores.\n"
+                                               "¿Qué criterios se acordaron?"}))
         with open(B.JTL_R1, "rb") as f:
             r = await c.post(base, data={"proyecto": "ZZTEST-B5 chat en proceso", "tipo": "load"},
                              files={"files": ("ZZTEST-R1_carga.jtl", f)})
@@ -164,8 +165,9 @@ async def proceso():
         ok(r.status_code == 201 and m["origen"] == "ia" and m["texto"].startswith("Leí 4.811"),
            "primer mensaje: lo escribe la IA")
         ok(m["texto"].endswith(CH.SALIDA), "y se le añade la salida «si no lo sabes, sigo sin eso»")
-        ok(PROMPTS[0][1] == CH.SISTEMA and PROMPTS[0][2] is True and PROMPTS[0][0].startswith("DATOS DE LA EJECUCION"),
-           "con el bloque de la ejecución y el sistema del chat")
+        ok(PROMPTS[0][1] == CH.SISTEMA and PROMPTS[0][2] is False and PROMPTS[0][0].startswith("DATOS DE LA EJECUCION"),
+           "con el bloque de la ejecución y el sistema del chat, pedido en JSON")
+        ok("{" not in m["texto"] and len(m["texto"].split("\n")) == 2, "del JSON se toma solo la respuesta")
 
         # JSON válido, con la IA intentando poner un resultado que no es
         GUION.append(json.dumps({

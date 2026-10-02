@@ -118,6 +118,11 @@ def normalizar(entrada: Dict[str, Any], labels: List[str], cid: str, origen: str
         exacta = next((l for l in labels if l == transaccion), None) or \
             next((l for l in labels if _norm(l) == _norm(transaccion)), None)
         transaccion = exacta or transaccion
+    # «ninguna transacción debería pasar del 5 %»: el límite vale para CADA una.
+    cada = bool(entrada.get("cada_transaccion")) and transaccion is None
+    if cada and tipo not in ("tiempo_respuesta", "disponibilidad_o_error", "caudal"):
+        raise CriterioInvalido("«cada transacción» solo vale para tiempos, errores o caudal")
+    alcance_tipo = "cada_transaccion" if cada else ("transaccion" if transaccion else "global")
     return {
         "id": cid,
         "texto": texto,
@@ -127,7 +132,7 @@ def normalizar(entrada: Dict[str, Any], labels: List[str], cid: str, origen: str
         "valor": float(valor) if valor is not None else None,
         "unidad": unidad,
         "cantidad": float(cantidad) if cantidad is not None else None,
-        "alcance": {"tipo": "transaccion" if transaccion else "global", "transaccion": transaccion},
+        "alcance": {"tipo": alcance_tipo, "transaccion": transaccion},
         "origen": origen,
         "confirmacion": None,
         "en_motor": False,
@@ -199,6 +204,9 @@ def evaluar(c: Dict[str, Any], d: Datos) -> Dict[str, Any]:
     fila = d.tx.get(label) if label else None
     donde = f"«{label}»" if label else "toda la prueba"
 
+    if (c.get("alcance") or {}).get("tipo") == "cada_transaccion":
+        return _evaluar_cada(c, d, limite_base)
+
     if tipo == "tiempo_respuesta":
         clave_g = {"promedio": "promedio_ms", "mediana": "mediana_ms", "p90": "p90_ms", "p95": "p95_ms",
                    "p99": "p99_ms", "max": "max_ms"}[metrica]
@@ -247,6 +255,38 @@ def evaluar(c: Dict[str, Any], d: Datos) -> Dict[str, Any]:
                     f"caudal de {donde} (todas las peticiones): {num(medido, 2)} por segundo frente a "
                     f"{_OP_TXT[op]} {_fmt(tipo, valor, unidad)}")
     return _res("no_evaluado", motivo="tipo sin evaluación")
+
+
+def _medida_tx(tipo: str, metrica: str, t: Dict[str, Any]) -> Tuple[float, str]:
+    if tipo == "tiempo_respuesta":
+        return float(t[metrica]), "ms"
+    if tipo == "caudal":
+        return float(t["tps"]), "por_segundo"
+    tasa = float(t["tasa_error"])
+    if metrica == "disponibilidad":
+        return 100.0 - tasa, "%"
+    if metrica == "tasa_error":
+        return tasa, "%"
+    return float(t["errores"]), "errores"
+
+
+def _evaluar_cada(c, d: Datos, limite: float) -> Dict[str, Any]:
+    """El límite vale para CADA transacción: cumple si todas lo cumplen. Lo
+    medido es la peor; la nota dice cuáles no."""
+    tipo, metrica, op = c["tipo"], c["metrica"], c["operador"]
+    if not d.tx:
+        return _res("no_evaluado", motivo="el JTL no trae transacciones")
+    medidas = {l: _medida_tx(tipo, metrica, t) for l, t in d.tx.items()}
+    fuera = [l for l, (v, _u) in medidas.items() if not _cmp(v, op, limite)]
+    menor_mejor = op in ("<", "<=")
+    peor = (max if menor_mejor else min)(medidas, key=lambda l: medidas[l][0])
+    v, u = medidas[peor]
+    fmt = {"ms": ms(v), "%": pct(v, 2), "errores": f"{num(v)} errores", "por_segundo": f"{num(v, 2)} por segundo"}[u]
+    nota = (f"{num(len(fuera))} de {num(len(medidas))} no lo cumplen: "
+            f"{', '.join('«' + l + '»' for l in fuera[:6])}{'…' if len(fuera) > 6 else ''}") if fuera else None
+    return _res("no_cumple" if fuera else "cumple", round(v, 4), u,
+                f"cada transacción, la peor «{peor}»: {fmt} frente a {_OP_TXT[op]} "
+                f"{_fmt(tipo, c['valor'], c.get('unidad'))}", nota=nota)
 
 
 SUPUESTO = "se cuenta cada petición correcta como un registro"
@@ -331,6 +371,8 @@ def a_motor(lista: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
             continue
         tipo, metrica, op = c["tipo"], c.get("metrica"), c.get("operador")
         label = (c.get("alcance") or {}).get("transaccion")
+        # «cada transacción» va a las claves globales: el motor ya aplica el
+        # límite global a cada transacción que no tiene uno propio.
         destino = por_tx.setdefault(label, {}) if label else motor
         factor = UNIDADES[tipo].get(c.get("unidad"), 1.0)
         v = c["valor"] * factor

@@ -24,6 +24,7 @@ class CriterioEntrada(_Estricto):
     unidad: Optional[str] = Field(None, max_length=20)
     cantidad: Optional[float] = Field(None, ge=0)
     transaccion: Optional[str] = Field(None, max_length=300)
+    cada_transaccion: Optional[bool] = None   # el límite vale para cada una
 
 
 class CriterioEdicion(_Estricto):
@@ -36,6 +37,7 @@ class CriterioEdicion(_Estricto):
     unidad: Optional[str] = Field(None, max_length=20)
     cantidad: Optional[float] = Field(None, ge=0)
     transaccion: Optional[str] = Field(None, max_length=300)
+    cada_transaccion: Optional[bool] = None
     # Solo para los «lo confirma el analista»: lo que dice él. No es un resultado
     # calculado: esos no se tocan.
     confirmacion: Optional[Literal["cumple", "no_cumple"]] = None

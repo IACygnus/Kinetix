@@ -77,8 +77,10 @@ r = admin.patch(f"{A}/{sid}", json={"criterios": {"agregar": [
     {"texto": "Que el cliente lo apruebe", "tipo": "otro"},
     {"texto": "Login en menos de 2 s", "tipo": "tiempo_respuesta", "valor": 2, "unidad": "s",
      "transaccion": "Login que no existe"},
+    {"texto": "Ninguna transacción por encima del 5 % de errores", "tipo": "disponibilidad_o_error",
+     "metrica": "tasa_error", "valor": 5, "cada_transaccion": True},
 ]}})
-ok(r.status_code == 200, f"PATCH con 10 criterios -> 200 ({r.status_code})")
+ok(r.status_code == 200, f"PATCH con 11 criterios -> 200 ({r.status_code})")
 f = r.json()["ficha"]
 L = {c["texto"]: c for c in f["criterios"]["lista"]}
 res = lambda t: L[t]["resultado"]
@@ -111,6 +113,11 @@ ok(res("Caudal de 20 por segundo")["estado"] == "no_cumple", "caudal 16/s < 20 -
 ok(res("Que el cliente lo apruebe")["estado"] == "lo_confirma_el_analista", "«otro» -> lo confirma el analista")
 ok(res("Login en menos de 2 s")["estado"] == "no_evaluado" and "no está en el JTL" in res("Login en menos de 2 s")["motivo"],
    "transacción inexistente -> no_evaluado con motivo")
+cada = L["Ninguna transacción por encima del 5 % de errores"]
+peor = 100 * (1 - _ok(df[df["label"] == "6. Delete_Booking_Id"]).mean())
+ok(cada["alcance"]["tipo"] == "cada_transaccion" and cada["operador"] == "<=", "«cada transacción»: alcance y operador por defecto")
+ok(cada["resultado"]["estado"] == "no_cumple" and abs(cada["resultado"]["medido"] - peor) < 0.01
+   and "3 de 6 no lo cumplen" in cada["resultado"]["nota"], f"«cada transacción»: la peor, Delete ({peor:.2f} %), y cuáles no")
 ok(f["criterios"]["estado"] == "declarados" and f["listo"]["puede_generar"], "declarados -> se puede generar")
 
 print("== 3. Los que encajan con el motor")
@@ -157,6 +164,8 @@ for nombre, cuerpo in (
         ("operador inventado", {"criterios": {"agregar": [{"texto": "x", "tipo": "caudal", "operador": "~"}]}}),
         ("unidad que no va", {"criterios": {"agregar": [{"texto": "x", "tipo": "tiempo_respuesta", "unidad": "%"}]}}),
         ("valor negativo", {"criterios": {"agregar": [{"texto": "x", "tipo": "caudal", "valor": -3}]}}),
+        ("concurrencia por cada transacción", {"criterios": {"agregar": [{"texto": "x", "tipo": "concurrencia",
+                                                                         "valor": 5, "cada_transaccion": True}]}}),
         ("casilla de una transacción que no existe", {"transacciones": {"No existe": True}}),
         ("quitar una línea que no existe", {"relato": {"quitar": ["r99"]}}),
         ("descartar los criterios", {"pendientes": {"descartar": ["criterios"]}}),

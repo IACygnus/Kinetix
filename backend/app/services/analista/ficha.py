@@ -258,7 +258,8 @@ def _buscar(lista, cid, que):
     return x
 
 
-CAMPOS_CRITERIO = ("texto", "tipo", "metrica", "operador", "valor", "unidad", "cantidad", "transaccion")
+CAMPOS_CRITERIO = ("texto", "tipo", "metrica", "operador", "valor", "unidad", "cantidad", "transaccion",
+                   "cada_transaccion")
 
 
 def aplicar_patch(ficha: Dict[str, Any], cambios: Dict[str, Any]) -> set:
@@ -291,8 +292,9 @@ def aplicar_patch(ficha: Dict[str, Any], cambios: Dict[str, Any]) -> set:
             if (viejo.get("resultado") or {}).get("estado") != "lo_confirma_el_analista" and e["confirmacion"]:
                 raise CambioInvalido("solo se confirma a mano un criterio que Kinetix no puede medir")
             viejo["confirmacion"] = e["confirmacion"]
-        base = {k: viejo.get(k) for k in CAMPOS_CRITERIO if k != "transaccion"}
+        base = {k: viejo.get(k) for k in CAMPOS_CRITERIO if k not in ("transaccion", "cada_transaccion")}
         base["transaccion"] = (viejo.get("alcance") or {}).get("transaccion")
+        base["cada_transaccion"] = (viejo.get("alcance") or {}).get("tipo") == "cada_transaccion"
         campos = {k: v for k, v in e.items() if k in CAMPOS_CRITERIO}
         if not campos:
             continue
