@@ -73,6 +73,7 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
 # un solo sitio, y este modulo la usa tanto para calcular los veredictos como
 # para contarselos a los prompts.
 from app.services.ai.fases import NOTA_RAMPAS   # BLOQUE 2.5
+from app.services.analista import prompt as PA   # 150: el informe usa los criterios del analista
 from app.services.ai.criterios import (
     bloque_completo, bloque_general, criterios_efectivos, declarados, evaluables,
 )
@@ -1543,7 +1544,12 @@ SECCION: RESUMEN DE LA PRUEBA
 
 {INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}
 {'' if contexto else recordatorio_cifras(table + tier_summary)}"""
-            return self._generate(prompt, section_name="summary_table")
+            # 150: con criterios del analista, el resumen abre con el dictamen
+            # frente a ellos, con las cifras necesarias, y recibe el permiso.
+            an = PA.activos(acceptance_criteria)
+            if an:
+                prompt = f"{prompt.rstrip()}\n{PA.nota_criterios(an, 'summary_table')}\n\n{PA.INSTRUCCION_RESUMEN}"
+            return self._generate(prompt, section_name="summary_table", permite_veredicto=bool(an))
 
         except Exception as e:
             logger.error(f"GEMINI FAILED for summary_table: {str(e)}")
@@ -1616,7 +1622,8 @@ ERRORES DETECTADOS:
 - Codigos de respuesta distintos: {len(error_by_code)}
 
 {INSTRUCCION_ERRORES}
-{recordatorio_cifras(errors_table + error_classification)}"""
+{recordatorio_cifras(errors_table + error_classification)}
+{PA.nota_criterios(PA.activos(acceptance_criteria), 'errors')}"""
             return self._generate(prompt, section_name="errors")
 
         except Exception as e:
@@ -1693,7 +1700,8 @@ DATOS DE LA GRAFICA:
 {tier_context}
 {INSTRUCCION_GRAFICA.format(especifico=specific)}
 {'' if chart_type == 'active_threads' else NOTA_RAMPAS}
-{recordatorio_cifras(data_summary)}"""
+{recordatorio_cifras(data_summary)}
+{PA.nota_criterios(PA.activos(acceptance_criteria), chart_type)}"""
             return self._generate(prompt, section_name=f"chart_{chart_type}")
 
         except Exception as e:
@@ -1804,7 +1812,13 @@ CONTEXTO DEL TRAFICO PRINCIPAL:
             resultado = ""
             # BLOQUE 5: sin tiempo ni disponibilidad que juzgar (criterios del
             # analista sin ninguno de los dos, o «no se acordaron») no hay resultado.
-            if evaluables(acceptance_criteria):
+            an = PA.activos(acceptance_criteria)
+            if an:
+                # 150: con criterios del analista, el veredicto sale de ELLOS. Antes
+                # salía de `compute_verdict` (el promedio global): a Fredy le llegó
+                # «APTO» con la tabla diciendo NO APTO.
+                resultado = PA.resultado_conclusiones(an)
+            elif evaluables(acceptance_criteria):
                 verdict = compute_verdict(metrics, acceptance_criteria)
                 resultado = INSTRUCCION_RESULTADO.format(verdict=verdict)
 
@@ -1855,7 +1869,8 @@ SECCION: CONCLUSIONES
 {comun}
 
 SECCION: RECOMENDACIONES
-{INSTRUCCION_RECOMENDACIONES}"""
+{INSTRUCCION_RECOMENDACIONES}
+{PA.INSTRUCCION_RECOMENDACIONES if PA.activos(acceptance_criteria) else ''}"""
             return self._generate(prompt, section_name="recommendations", permite_veredicto=True)
 
         except Exception as e:

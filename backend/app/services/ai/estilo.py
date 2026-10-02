@@ -142,9 +142,9 @@ BLOQUE_ESTILO = """GUÍA DE ESTILO
 - Quién lee: el gerente del cliente, muchas veces sin un técnico al lado. Escribimos para que entienda cómo le fue a su sistema sin saber de performance.
 - Voz: primera persona del plural («observamos», «encontramos», «recomendamos»).
 - Cómo contamos: como quien cuenta cómo nos fue en la prueba: qué pasó, dónde está el problema y qué significa para la operación. Los números sostienen el relato, no lo reemplazan: solo las cifras que prueban el hallazgo. Nunca enumeramos métricas una tras otra ni listamos percentiles; si un percentil hace falta, uno solo y contado en personas.
-- Cifras: como máximo 4 cifras por párrafo de sección; escoge las que prueban el hallazgo principal y deja fuera el resto. Un minuto o una hora cuentan como cifra.
+- Cifras: como máximo 4 cifras por párrafo de sección; escoge las que prueban el hallazgo principal y deja fuera el resto. Un minuto o una hora cuentan como cifra. Cuando hay criterios de aceptación, el tope NO aplica al resumen ni a las conclusiones: ahí van las cifras necesarias para probar cada criterio.
 - Forma de las secciones: un solo párrafo continuo, de unas 120 a 160 palabras, sin partirlo, sin viñetas ni formato. Orden: comportamiento general → qué destaca y dónde (transacción, fase de la prueba) → qué sugiere (causa posible, como hipótesis) → qué conviene revisar, si aplica. Lo que pasa en las rampas se cuenta como tal, no como hallazgo principal.
-- Conclusiones: viñetas, de 4 a 7, un hallazgo con su porqué en cada una. El dictamen de viabilidad al final y siempre explicado con la razón. No repiten las cifras de las secciones.
+- Conclusiones: viñetas, de 4 a 7, un hallazgo con su porqué en cada una. El dictamen de viabilidad al final y siempre explicado con la razón. No repiten las cifras de las secciones. Con criterios de aceptación, el dictamen frente a ellos va PRIMERO, con la cadena de causa, y cada criterio incumplido tiene su viñeta con las cifras que lo prueban.
 - Recomendaciones: viñetas, de 4 a 7, cada una ligada a un hallazgo concreto de esta prueba (qué transacción, qué error, qué componente) y accionable. Nada genérico que valga para cualquier prueba. Sin repetir cifras.
 - Varias ejecuciones: un solo análisis para todas («Tanto en la prueba de carga como en la de estrés…»), nunca un bloque por ejecución.
 
@@ -213,6 +213,14 @@ Recomendaciones:
 • Ejecutar una nueva ronda de pruebas una vez aplicadas las correcciones, para confirmar la eliminación de la intermitencia bajo carga y estrés.
 • Mantener la capacidad actual de infraestructura para el volumen evaluado, dado que los resultados no evidencian restricciones de recursos.
 
+CUANDO HAY CRITERIOS DE ACEPTACIÓN — modelos de Fredy (de OTRA prueba, solo por su forma):
+
+Resumen:
+«La ejecución se considera no exitosa respecto a los criterios de aceptación definidos, ya que aunque el Servicio C alcanzó las 34.783 muestras, el Servicio A procesó únicamente 10.935, muy por debajo de las esperadas, mientras que el Servicio B alcanzó 10.908, superando su objetivo. Adicionalmente, el Servicio A evidenció los mayores tiempos de respuesta del flujo, con un promedio de 4.823 ms, 1 de cada 20 usuarios esperando más de 8,1 segundos (P95: 8.108 ms) y un máximo de 9.221 ms, dentro de su umbral; el Servicio C registró un máximo de 21.038 ms, incumpliendo su criterio. Aunque la prueba registró únicamente 2 errores sobre 56.626 muestras, el incumplimiento de la transaccionalidad esperada en el Servicio A y el tiempo máximo del Servicio C impiden considerar la ejecución como satisfactoria.»
+
+Conclusión (primera viñeta):
+«La ejecución no cumplió los criterios de aceptación: aunque el Servicio C superó ampliamente las muestras esperadas, los Servicios A y B se mantuvieron muy por debajo del objetivo. El Servicio A fue el componente con mayor tiempo de procesamiento, cerca de los 9 segundos, lo que impactó directamente el volumen de transacciones que completó y, en consecuencia, el del Servicio B, al estar ambos orquestados en el mismo flujo.»
+
 PROHIBIDO ABSOLUTAMENTE copiar de estos ejemplos sus cifras, sus porcentajes, sus
 nombres de transacción o sus frases literales. Pertenecen a otra prueba. Usa
 ÚNICAMENTE los datos que se te entregan. Si tu texto repite una cifra o un nombre
@@ -265,6 +273,8 @@ _TRADUCIDO = re.compile(r"\b\d+\s+de\s+cada\s+\d+|\bmitad\s+de\s+(?:los\s+)?usua
 # --- D30: donde SI se permite el veredicto de produccion (v1.2 §4.2) ---
 SECCIONES_CON_VEREDICTO = {
     "conclusions", "recommendations",
+    # 150: con criterios de aceptación, el resumen abre con el dictamen frente a ellos.
+    "summary_table", "ai_analysis_summary",
     "ai_conclusions", "ai_recommendations",
     "consolidated_conclusions", "consolidated_recommendations",
     "consolidated_load", "consolidated_stress",

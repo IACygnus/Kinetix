@@ -203,7 +203,7 @@ LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
 - {percentil_frase(90, m.get('p90', 0))}
 - {percentil_frase(95, m.get('p95', 0))}
 - {percentil_frase(99, m.get('p99', 0))}
-{bloque_de_transaccion(acceptance_criteria, label)}"""
+{_criterios_tx(acceptance_criteria, label)}"""
 
     prompts: Dict[str, str] = {}
     for section in SECTIONS_GENERADAS:   # ETAPA 2 (D20): ya no se arman los 8
@@ -272,6 +272,16 @@ async def _upsert(db, execution_id, label: str, section: str, texto: Optional[st
     if origen_reg is not None:
         await origen.guardar(db, execution_id, label, section, origen_reg)
     await db.commit()
+
+
+def _criterios_tx(acceptance_criteria, label: str) -> str:
+    """150: con criterios del analista, los que tocan a ESTA transacción con su
+    resultado; sin ellos, el bloque de siempre (`bloque_de_transaccion`)."""
+    from app.services.analista import prompt as PA
+    an = PA.activos(acceptance_criteria)
+    if an:
+        return PA.nota_criterios(an, None, label)
+    return bloque_de_transaccion(acceptance_criteria, label)
 
 
 async def generate_transaction_report(

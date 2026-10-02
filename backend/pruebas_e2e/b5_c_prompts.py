@@ -152,8 +152,13 @@ async def main():
     conc = next(u for s, _, u in LLAMADAS if s == "conclusions")
     ok("RESULTADO CALCULADO FRENTE A LOS CRITERIOS" in conc, "con criterios, las conclusiones reciben el resultado")
     tx_u = LLAMADAS[n_general][2]
-    ok('CRITERIO DE ACEPTACIÓN QUE SE LE APLICA A "6. Delete_Booking_Id"' in tx_u
-       and "500 ms" in tx_u and "99,5%" in tx_u, "la transacción recibe su criterio del motor")
+    # 150: con criterios del analista, la transacción recibe LOS SUYOS con su
+    # medida, no el bloque de los tres fijos del motor.
+    ok("CRITERIOS DE ACEPTACIÓN QUE TOCA ESTE DATO" in tx_u
+       and "tiempo P90 ≤ 500 ms: «6. Delete_Booking_Id»" in tx_u
+       and "disponibilidad ≥ 99,50%: «6. Delete_Booking_Id»" in tx_u
+       and 'CRITERIO DE ACEPTACIÓN QUE SE LE APLICA A' not in tx_u,
+       "la transacción recibe sus criterios del analista, con su medida")
 
     print("== 2. La conclusión única del integrado")
     e = CU.Ejecucion(nombre="ZZTEST-B5", tipo="load", bloque=contexto, bloque_de_jtl=True, tx_detalladas=[tx])

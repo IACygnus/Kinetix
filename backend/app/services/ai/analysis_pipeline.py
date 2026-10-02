@@ -568,6 +568,21 @@ async def run_ai_and_verdict(
             acceptance_criteria_dict['verdict'] = per_txn_result.get('verdict', verdict)
         logger.info(f"Verdict computed: {acceptance_criteria_dict['verdict']}")
 
+    # 150: con criterios del Analista IA, el veredicto es el de SUS criterios (el
+    # motor solo sabe de P90, disponibilidad y concurrencia globales, y daba APTO
+    # con volúmenes y máximos incumplidos). Fuera del bloque de arriba: un criterio
+    # de volumen o de máximo no es «evaluable» para el motor, y aun así manda.
+    from app.services.analista import prompt as PA
+    an = PA.activos(acceptance_criteria_dict)
+    if an:
+        if summary_df is None:
+            summary_df = parser.get_summary_table_data()
+        v = PA.veredicto(an, [str(l) for l in summary_df["label"]])
+        if v.get("verdict"):
+            acceptance_criteria_dict["verdict"] = v["verdict"]
+            acceptance_criteria_dict["verdicts_per_transaction"] = v["verdicts_per_transaction"]
+            logger.info(f"Verdict from the analyst's criteria: {v['verdict']}")
+
     return AIAnalysisResult(
         ai_analysis_summary=ai_analysis_summary,
         ai_analysis_errors=ai_analysis_errors,

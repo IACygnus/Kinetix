@@ -70,12 +70,139 @@ def seccion_criterios(an: Dict[str, Any]) -> str:
         filas.append(linea)
     if not filas:
         return ""
-    return _marcado(
+    marcado = _marcado(
         "CRITERIOS DE ACEPTACIÓN (los dio el analista; el resultado de cada uno lo calculó Kinetix con el "
         "JTL: úsalo tal cual, no lo recalcules ni lo contradigas. Lo que es «LO CONFIRMA EL ANALISTA» o "
         "«NO EVALUADO» no lo des por cumplido ni por incumplido, salvo que el analista lo haya confirmado). "
         + NOTA_DATOS,
         "\n".join(filas), TOPES["criterios"])
+    # 150: el resultado de la ejecución frente a los criterios, fuera de las
+    # marcas porque lo arma Kinetix (sin texto del analista dentro).
+    return f"{marcado}\n{linea_veredicto(an)}"
+
+
+# ====================================================================
+# 150 — EL INFORME TIENE QUE USAR LOS CRITERIOS
+# ====================================================================
+# Solo con criterios del Analista IA DECLARADOS. Sin ellos (Nuevo Reporte, o «no
+# se acordó ninguno») los prompts quedan exactamente como estaban.
+
+def activos(acceptance_criteria: Any) -> Optional[Dict[str, Any]]:
+    """Los datos del analista si hay criterios declarados; si no, None."""
+    an = acceptance_criteria.get("analista") if isinstance(acceptance_criteria, dict) else None
+    if isinstance(an, dict) and an.get("estado_criterios") == "declarados" and an.get("criterios"):
+        return an
+    return None
+
+
+def veredicto(an: Dict[str, Any], labels: List[str] = ()) -> Dict[str, Any]:
+    from app.services.analista.criterios_libres import veredicto as v
+    return v(an.get("criterios") or [], list(labels)) or {"verdict": None, "verdicts_per_transaction": {}}
+
+
+def _linea_criterio(c: Dict[str, Any]) -> str:
+    """Un criterio dicho por Kinetix (sin el texto del analista): qué, sobre qué y
+    qué salió, con las cifras."""
+    from app.services.analista.criterios_libres import alcance_txt, describir
+    r = c.get("resultado") or {}
+    estado = r.get("estado")
+    if estado == "lo_confirma_el_analista" and c.get("confirmacion"):
+        estado = c["confirmacion"]
+    return (f"{describir(c)} — {alcance_txt(c)}: {_ESTADO.get(estado, 'NO EVALUADO')}"
+            + (f" ({r['texto']})" if r.get("texto") else (f" ({r['motivo']})" if r.get("motivo") else "")))
+
+
+def incumplidos(an: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out = []
+    for c in an.get("criterios") or []:
+        e = (c.get("resultado") or {}).get("estado")
+        if e == "no_cumple" or (e == "lo_confirma_el_analista" and c.get("confirmacion") == "no_cumple"):
+            out.append(c)
+    return out
+
+
+def linea_veredicto(an: Dict[str, Any]) -> str:
+    v = veredicto(an)
+    malos = incumplidos(an)
+    if not v.get("verdict"):
+        return ""
+    cuerpo = ("No se cumplen: " + "; ".join(_linea_criterio(c) for c in malos)) if malos \
+        else "Se cumplen todos los criterios que se pudieron medir."
+    return (f"RESULTADO DE LA EJECUCIÓN FRENTE A ESTOS CRITERIOS (lo calculó Kinetix): {v['verdict']}. "
+            f"{cuerpo}")
+
+
+INSTRUCCION_RESUMEN = """CON CRITERIOS DE ACEPTACIÓN (excepción a la forma de siempre): el resumen ABRE diciendo
+si la ejecución cumplió o no los criterios de aceptación y por qué, servicio por servicio, con las cifras que lo
+prueban (las del resultado de cada criterio y las de la tabla). Aquí NO aplica el tope de 4 cifras: usa las
+necesarias para probar cada criterio. Después cuenta lo de siempre (qué concentra los fallos y el cuello de
+botella). Puede llegar a unas 220 palabras. Mira el modelo de resumen con criterios de la guía."""
+
+INSTRUCCION_CONCLUSIONES = """CON CRITERIOS DE ACEPTACIÓN (excepción a la guía: el dictamen va PRIMERO):
+- La PRIMERA viñeta es el dictamen frente a los criterios: si la ejecución los cumple o no, con la cadena de
+  causa (qué servicio, qué medida, por qué; usa lo que contó el analista y el detalle de los errores cuando los
+  haya, y si lo que cuenta el analista no casa con los datos, dilo).
+- Después, UNA viñeta por cada criterio que no se cumple, con las cifras que lo prueban.
+- Aquí NO aplican el tope de cifras ni la regla de no repetir cifras.
+Mira el modelo de conclusión con criterios de la guía."""
+
+INSTRUCCION_RECOMENDACIONES = """CON CRITERIOS DE ACEPTACIÓN: cada criterio que no se cumple tiene al menos una
+recomendación que diga qué hay que lograr para cumplirlo (en qué servicio, sobre qué medida y hasta dónde) y
+cómo atacarlo; las demás, ligadas a hallazgos concretos de esta prueba."""
+
+
+def resultado_conclusiones(an: Dict[str, Any]) -> str:
+    """Lo que sustituye a `INSTRUCCION_RESULTADO` en las conclusiones: el
+    veredicto de los CRITERIOS (no el del promedio global) y cuáles fallan."""
+    v = veredicto(an)
+    malos = incumplidos(an)
+    lista = "\n".join(f"- {_linea_criterio(c)}" for c in malos) or "- (ninguno)"
+    return (f"RESULTADO CALCULADO FRENTE A LOS CRITERIOS DE ACEPTACIÓN: {v.get('verdict')}\n"
+            f"Criterios que no se cumplen:\n{lista}\n{INSTRUCCION_CONCLUSIONES}")
+
+
+# Qué criterios «toca» cada sección: tiempos, errores, caudal y volumen, usuarios.
+_TOCA = {
+    "tiempo_respuesta": ("summary_table", "response_times", "latency", "summary", "chart_response_times",
+                         "chart_latency"),
+    "disponibilidad_o_error": ("errors", "error_rate", "codes_per_second", "chart_error_rate", "chart_codes",
+                               "summary"),
+    "caudal": ("transactions_per_second", "chart_tps", "summary"),
+    "volumen": ("transactions_per_second", "chart_tps", "summary"),
+    "proceso": ("transactions_per_second", "chart_tps", "summary"),
+    "concurrencia": ("active_threads",),
+}
+
+
+def nota_criterios(an: Optional[Dict[str, Any]], seccion: Optional[str], label: Optional[str] = None) -> str:
+    """Los criterios que toca el dato de una sección (o los de UNA transacción),
+    para que la gráfica los mencione con su resultado. Vacío si no toca ninguno."""
+    if not an:
+        return ""
+    from app.services.analista.criterios_libres import transacciones_de
+    filas = []
+    for c in an.get("criterios") or []:
+        if seccion is not None and seccion not in _TOCA.get(c.get("tipo"), ()):
+            continue   # seccion None = todos los que tocan a la transacción
+        if label is not None:
+            a = c.get("alcance") or {}
+            if a.get("tipo") == "global" or (a.get("tipo") != "cada_transaccion"
+                                             and label not in transacciones_de(c, [])):
+                continue
+            # Solo la medida de ESTA transacción, no las de las demás.
+            p = next((x for x in (c.get("resultado") or {}).get("por_transaccion") or []
+                      if x.get("transaccion") == label), None)
+            if p is not None and p.get("cumple") is not None:
+                from app.services.analista.criterios_libres import _valor_txt, describir
+                filas.append(f"- {describir(c)}: «{label}» {_valor_txt(c['tipo'], p['medido'], p['unidad'])} — "
+                             f"{'CUMPLE' if p['cumple'] else 'NO CUMPLE'}")
+                continue
+        filas.append(f"- {_linea_criterio(c)}")
+    if not filas:
+        return ""
+    return ("CRITERIOS DE ACEPTACIÓN QUE TOCA ESTE DATO (menciónalos con su resultado y su umbral: tiempos "
+            "frente al umbral, caudal o volumen frente a lo esperado, errores frente al límite):\n"
+            + "\n".join(filas))
 
 
 def seccion_relato(an: Dict[str, Any]) -> str:
@@ -125,7 +252,8 @@ def para_ejecucion(ficha: Dict[str, Any], resumenes: List[Dict[str, Any]],
         "sesion_id": sesion_id,
         "estado_criterios": crit["estado"],
         "criterios": [{k: c.get(k) for k in ("id", "texto", "tipo", "metrica", "operador", "valor", "unidad",
-                                              "cantidad", "alcance", "resultado", "confirmacion", "en_motor")}
+                                              "cantidad", "alcance", "resultado", "confirmacion", "en_motor",
+                                              "ventana", "metrica_supuesta")}
                       for c in crit["lista"]],
         "relato": [r["texto"] for r in ficha.get("relato") or []],
         "contexto": dict(ficha.get("contexto") or {}),
