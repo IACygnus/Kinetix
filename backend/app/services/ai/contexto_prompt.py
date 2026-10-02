@@ -27,6 +27,7 @@ from app.services.ai import fases as F
 from app.services.ai import resumen_serie
 from app.services.ai.criterios import bloque_completo
 from app.services.ai.estilo import ms, num, pct, percentil_frase
+from app.services.analista import prompt as PA   # BLOQUE 5
 
 
 def _unidad(metric_unit: str) -> str:
@@ -71,14 +72,26 @@ def bloque_ejecucion(metrics: Dict[str, Any], test_type: str, metric_unit: str,
     # alcancen el corte de cache de 2.816 tokens; antes se quedaban a ~200.
     if tabla:
         lineas += ["", "TABLA DE RESULTADOS POR TRANSACCION:", tabla]
-    crit = bloque_completo(acceptance_criteria).strip()
-    lineas += ["", crit if crit else "CRITERIOS DE ACEPTACION: no se definieron."]
+    # BLOQUE 5: con el «Analista IA», sus criterios (con el resultado que calculo
+    # el servidor) sustituyen al bloque de los tres fijos; sin el, nada cambia.
+    analista = acceptance_criteria.get("analista") if isinstance(acceptance_criteria, dict) else None
+    if isinstance(analista, dict):
+        crit = PA.seccion_criterios(analista)
+        if crit:
+            lineas += ["", crit]
+    else:
+        crit = bloque_completo(acceptance_criteria).strip()
+        lineas += ["", crit if crit else "CRITERIOS DE ACEPTACION: no se definieron."]
     if df_todo is not None and len(df_todo):
         lineas += ["", linea_de_tiempo(df_todo)]
     if hechos:
         lineas += ["", hechos.strip()]
     elif fases is not None:
         lineas += ["", fases.linea()]
+    if isinstance(analista, dict):
+        for seccion in (PA.seccion_relato(analista), PA.seccion_errores(analista)):
+            if seccion:   # vacias, no aparecen
+                lineas += ["", seccion]
     return "\n".join(lineas)
 
 
