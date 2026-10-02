@@ -134,8 +134,9 @@ async def main():
     res = por["summary_table"]
     ok(PA.INSTRUCCION_RESUMEN in res and PERMISO_VEREDICTO.strip() in res,
        "el resumen: abrir con los criterios, sin tope de 4 cifras, y con permiso de dictamen")
-    ok("CRITERIOS DE ACEPTACIÓN QUE TOCA ESTE DATO" in res and "tiempo máximo ≤ 5,0 s" in res,
-       "y los criterios de tiempo y volumen que le tocan")
+    nota_res = res.split("CRITERIOS DE ACEPTACIÓN QUE TOCA ESTE DATO")[-1]
+    ok("tiempo máximo ≤ 5,0 s" in nota_res and "volumen ≥ 32.000" in nota_res and "volumen ≥ 8.000" in nota_res
+       and "concurrencia ≥ 28" in nota_res, "y TODOS los criterios (tiempo, volumen y concurrencia), para ir servicio por servicio")
     conc = por["conclusions"]
     ok("RESULTADO CALCULADO FRENTE A LOS CRITERIOS DE ACEPTACIÓN: NO APTO" in conc
        and "RESULTADO CALCULADO FRENTE A LOS CRITERIOS: APTO" not in conc,

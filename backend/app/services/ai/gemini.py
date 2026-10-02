@@ -1545,10 +1545,11 @@ SECCION: RESUMEN DE LA PRUEBA
 {INSTRUCCION_RESUMEN.format(n=insights['total_transactions'])}
 {'' if contexto else recordatorio_cifras(table + tier_summary)}"""
             # 150: con criterios del analista, el resumen abre con el dictamen
-            # frente a ellos, con las cifras necesarias, y recibe el permiso.
+            # frente a TODOS ellos (servicio por servicio), con las cifras
+            # necesarias, y recibe el permiso.
             an = PA.activos(acceptance_criteria)
             if an:
-                prompt = f"{prompt.rstrip()}\n{PA.nota_criterios(an, 'summary_table')}\n\n{PA.INSTRUCCION_RESUMEN}"
+                prompt = f"{prompt.rstrip()}\n{PA.nota_criterios(an, None)}\n\n{PA.INSTRUCCION_RESUMEN}"
             return self._generate(prompt, section_name="summary_table", permite_veredicto=bool(an))
 
         except Exception as e:
