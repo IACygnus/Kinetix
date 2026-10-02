@@ -67,7 +67,10 @@ ok(admin.post(f"{A}/{sid}/mensajes", json={"texto": "hola", "rol": "ia"}).status
 ana = B.cliente("zztest_b5_analista_a", "analyst")
 sa = B.crear(ana, proyecto="ZZTEST-B5 ritmo").json()["id"]
 codigos = [ana.post(f"{A}/{sa}/mensajes", json={"texto": f"mensaje {i}"}).status_code for i in range(7)]
-ok(codigos[:6] == [200] * 6 and codigos[6] == 429, f"ritmo: el séptimo en un minuto -> 429 ({codigos})")
+# Si la suite se relanza en menos de un minuto, el 8002 aún recuerda los de la
+# pasada anterior: lo que se comprueba es que nunca pasan más de 6 y luego, 429.
+ok(429 in codigos and codigos.count(200) <= 6 and all(c == 200 for c in codigos[:codigos.index(429)])
+   and all(c == 429 for c in codigos[codigos.index(429):]), f"ritmo: más de 6 en un minuto -> 429 ({codigos})")
 anb = B.cliente("zztest_b5_analista_b", "analyst")
 ok(anb.post(f"{A}/{sa}/mensajes", json={"texto": "hola"}).status_code == 404, "en la sesión de otro -> 404")
 ok(anb.post(f"{A}/{sa}/generar").status_code == 404, "generar la de otro -> 404")
