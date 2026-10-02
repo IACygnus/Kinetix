@@ -122,6 +122,8 @@ OPENAI_MAX_TOKENS = {
     "gpt-5.5": 16384,
     "gpt-5-mini": 16384,
     "gpt-5-nano": 8192,
+    "gpt-5.4-mini": 16384,   # 151: candidatos a modelo ligero (chat y graficas)
+    "gpt-5.4-nano": 8192,
     "o4-mini": 16384,
     # B6: familias de razonamiento que ofrece la lista viva. Su limite real de
     # salida documentado es MAYOR; se fija 16384 como valor conservador (igual
