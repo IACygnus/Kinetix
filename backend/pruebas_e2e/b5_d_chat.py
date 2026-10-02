@@ -118,7 +118,9 @@ ok(crit["critical_transactions"] == [t["label"] for t in ficha2["transacciones"]
 ok([c["resultado"]["estado"] for c in crit["analista"]["criterios"]] == ["cumple", "no_cumple"],
    "los resultados del servidor viajan a la ejecución")
 
-log = open("/tmp/backend_test.log", encoding="utf-8", errors="replace").read()
+# El log del 8002: el de reiniciar_8002.sh o el del arranque con --reload.
+log = "".join(open(f, encoding="utf-8", errors="replace").read()
+              for f in ("/tmp/backend_test_sinreload.log", "/tmp/backend_test.log") if os.path.exists(f))
 ok("ZZsecreto99" not in log and "El P90 debe estar por debajo" not in log and "mensaje 3" not in log,
    "el log del 8002 no tiene ni mensajes ni contenido de adjuntos")
 

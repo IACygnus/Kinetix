@@ -25,6 +25,8 @@ import AIScriptEditor from './pages/AIScriptEditor';
 import AIScriptEditorList from './pages/AIScriptEditorList';
 import ExecutionDashboard from './pages/ExecutionDashboard';
 import ReportView from './pages/ReportView';
+// BLOQUE 5: el «Analista IA» (chat + ficha del informe). Nuevo Reporte sigue igual.
+import AnalistaIAPage from './pages/AnalistaIAPage';
 import MonitoringPage from './pages/MonitoringPage';
 import MonitoreoVivoPage from './pages/MonitoreoVivoPage';
 // ETAPA O2c (O-D24): la pantalla de servidores observados.
@@ -71,6 +73,22 @@ function App() {
               element={
                 <ProtectedRoute roles={['admin', 'analyst']}>
                   <NewReportWrapper />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/performance/analista"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AnalistaIAPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/performance/analista/:sesionId"
+              element={
+                <ProtectedRoute roles={['admin', 'analyst']}>
+                  <AnalistaIAPage />
                 </ProtectedRoute>
               }
             />

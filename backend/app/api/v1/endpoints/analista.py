@@ -4,7 +4,8 @@
     GET    /analista/sesiones                    las mías (admin: todas)
     GET    /analista/sesiones/{id}               la sesión: ficha, mensajes, adjuntos
     PATCH  /analista/sesiones/{id}               lo que el analista toca a mano
-    POST   /analista/sesiones/{id}/adjuntos      el CSV/XML de JMeter con el detalle de los errores
+    PUT    /analista/sesiones/{id}/prueba        «Cambiar datos de la prueba» (no los JTL)
+    POST   /analista/sesiones/{id}/adjuntos     el CSV/XML de JMeter con el detalle de los errores
     POST   /analista/sesiones/{id}/mensajes      un turno del chat (una llamada a la IA)
     POST   /analista/sesiones/{id}/generar       el informe, por el mismo camino que /upload
 
@@ -39,7 +40,7 @@ from app.db.models.analista import AnalysisAttachment, AnalysisSession
 from app.db.models.client import Client
 from app.db.models.user import User
 from app.db.session import get_db
-from app.schemas.analista import CambiosFicha, MensajeEntrada
+from app.schemas.analista import CambiosFicha, DatosPrueba, MensajeEntrada
 from app.services.ai import contexto_prompt
 from app.services.analista import chat as CH
 from app.services.analista import errores as ER
@@ -243,6 +244,46 @@ async def cambiar_ficha(sid: str, cambios: CambiosFicha, db: AsyncSession = Depe
     await asyncio.to_thread(FI.recalcular, ficha, _cargador(s), tocados)
     s.ficha = ficha
     s.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(s)
+    return await _lectura(db, s)
+
+
+# ------------------------------------------------------------------ datos de la prueba
+
+@router.put("/sesiones/{sid}/prueba")
+async def cambiar_prueba(sid: str, datos: DatosPrueba, db: AsyncSession = Depends(get_db),
+                         usuario: User = Depends(ROL)):
+    """Cliente, proyecto, tipo y unidad. Si cambian el tipo o la unidad, se
+    rehace el bloque de la ejecución que recibe el chat (los lleva dentro)."""
+    s = await _sesion(db, usuario, sid)
+    _abierta(s)
+    cliente = None
+    if datos.client_id:
+        try:
+            cliente = await db.get(Client, uuid.UUID(datos.client_id))
+        except ValueError:
+            cliente = None
+        if cliente is None:
+            raise HTTPException(400, "El cliente no existe")
+        if usuario.role != "admin" and cliente.id not in await _get_assigned_client_ids(db, usuario):
+            raise HTTPException(403, "Ese cliente no está asignado a tu usuario")
+    ficha = copy.deepcopy(s.ficha)
+    if datos.tipo != s.test_type or datos.unidad != s.metric_unit:
+        def bloque():
+            _df, metrics, parser = parsear_archivos([j["ruta"] for j in s.jtl], [j["nombre"] for j in s.jtl])
+            return contexto_prompt.contexto_de_parser(parser, datos.tipo, datos.unidad,
+                                                      {"analista": {"estado_criterios": "sin_declarar"}},
+                                                      metrics)[0]
+        ficha["_bloque"] = await asyncio.to_thread(bloque)
+    proyecto = datos.proyecto.strip()
+    if not proyecto:
+        raise HTTPException(422, "El proyecto es obligatorio")
+    s.project, s.test_type, s.metric_unit = proyecto, datos.tipo, datos.unidad
+    s.client_id, s.client_name = (cliente.id, cliente.name) if cliente else (None, None)
+    ficha["prueba"].update(proyecto=proyecto, tipo=datos.tipo, unidad=datos.unidad,
+                           cliente=s.client_name, cliente_id=str(cliente.id) if cliente else None)
+    s.ficha, s.updated_at = ficha, datetime.utcnow()
     await db.commit()
     await db.refresh(s)
     return await _lectura(db, s)

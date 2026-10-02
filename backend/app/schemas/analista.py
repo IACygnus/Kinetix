@@ -80,5 +80,14 @@ class CambiosFicha(_Estricto):
     pendientes: Optional[CambiosPendientes] = None
 
 
+class DatosPrueba(_Estricto):
+    """PUT /analista/sesiones/{id}/prueba: «Cambiar datos de la prueba». Los JTL
+    no se cambian aquí: otro JTL es otra conversación."""
+    proyecto: str = Field(..., min_length=1, max_length=255)
+    tipo: Literal["load", "stress", "endurance", "scalability", "spike", "smoke"]
+    client_id: Optional[str] = Field(None, max_length=64)   # "" o null = sin cliente
+    unidad: Literal["TPS", "UVC"] = "TPS"
+
+
 class MensajeEntrada(_Estricto):
     texto: str = Field(..., min_length=1, max_length=2000)

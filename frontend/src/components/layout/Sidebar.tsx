@@ -124,6 +124,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           icon: <FileText className="w-6 h-6" />,
         },
         {
+          // BLOQUE 5: la conversación con la IA que llena la ficha del informe.
+          label: 'Analista IA',
+          path: '/performance/analista',
+          icon: <Sparkles className="w-6 h-6" />,
+          roles: ['admin', 'analyst'],
+        },
+        {
           label: 'Reporte',
           path: '/performance/report-latest',
           icon: <FileBarChart className="w-6 h-6" />,

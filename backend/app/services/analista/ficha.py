@@ -115,6 +115,7 @@ def construir(parser, metrics: Dict[str, Any], *, cliente: Optional[str], client
             "texto": fases.linea().split("\n")[0],
         },
         "hechos": hechos,
+        "serie": serie_compacta(df_main, ok),
         "fallos": {"total": total_err, "por_transaccion": por_tx, "concentracion": concentracion or None,
                    "concentrados": concentracion.find("concentrados en") >= 0},
         "transacciones": transacciones,
@@ -127,6 +128,30 @@ def construir(parser, metrics: Dict[str, Any], *, cliente: Optional[str], client
         "listo": {},
     }
     return ficha
+
+
+PUNTOS_SERIE = 120
+
+
+def serie_compacta(df, ok) -> Dict[str, Any]:
+    """Bloque 5 (pantalla): el mini gráfico de la tarjeta «La prueba». Como mucho
+    120 puntos: por tramo, el máximo de usuarios activos y los fallos. Segundos
+    desde el inicio, igual que las fases, para poder sombrearlas encima."""
+    import math
+    if df is None or len(df) == 0:
+        return {"paso_s": 1, "puntos": []}
+    seg = (df["timestamp"] - df["timestamp"].min()).dt.total_seconds()
+    paso = max(1, math.ceil((float(seg.max()) + 1) / PUNTOS_SERIE))
+    tramo = (seg // paso).astype(int)
+    col = next((c for c in ("allThreads", "grpThreads") if c in df.columns), None)
+    import pandas as pd
+    hilos = pd.to_numeric(df[col], errors="coerce").groupby(tramo).max() if col else None
+    fallos = (~ok).groupby(tramo).sum()
+    puntos = []
+    for i in range(int(tramo.max()) + 1):
+        u = None if hilos is None or i not in hilos.index or pd.isna(hilos[i]) else int(hilos[i])
+        puntos.append([i * paso, u, int(fallos.get(i, 0))])
+    return {"paso_s": paso, "puntos": puntos}
 
 
 def _pendientes_iniciales(fases: F.Fases, total_err: int, concentracion: str) -> List[Dict[str, Any]]:
