@@ -80,7 +80,7 @@ Solo pon en "criterios" los que el analista dijo EN ESTE MENSAJE (los anteriores
 
 
 def _ahora() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds")
+    return FI.hora_informe(datetime.utcnow())
 
 
 def mensaje(rol: str, texto: str, mensajes: List[Dict[str, Any]], **extra) -> Dict[str, Any]:

@@ -56,6 +56,12 @@ con_err = sorted(t["label"] for t in f["transacciones"] if t["errores"] > 0)
 ok(sorted(t["label"] for t in f["transacciones"] if t["informe"]) == con_err,
    f"sin criterios, informe propio = las que tienen errores ({len(con_err)})")
 ok(s["mensajes"] == [] or all(m["rol"] in ("ia", "analista", "sistema") for m in s["mensajes"]), "mensajes")
+from datetime import datetime   # noqa: E402
+from app.services.zona_informe import a_informe   # noqa: E402
+creada = datetime.fromisoformat(s["creada"])
+ok(abs((creada - a_informe(datetime.utcnow())).total_seconds()) < 120
+   and abs((datetime.fromisoformat(s["mensajes"][0]["momento"]) - creada).total_seconds()) < 120,
+   f"las horas de la API, en hora de informe (creada {s['creada']})")
 
 print("== 2. Criterios: el resultado lo calcula el servidor")
 n_ok = int(okmask.sum())
@@ -146,6 +152,8 @@ ids = [c["id"] for c in f["criterios"]["lista"]]
 r = admin.patch(f"{A}/{sid}", json={"criterios": {"quitar": ids}})
 f = r.json()["ficha"]
 ok(f["criterios"]["estado"] == "sin_declarar" and not f["listo"]["puede_generar"], "sin criterios -> sin_declarar otra vez")
+ok(all(t["critica"] == t["pico"] and t["motivo"] == t["motivo_pico"] and t["verdict"] is None
+       for t in f["transacciones"]), "sin criterios, la marca crítica vuelve a ser la del pico, con su motivo")
 r = admin.patch(f"{A}/{sid}", json={"criterios": {"ninguno_acordado": True}})
 f = r.json()["ficha"]
 ok(f["criterios"]["estado"] == "no_hay_criterios_acordados" and f["listo"]["puede_generar"], "no_hay_criterios_acordados -> se puede generar")

@@ -41,6 +41,12 @@ P_FIN = "fin_de_la_prueba"
 P_CONCENTRACION = "concentracion_fallos"
 
 
+def hora_informe(dt) -> Optional[str]:
+    """Las horas que salen por la API, en hora de informe (146), sin zona."""
+    from app.services.zona_informe import a_informe
+    return a_informe(dt).isoformat(timespec="seconds") if dt is not None else None
+
+
 def _fmt_hora(t) -> Optional[str]:
     return t.strftime("%d/%m/%Y %H:%M:%S") if t is not None else None
 
@@ -69,8 +75,11 @@ def construir(parser, metrics: Dict[str, Any], *, cliente: Optional[str], client
     transacciones = []
     for t in filas_del_panel(summary, None):
         r = extra[t["label"]]
+        # Sin criterios, la marca crítica es solo la del pico (señales b y c):
+        # se guarda aparte para volver a ella si se quitan los criterios.
+        t["pico"], t["motivo_pico"] = t.pop("is_critical_suggested"), t["motivo"]
         t.update(mediana=round(float(r["mediana"]), 2), p99=round(float(r["p99"]), 2),
-                 min=round(float(r["min"]), 2), critica=t["is_critical_suggested"],
+                 min=round(float(r["min"]), 2), critica=t["pico"],
                  informe=t["errores"] > 0, informe_origen="auto")
         transacciones.append(t)
 
@@ -167,7 +176,7 @@ def recalcular(ficha: Dict[str, Any], cargar_df: Optional[Callable[[], Any]] = N
             f = criticas[t["label"]]
             t["critica"], t["motivo"], t["verdict"] = f["is_critical_suggested"], f["motivo"], f["verdict"]
         else:
-            t["critica"], t["verdict"] = bool(t.get("is_critical_suggested")), None
+            t["critica"], t["motivo"], t["verdict"] = bool(t.get("pico")), t.get("motivo_pico", ""), None
         if t.get("informe_origen") != "analista":
             t["informe"] = t["critica"] if con_criterios else t["errores"] > 0
 
@@ -221,7 +230,7 @@ def agregar_relato(ficha, textos: List[str], origen: str) -> None:
         if len(ficha["relato"]) >= MAX_RELATO:
             raise CambioInvalido(f"«Lo que contaste» admite como máximo {MAX_RELATO} líneas")
         ficha["relato"].append({"id": _nuevo_id("r", ficha["relato"]), "texto": _texto(t, MAX_LINEA, "relato"),
-                                "origen": origen, "creado": datetime.utcnow().isoformat(timespec="seconds")})
+                                "origen": origen, "creado": hora_informe(datetime.utcnow())})
 
 
 def agregar_criterios(ficha, entradas: List[Dict[str, Any]], origen: str) -> set:

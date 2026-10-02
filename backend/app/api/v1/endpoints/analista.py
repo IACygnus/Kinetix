@@ -78,7 +78,7 @@ def _adjunto_lectura(a: AnalysisAttachment) -> Dict[str, Any]:
     """Nunca la ruta ni el contenido del archivo: solo su resumen, ya enmascarado."""
     return {"id": str(a.id), "nombre": a.nombre, "formato": a.formato, "tamano": a.tamano,
             "execution_id": str(a.execution_id) if a.execution_id else None,
-            "creado": a.created_at.isoformat(timespec="seconds"), "resumen": a.resumen}
+            "creado": FI.hora_informe(a.created_at), "resumen": a.resumen}
 
 
 async def _lectura(db: AsyncSession, s: AnalysisSession) -> Dict[str, Any]:
@@ -97,8 +97,8 @@ async def _lectura(db: AsyncSession, s: AnalysisSession) -> Dict[str, Any]:
         "mensajes": s.mensajes or [],
         "adjuntos": [_adjunto_lectura(a) for a in await _adjuntos(db, s.id)],
         "execution_id": str(s.execution_id) if s.execution_id else None,
-        "creada": s.created_at.isoformat(timespec="seconds"),
-        "actualizada": s.updated_at.isoformat(timespec="seconds") if s.updated_at else None,
+        "creada": FI.hora_informe(s.created_at),
+        "actualizada": FI.hora_informe(s.updated_at),
     }
 
 
@@ -216,8 +216,8 @@ async def listar_sesiones(db: AsyncSession = Depends(get_db), usuario: User = De
              "tipo": s.test_type, "criterios": (s.ficha or {}).get("criterios", {}).get("estado"),
              "listo": (s.ficha or {}).get("listo"),
              "execution_id": str(s.execution_id) if s.execution_id else None,
-             "creada": s.created_at.isoformat(timespec="seconds"),
-             "actualizada": s.updated_at.isoformat(timespec="seconds") if s.updated_at else None}
+             "creada": FI.hora_informe(s.created_at),
+             "actualizada": FI.hora_informe(s.updated_at)}
             for s in filas]
 
 
