@@ -17,9 +17,14 @@ Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
 1. **R2** — la serie de tiempo resumida en cada sección (`resumen_serie.py`), commit `243900c`. Corrida con IA antes/después en curso: reporte **136**.
 2. **Prompts de estilo.** Bloque 2.1 (fases y concentración), 2.2 (un solo sistema y el bloque de la ejecución delante) y 2.3 (la guía de estilo de Fredy) hechos; 2.5 (máximo 4 cifras, rampas marcadas, caché) en el **140**; pendientes la lectura de Fredy de `comparacion3.html` y sus comentarios (no llegaron) (`Kinetix_pruebas\r2\comparacion2.html`).
 3. **Conclusión única.** Backend hecho (142) y pantalla (143), **pendiente de la validación visual de Fredy**.
-4. **Mockups.**
-5. **Contexto y conversación.**
-6. **Cierre.**
+4. **Mockups.** «Nuevo Reporte» tal como es hoy, en el **144** (`Kinetix_pruebas\mockups\actual\`).
+5. **Contexto y conversación — el «Analista IA» (bloque 5).** Backend en el **147** (sesión, ficha, criterios
+   como lista libre evaluados por el servidor, archivo de errores enmascarado, las tres secciones nuevas del
+   bloque de la ejecución, chat y generar), pantalla en el **148** (`/performance/analista`), cierre en el
+   **149** (el mismo informe de «prueba 6» tres veces con IA real: `Kinetix_pruebas\r2\comparacion_analista.html`,
+   y la regresión completa de análisis, `regresion_analisis.sh`). **Pendiente de la validación visual de Fredy.**
+6. **Cierre.** **Decisión de Fredy pendiente: cuándo «Analista IA» reemplaza a «Nuevo Reporte»** en el menú.
+   Hasta entonces conviven y no se toca el menú.
 
 ### En pausa
 
@@ -38,6 +43,12 @@ Las rutas `docs/reporte_claude_code/NN_…` que cite este documento se leen con
 - **Despliegue:** checklist 53 y su versión corregida 59 §4 (puertos, `target` del frontend, `/app/media`, DEBUG). Nada ejecutado.
 - **HF-3** — el límite de `/auth/login` deja sin acceso a toda la plataforma detrás de nginx (37).
 - **Guardado lento del integrado** mientras la página carga: más de 6 s (121 §2.2).
+- **Analista IA (147 §9, 148 §4):** el ritmo de mensajes se cuenta por proceso (con 2 workers, hasta 12/min);
+  el tope de tres preguntas lo respeta la IA, no el servidor; los JTL de sesiones nunca generadas y el archivo de
+  errores original se quedan en `uploads/` (no hay borrado de sesión); `Dashboard.tsx:687` (protegido) pinta
+  2.000 ms cuando una transacción no tiene tiempo declarado; la pantalla de Evidencias no muestra los adjuntos
+  (el enlace está en `analysis_attachments.execution_id`); sin probar un arrastre real desde el Explorador ni
+  pantallas de menos de 1.024 px.
 - ~~**Corte intermitente de R1.1**~~ **Resuelto (143):** era el keep-alive de 5 s de uvicorn en el 8002; el HTML y el PDF exportados viajan por la misma conexión. Con `--timeout-keep-alive 300`, como el 8001: 4 de 4 frente a 3 fallos en 5. La hipótesis del 138 (`--reload`) quedó descartada.
 - **Gemini sin timeout** en la generación, y un `SSLError` no cuenta como transitorio: sale del respaldo sin reintento (134 §3d).
 - **`/ai-config/models/live`** es síncrona dentro de un endpoint async (bloquea el backend) y no tiene timeout (134 §2a).

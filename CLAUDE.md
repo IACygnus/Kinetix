@@ -45,6 +45,10 @@
   que Fredy aprobó: colores, tipografía, geometría y gráficas. Todo cambio de
   aspecto del informe de horas se decide ahí primero. Su paleta **sustituye a
   la de H-D73**, que era provisional. Cierre en el reporte 107.
+- **Estado del «Analista IA» (bloque 5):** backend (147), pantalla (148) y
+  cierre con la comparación de tres informes reales (149) hechos, **pendientes
+  de la validación visual de Fredy**. Está en el menú **junto a** Nuevo Reporte:
+  **Fredy decide cuándo lo reemplaza**; hasta entonces no se toca el menú.
 - **Estado de observabilidad:** **O1** (el monitoreo de la prueba en vivo),
   **O2a** (el laboratorio y el monitoreo sin agente), **O2b** (con agente) y
   **O2c** (la sección «Observabilidad» y la pantalla de **Servidores**) y **O2d**
@@ -597,6 +601,28 @@ Y dos más del informe: `services/horas/informe.py` arma el documento (una sola
 vez, dos ramas: pantalla e impresión) y `services/horas/importacion.py` lee el
 `.xlsx` —con las reglas puras separadas de `openpyxl`, para poder probarlas sin
 fabricar un archivo—.
+
+### ANALISTA IA (`/analista`) — bloque 5
+
+La conversación que lleva de un JTL a un informe. Contrato completo de la
+pantalla en el **reporte 147** (§3-§4) y su ampliación en el **148** §2. Admin y
+analista; **cada analista ve solo sus sesiones (la de otro da 404)**.
+
+| Verbo | Path | Función |
+|---|---|---|
+| POST | `/analista/sesiones` | Crear: JTL (1-5), cliente, proyecto, tipo. Arma la ficha y el primer mensaje |
+| GET | `/analista/sesiones` · `/{id}` | Las mías (admin: todas) · una sesión con ficha, mensajes y adjuntos |
+| PATCH | `/analista/sesiones/{id}` | Lo que el analista toca a mano. **Cifras y resultados, no** (422) |
+| PUT | `/analista/sesiones/{id}/prueba` | Cambiar cliente, proyecto, tipo y unidad (no los JTL) |
+| POST | `/analista/sesiones/{id}/adjuntos` | El CSV/XML de JMeter con el detalle de los errores |
+| POST | `/analista/sesiones/{id}/mensajes` | Un turno del chat: una llamada a la IA, que devuelve JSON |
+| POST | `/analista/sesiones/{id}/generar` | Sin criterios: **409 `faltan_criterios`**. Con ellos: `procesar_subida`, el mismo camino que `/upload` |
+
+Tablas nuevas (`create_all`): `analysis_sessions` y `analysis_attachments`. Lo
+del analista viaja a la ejecución en `acceptance_criteria_json["analista"]` (sin
+ALTER) y de ahí al bloque de la ejecución: llega a las 16 llamadas del informe y
+a la conclusión única del integrado. Pantalla: `pages/AnalistaIAPage.tsx` y
+`components/analista/` (ruta `/performance/analista`). Reglas 37-39.
 
 ### AI Script Designer (`/script-designer/ai`)
 - `POST /script-designer/ai/generate` — desde prompt
@@ -1413,6 +1439,47 @@ Lectas desde `os.environ` / `os.getenv` y desde `.env` (vía
     ```
     docker exec jmeter_backend sh /app/pruebas_e2e/cierre_o2c.sh
     ```
+
+    La del módulo de **análisis** (bloque 5, reporte 149) tiene su propio
+    corredor, que reinicia el 8002 y lo deja como estaba:
+
+    ```
+    git show 2dc56bc:backend/app/api/v1/endpoints/upload.py > backend/pruebas_e2e/_upload_base.py
+    docker exec jmeter_backend sh /app/pruebas_e2e/regresion_analisis.sh
+    ```
+
+### 13.2 El «Analista IA»: las tres reglas del bloque 5
+
+37. **Los criterios de aceptación se cuentan en la conversación, no se teclean
+    en campos fijos.** En el «Analista IA» son una **lista libre**: el texto tal
+    como lo dijo el analista, su tipo (`tiempo_respuesta`,
+    `disponibilidad_o_error`, `concurrencia`, `caudal`, `proceso`, `otro`) y, si
+    se puede, su forma medible. Sin criterios **no se genera**: o se declaran o
+    se dice expresamente «no se acordó ninguno», y entonces ningún prompt pide
+    dictamen de cumplimiento. Lo que el analista cuenta y los criterios llegan a
+    los prompts **entre marcas de datos** (`<<<INICIO/FIN DE DATOS DEL
+    ANALISTA>>>`), nunca como instrucciones. Nuevo Reporte, con sus tres campos
+    fijos, sigue igual hasta que Fredy decida el cambio de menú.
+
+38. **El resultado de un criterio lo calcula el SERVIDOR con el JTL; nunca la
+    IA.** `services/analista/criterios_libres.py` es la única definición:
+    `cumple`, `no_cumple`, `no_evaluado` (siempre con motivo) o
+    `lo_confirma_el_analista`. Lo que la IA devuelva como resultado se ignora y
+    se recalcula. Los que encajan con el motor (tiempo por P90, disponibilidad o
+    tasa de error, concurrencia) se traducen a las claves de siempre y mandan en
+    la marca crítica y el veredicto. Con criterios del analista (la marca
+    `analista` en `acceptance_criteria_json`), lo no declarado queda **sin
+    límite**: el motor no rellena 2.000 ms ni 99 % (`criterios.declarados()`).
+    La IA tampoco toca cifras: propone, el servidor valida y aplica.
+
+39. **Todo lo que sale de un adjunto de errores se enmascara ANTES de guardarse
+    o de llegar a un prompt** (`services/analista/enmascarar.py`): Authorization,
+    Cookie, Bearer, JWT, cualquier campo password/secret/token/key/clave,
+    tarjetas, números de 7 o más dígitos y correos. Se enmascara y luego se
+    recorta. El XML se lee **sin DOCTYPE ni entidades** (se recorre el prólogo
+    entero). El archivo original se guarda como evidencia y **no sale nunca** por
+    la API ni al log; tampoco los mensajes del chat. Una regla nueva de
+    enmascarado se añade a la suite `b5_b_adjuntos.py` con su secreto falso.
 
 ---
 
