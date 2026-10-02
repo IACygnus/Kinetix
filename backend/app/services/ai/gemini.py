@@ -14,7 +14,7 @@ import threading                                 # ETAPA 1.5 (D6): estado de cla
 from contextvars import ContextVar               # F1 (respaldo): el buzon de fallo por llamada
 from datetime import datetime, timezone          # E1.2: marcas de tiempo ISO 8601
 import google.generativeai as genai
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 # DPERF-1 (fix C): el SDK de OpenAI se importa aqui, al cargar el modulo, para que
@@ -74,6 +74,7 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
 # para contarselos a los prompts.
 from app.services.ai.fases import NOTA_RAMPAS   # BLOQUE 2.5
 from app.services.analista import prompt as PA   # 150: el informe usa los criterios del analista
+from app.services.ai.reparto import esfuerzo_para, modelo_ligero_del_entorno, modelo_para   # 151
 from app.services.ai.criterios import (
     bloque_completo, bloque_general, criterios_efectivos, declarados, evaluables,
 )
@@ -1113,8 +1114,11 @@ class GeminiAnalyzer:
             cls._abrir_circuito(motivo)             # marca nueva -> otros 60 s
 
     def __init__(self, provider: str = "gemini", model_name: str = "gemini-2.5-flash", api_key: str = "",
-                 reasoning_effort: Optional[str] = None):   # ETAPA 2 (D13)
+                 reasoning_effort: Optional[str] = None,   # ETAPA 2 (D13)
+                 modelo_ligero: Optional[str] = None):     # 151: chat y gráficas, opcional
         self.reasoning_effort = reasoning_effort or REASONING_EFFORT_DEFAULT
+        self.modelo_ligero = modelo_ligero or modelo_ligero_del_entorno()
+        self._modelos_gemini: Dict[str, Any] = {}
         self.provider = provider or DEFAULT_PROVIDER
         self.model_name = model_name or MODEL_NAME
         self._api_key = api_key or os.getenv("GEMINI_API_KEY", "")
@@ -1150,6 +1154,18 @@ class GeminiAnalyzer:
         else:
             raise ValueError(f"Proveedor no soportado: {self.provider}")
 
+    def _modelo_gemini(self, nombre: str):
+        """151: el GenerativeModel de Gemini para `nombre` (el principal ya existe;
+        el ligero se crea la primera vez que hace falta)."""
+        if nombre == self.model_name:
+            return self.model
+        cache = getattr(self, "_modelos_gemini", None)
+        if cache is None:
+            cache = self._modelos_gemini = {}
+        if nombre not in cache:
+            cache[nombre] = genai.GenerativeModel(model_name=nombre, generation_config=GENERATION_CONFIG)
+        return cache[nombre]
+
     def _generate(self, prompt: str, section_name: str = "unknown", max_retries: int = 3,
                   permite_veredicto: bool = False, sistema: Optional[str] = None,
                   sanear: bool = True) -> Optional[str]:
@@ -1171,6 +1187,11 @@ class GeminiAnalyzer:
         # BLOQUE 2.2: un solo sistema para todos; el permiso de dictamen va al
         # final de lo propio de la seccion, donde no rompe el prefijo comun.
         sistema = sistema or SYSTEM_PROMPT
+        # 151: el esfuerzo y el modelo dependen del TIPO de llamada (`reparto.py`):
+        # el de la configuración solo en lo que dictamina; bajo en el resto. El
+        # modelo ligero, si está configurado, solo en el chat y las gráficas.
+        esfuerzo = esfuerzo_para(section_name, getattr(self, "reasoning_effort", None))
+        modelo = modelo_para(section_name, self.model_name, getattr(self, "modelo_ligero", None))
         if permite_veredicto:
             prompt = f"{prompt.rstrip()}\n\n{PERMISO_VEREDICTO}"
 
@@ -1183,15 +1204,13 @@ class GeminiAnalyzer:
             # romperia el invariante de E1.2 (la telemetria nunca tumba una
             # generacion). De ahi el getattr con defecto.
             _emit_ai_telemetry(
-                section_name, self.provider, self.model_name, _t0, attempt,
-                _openai_max_tokens_for(self.model_name) if self.provider == "openai" else None,
+                section_name, self.provider, modelo, _t0, attempt,
+                _openai_max_tokens_for(modelo) if self.provider == "openai" else None,
                 # ETAPA 3 (D34): lo que SE ENVIA de verdad — estilo + prompt. Antes
                 # el prompt ya traia el estilo dentro y `len(prompt)` bastaba.
                 len(sistema) + 2 + len(prompt), outcome, response, finish_reason,
                 # ETAPA 2 (D13e): el valor REALMENTE enviado, o null si no aplica.
-                _openai_reasoning_kwarg(
-                    self.model_name, getattr(self, "reasoning_effort", None)
-                ).get("reasoning_effort")
+                _openai_reasoning_kwarg(modelo, esfuerzo).get("reasoning_effort")
                 if self.provider == "openai" else None)
 
         # Circuit breaker — skip immediately if API already proven unavailable.
@@ -1204,7 +1223,7 @@ class GeminiAnalyzer:
             _anotar_fallo("circuito", GeminiAnalyzer._last_error or "circuito abierto")   # F1
             return None
 
-        logger.info(f"AI CALL: provider={self.provider}, model={self.model_name}, section={section_name}, prompt_len={len(prompt)}")
+        logger.info(f"AI CALL: provider={self.provider}, model={modelo}, effort={esfuerzo}, section={section_name}, prompt_len={len(prompt)}")
         GeminiAnalyzer._total_requests += 1
 
         try:
@@ -1213,21 +1232,21 @@ class GeminiAnalyzer:
                 response = None
                 try:
                     if self.provider == "gemini":
-                        response = self.model.generate_content(f"{sistema}\n\n{prompt}")
+                        response = self._modelo_gemini(modelo).generate_content(f"{sistema}\n\n{prompt}")
                         result = response.text
                     elif self.provider == "openai":
                         response = openai_chat_completion(   # B6.2
                             self._openai_client,
-                            self.model_name,
+                            modelo,   # 151: el principal, o el ligero en chat y gráficas
                             [
                                 {"role": "system", "content": sistema},
                                 {"role": "user", "content": prompt},
                             ],
-                            _openai_max_tokens_for(self.model_name),
+                            _openai_max_tokens_for(modelo),
                             temperature=GENERATION_CONFIG["temperature"],
                             # ETAPA 2 (D13): viaja solo si el modelo lo soporta.
-                            **_openai_reasoning_kwarg(
-                                self.model_name, getattr(self, "reasoning_effort", None)),
+                            # 151: con el esfuerzo de ESTA llamada (`reparto.py`).
+                            **_openai_reasoning_kwarg(modelo, esfuerzo),
                         )
                         result = response.choices[0].message.content if response.choices else None
                         if not result:
@@ -1413,14 +1432,17 @@ class GeminiAnalyzer:
                     }],
                     limite,
                     temperature=0.3,
-                    **_openai_reasoning_kwarg(self.model_name, getattr(self, "reasoning_effort", None)),
+                    # 151: las capturas no dictaminan: razonamiento bajo (`reparto.py`).
+                    **_openai_reasoning_kwarg(self.model_name, esfuerzo_para(
+                        f"image_{attachment_type}", getattr(self, "reasoning_effort", None))),
                 )
                 text = response.choices[0].message.content if response.choices else None
                 fin = getattr(response.choices[0], "finish_reason", None) if response.choices else "sin choices"
                 _emit_ai_telemetry(
                     f"image_{attachment_type}", self.provider, self.model_name, _t0, 1, limite,
                     len(SYSTEM_PROMPT) + len(prompt), "ok" if text else "empty", response, fin,
-                    _openai_reasoning_kwarg(self.model_name, getattr(self, "reasoning_effort", None)
+                    _openai_reasoning_kwarg(self.model_name, esfuerzo_para(
+                        f"image_{attachment_type}", getattr(self, "reasoning_effort", None))
                                             ).get("reasoning_effort"))
                 if fin == "length":
                     # Cortada por el tope: se dice en el log, no se publica a medias sin saberlo.
@@ -1900,6 +1922,7 @@ def get_gemini_analyzer(
     model_name: str = "",
     api_key: str = "",
     reasoning_effort: str = "",          # ETAPA 2 (D13c)
+    modelo_ligero: Optional[str] = None,  # 151: vacío = el del entorno, o ninguno
 ) -> GeminiAnalyzer:
     """Obtener instancia de GeminiAnalyzer (lazy init, recreates on config change)"""
     global _analyzer_instance, _analyzer_config_key
@@ -1908,7 +1931,8 @@ def get_gemini_analyzer(
     # configuracion no tendria efecto hasta reiniciar el proceso: el singleton se
     # reutilizaria con el valor viejo.
     efecto = (reasoning_effort or REASONING_EFFORT_DEFAULT).lower()
-    config_key = f"{provider}:{model_name}:{api_key[:8] if api_key else ''}:{efecto}"
+    ligero = modelo_ligero or modelo_ligero_del_entorno() or ""
+    config_key = f"{provider}:{model_name}:{api_key[:8] if api_key else ''}:{efecto}:{ligero}"
 
     if _analyzer_instance is None or (config_key and config_key != _analyzer_config_key):
         _analyzer_instance = GeminiAnalyzer(
@@ -1916,6 +1940,7 @@ def get_gemini_analyzer(
             model_name=model_name,
             api_key=api_key,
             reasoning_effort=efecto,
+            modelo_ligero=ligero or None,
         )
         _analyzer_config_key = config_key
 

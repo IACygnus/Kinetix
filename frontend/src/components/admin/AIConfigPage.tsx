@@ -310,6 +310,12 @@ export default function AIConfigPage() {
               Cuanto piensa el modelo antes de escribir. Mas esfuerzo suele dar analisis
               mas profundos, pero cada seccion tarda mas.
             </p>
+            {/* 151: el reparto por tipo de llamada (backend: services/ai/reparto.py) */}
+            <p className="text-sm text-gray-300 mt-2" data-testid="ia-esfuerzo-aplica">
+              Se aplica al resumen, las conclusiones, las recomendaciones, la comparativa y la
+              conclusion del informe integrado. El chat del Analista IA, las graficas, los errores
+              y las capturas usan siempre razonamiento bajo.
+            </p>
           </div>
         )}
 

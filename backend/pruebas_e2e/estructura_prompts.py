@@ -167,7 +167,8 @@ async def main():
     ok(msgs[0]["role"] == "system" and msgs[0]["content"] == G.SYSTEM_PROMPT, "captura: el mismo sistema que el informe")
     ok("REGLAS DE ESTILO" not in msgs[1]["content"][0]["text"] and "GUIA DE ESTILO" not in msgs[1]["content"][0]["text"],
        "captura: el estilo ya no va dentro del mensaje del usuario")
-    ok(kw.get("reasoning_effort") == "medium", f"captura: reasoning_effort de la configuracion ({kw.get('reasoning_effort')})")
+    # 151: las capturas no dictaminan: van en bajo aunque la configuracion diga medio (reparto.py).
+    ok(kw.get("reasoning_effort") == "low", f"captura: razonamiento bajo por tipo de llamada ({kw.get('reasoning_effort')})")
     ok(limite == G._openai_max_tokens_for("gpt-5.5") and limite > 1024, f"captura: tope de salida {limite}, no 1.024")
     G.openai_chat_completion = _falso_openai
     import inspect
