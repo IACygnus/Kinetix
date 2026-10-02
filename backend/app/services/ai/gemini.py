@@ -1150,8 +1150,14 @@ class GeminiAnalyzer:
             raise ValueError(f"Proveedor no soportado: {self.provider}")
 
     def _generate(self, prompt: str, section_name: str = "unknown", max_retries: int = 3,
-                  permite_veredicto: bool = False) -> Optional[str]:
+                  permite_veredicto: bool = False, sistema: Optional[str] = None,
+                  sanear: bool = True) -> Optional[str]:
         """Call AI API with retry logic. Returns None on failure to trigger fallback.
+
+        BLOQUE 5 (Analista IA): `sistema` sustituye al SYSTEM_PROMPT del informe
+        (el chat no redacta informe) y `sanear=False` devuelve el texto tal cual
+        (el chat responde JSON, que el saneado romperia) y no lo copia al log.
+        Sin esos dos argumentos, todo es exactamente como antes.
         Circuit breaker: if AI was rate-limited once, skip all subsequent calls immediately.
 
         ETAPA 3 (D34): el bloque de estilo lo pone AQUI, una sola vez por llamada
@@ -1163,7 +1169,7 @@ class GeminiAnalyzer:
         """
         # BLOQUE 2.2: un solo sistema para todos; el permiso de dictamen va al
         # final de lo propio de la seccion, donde no rompe el prefijo comun.
-        sistema = SYSTEM_PROMPT
+        sistema = sistema or SYSTEM_PROMPT
         if permite_veredicto:
             prompt = f"{prompt.rstrip()}\n\n{PERMISO_VEREDICTO}"
 
@@ -1243,10 +1249,12 @@ class GeminiAnalyzer:
                         _anotar_fallo("error", f"proveedor no soportado: {self.provider}")   # F1
                         return None
 
-                    result = sanitize_ai_text(result)
+                    if sanear:
+                        result = sanitize_ai_text(result)
                     # ETAPA 1.5 (D2): exito = el proveedor responde; el circuito se cierra.
                     GeminiAnalyzer._cerrar_circuito()
-                    logger.info(f"AI OK: section={section_name}, response_len={len(result)}, preview={result[:80]}")
+                    vista = f", preview={result[:80]}" if sanear else ""   # BLOQUE 5: el chat, sin vista
+                    logger.info(f"AI OK: section={section_name}, response_len={len(result)}{vista}")
                     _tel("ok", attempt + 1, response,
                          getattr(response.choices[0], "finish_reason", None)
                          if getattr(response, "choices", None) else None)

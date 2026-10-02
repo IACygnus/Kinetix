@@ -93,6 +93,9 @@ def normalizar(entrada: Dict[str, Any], labels: List[str], cid: str, origen: str
     if tipo == "caudal":
         metrica = "caudal"
     operador = entrada.get("operador") or OPERADOR_DEFECTO.get(tipo)
+    if operador is None and tipo == "disponibilidad_o_error" and metrica:
+        # la disponibilidad es un mínimo; la tasa de error y los errores, un máximo
+        operador = ">=" if metrica == "disponibilidad" else "<="
     if operador is not None and operador not in OPERADORES:
         raise CriterioInvalido(f"operador desconocido: {operador}")
     unidad = entrada.get("unidad") or None
