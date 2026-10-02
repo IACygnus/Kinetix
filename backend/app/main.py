@@ -43,6 +43,8 @@ from app.db.models.monitoring_session import (   # noqa: F401
 from app.db.models.ai_origen import AISectionOrigin   # noqa: F401
 # ETAPA O2e (O-D49): los tokens de ingesta del agente. Tabla nueva.
 from app.db.models.ingest_token import IngestToken   # noqa: F401
+# BLOQUE 5: las sesiones del «Analista IA» y sus adjuntos. Tablas nuevas.
+from app.db.models.analista import AnalysisSession, AnalysisAttachment   # noqa: F401
 from app.core.security import get_password_hash
 
 # Configurar logging

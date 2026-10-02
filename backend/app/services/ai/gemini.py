@@ -74,7 +74,7 @@ from app.services.ai.estilo import (          # ETAPA 3 (D28/D32/D33)
 # para contarselos a los prompts.
 from app.services.ai.fases import NOTA_RAMPAS   # BLOQUE 2.5
 from app.services.ai.criterios import (
-    bloque_completo, bloque_general, criterios_efectivos,
+    bloque_completo, bloque_general, criterios_efectivos, declarados, evaluables,
 )
 
 logger = logging.getLogger(__name__)
@@ -474,7 +474,11 @@ def compute_verdict(metrics: Dict, acceptance_criteria: Optional[Dict] = None) -
     availability = 100.0 - error_rate
 
     # Get thresholds from criteria or defaults
-    if acceptance_criteria and not acceptance_criteria.get('raw_text'):
+    if declarados(acceptance_criteria):
+        # BLOQUE 5: criterios del analista. Lo no declarado no se juzga (None).
+        max_rt = float(acceptance_criteria['response_time']) if acceptance_criteria.get('response_time') else None
+        min_avail = float(acceptance_criteria['availability']) if acceptance_criteria.get('availability') else None
+    elif acceptance_criteria and not acceptance_criteria.get('raw_text'):
         max_rt = float(acceptance_criteria.get('response_time', 2000))
         min_avail = float(acceptance_criteria.get('availability', 99.0))
     else:
@@ -482,10 +486,11 @@ def compute_verdict(metrics: Dict, acceptance_criteria: Optional[Dict] = None) -
         min_avail = 99.0
 
     # Evaluate
-    rt_fail = avg_rt > max_rt
-    avail_fail = availability < min_avail
-    rt_warning = avg_rt > (max_rt * 0.8)  # within 80-100% of threshold
-    avail_warning = availability < (min_avail + 0.5) and availability >= min_avail
+    rt_fail = max_rt is not None and avg_rt > max_rt
+    avail_fail = min_avail is not None and availability < min_avail
+    rt_warning = max_rt is not None and avg_rt > (max_rt * 0.8)  # within 80-100% of threshold
+    avail_warning = (min_avail is not None and availability < (min_avail + 0.5)
+                     and availability >= min_avail)
 
     if rt_fail or avail_fail:
         return "NO APTO"
@@ -512,14 +517,15 @@ def compute_per_transaction_verdicts(
         # calculaba aqui a mano; ahora sale de `criterios.py`, para que el texto
         # de la IA y esta tabla no puedan hablar de umbrales distintos.
         rt_threshold, avail_threshold, _propios = criterios_efectivos(acceptance_criteria, label)
-        er_threshold = 100.0 - avail_threshold
+        if rt_threshold is None and avail_threshold is None:
+            continue   # BLOQUE 5: el analista no le declaro limite a esta transaccion
 
         p90 = float(row['p90'])
         error_rate = float(row['tasa_error'])
 
-        rt_fail = p90 > rt_threshold
-        er_fail = error_rate > er_threshold
-        rt_warning = p90 > (rt_threshold * 0.8) and not rt_fail
+        rt_fail = rt_threshold is not None and p90 > rt_threshold
+        er_fail = avail_threshold is not None and error_rate > 100.0 - avail_threshold
+        rt_warning = rt_threshold is not None and p90 > (rt_threshold * 0.8) and not rt_fail
 
         if rt_fail or er_fail:
             verdicts[label] = "NO APTO"
@@ -527,6 +533,9 @@ def compute_per_transaction_verdicts(
             verdicts[label] = "APTO CON RESERVAS"
         else:
             verdicts[label] = "APTO"
+
+    if not verdicts:
+        return {}   # BLOQUE 5: nada que juzgar
 
     global_verdict = "APTO"
     if any(v == "NO APTO" for v in verdicts.values()):
@@ -736,10 +745,11 @@ class FallbackAnalyzer:
         duration = stats_summary.get('duration', 0)
         availability = 100.0 - error_rate
 
-        # Use real criteria thresholds
+        # Use real criteria thresholds. BLOQUE 5: con criterios del analista, lo no
+        # declarado se cuenta con el defecto de siempre solo en este texto de respaldo.
         if acceptance_criteria and not acceptance_criteria.get('raw_text'):
-            max_rt = float(acceptance_criteria.get('response_time', 2000))
-            min_avail = float(acceptance_criteria.get('availability', 99.0))
+            max_rt = float(acceptance_criteria.get('response_time') or 2000)
+            min_avail = float(acceptance_criteria.get('availability') or 99.0)
             expected_concurrency = acceptance_criteria.get('concurrency')
         else:
             max_rt = 2000.0
@@ -792,8 +802,8 @@ class FallbackAnalyzer:
 
         # Use real thresholds from criteria
         if acceptance_criteria and not acceptance_criteria.get('raw_text'):
-            max_rt = float(acceptance_criteria.get('response_time', 2000))
-            min_avail = float(acceptance_criteria.get('availability', 99.0))
+            max_rt = float(acceptance_criteria.get('response_time') or 2000)
+            min_avail = float(acceptance_criteria.get('availability') or 99.0)
         else:
             max_rt = 2000.0
             min_avail = 99.0
@@ -1784,7 +1794,9 @@ CONTEXTO DEL TRAFICO PRINCIPAL:
                 ai_analysis_redirects))
 
             resultado = ""
-            if acceptance_criteria and not acceptance_criteria.get('raw_text'):
+            # BLOQUE 5: sin tiempo ni disponibilidad que juzgar (criterios del
+            # analista sin ninguno de los dos, o «no se acordaron») no hay resultado.
+            if evaluables(acceptance_criteria):
                 verdict = compute_verdict(metrics, acceptance_criteria)
                 resultado = INSTRUCCION_RESULTADO.format(verdict=verdict)
 

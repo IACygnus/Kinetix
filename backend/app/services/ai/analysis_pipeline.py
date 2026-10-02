@@ -39,6 +39,7 @@ from app.services.ai.estilo import kbs, ms, num, pct, percentil_frase, veces
 from app.services.ai import resumen_serie
 from app.services.ai import fases as F   # BLOQUE 2.1
 from app.services.ai import contexto_prompt   # BLOQUE 2.2
+from app.services.ai.criterios import evaluables   # BLOQUE 5
 # F1 (aviso de respaldo): de donde sale cada texto, y por que.
 from app.services.ai import origen
 from app.services.zona_informe import a_utc   # 146
@@ -537,7 +538,9 @@ async def run_ai_and_verdict(
                               + (f" ({principal['motivo'][:200]})" if principal["motivo"] else ""))
 
     # ===== COMPUTE VERDICT =====
-    if acceptance_criteria_dict and not acceptance_criteria_dict.get('raw_text'):
+    # BLOQUE 5: `evaluables` es lo mismo que la condicion de antes en el flujo de
+    # siempre; con criterios del analista exige un tiempo o una disponibilidad.
+    if evaluables(acceptance_criteria_dict):
         # P4: If per_scenario criteria exist for this test_type, merge into effective criteria
         per_scenario = acceptance_criteria_dict.get('per_scenario', {})
         effective_criteria = dict(acceptance_criteria_dict)

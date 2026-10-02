@@ -145,3 +145,8 @@ api_router.include_router(
 # tiene que distinguirse de un vistazo de las de la pantalla.
 from app.api.v1.endpoints import ingesta
 api_router.include_router(ingesta.router, prefix="/ingesta", tags=["Observabilidad — Ingesta"])
+
+# BLOQUE 5: el «Analista IA». Cuelga de /analista: la sesion, su ficha, el chat
+# y generar. Generar usa el MISMO camino que /upload (`procesar_subida`).
+from app.api.v1.endpoints import analista
+api_router.include_router(analista.router, prefix="/analista", tags=["Analista IA"])

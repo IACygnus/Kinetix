@@ -37,6 +37,7 @@ from app.services.jtl.transaction_series import (                               
 )
 from app.services.ai.transaction_report import generate_transaction_report       # N4.6
 from app.services.ai.contexto_prompt import contexto_de_parser                     # BLOQUE 2.2
+from app.services.ai.panel_transacciones import filas_del_panel                  # BLOQUE 5
 from app.services.ai import origen as origen_ia                                  # F1 (aviso de respaldo)
 from app.services.ai.estilo import (                                             # ETAPA 3 (D35) + ETAPA 5 (D45)
     avisos_de_ejecucion, detectar_estilo, ms, num, pct, terminos_de, veces)
@@ -171,57 +172,10 @@ async def extract_jtl_transactions(
                 'response_time': response_time if response_time is not None else 2000,
                 'availability': availability if availability is not None else 99.0,
             }
-        # Se importa, no se copia: la logica de veredicto vive en gemini.py (KNX-09).
-        verdicts = compute_per_transaction_verdicts(summary_df, criteria).get(
-            'verdicts_per_transaction', {}) if criteria else {}
-
-        transactions = []
-        for _, row in summary_df.iterrows():
-            label = str(row['label'])
-            avg, mx = float(row['promedio']), float(row['max'])
-            # ETAPA 5 (D45): el motivo se redacta como el resto del informe —
-            # sin jerga, con tildes y en formato espanol. Antes decia
-            # "no apto por criterios (p90 175ms, 64.79% error)".
-            motivos = []
-            veredicto = verdicts.get(label)
-            if veredicto in ("NO APTO", "APTO CON RESERVAS"):
-                p90 = float(row['p90'])
-                umbral_rt = float((criteria or {}).get('response_time', 2000))
-                umbral_err = 100.0 - float((criteria or {}).get('availability', 99.0))
-                partes = []
-                if p90 > umbral_rt * 0.8:
-                    partes.append(f"1 de cada 10 usuarios espera más de {ms(p90)} "
-                                  f"(el límite son {ms(umbral_rt)})")
-                if float(row['tasa_error']) > umbral_err:
-                    partes.append(f"{pct(row['tasa_error'])} de errores "
-                                  f"(el límite es {pct(umbral_err)})")
-                encabezado = "no cumple: " if veredicto == "NO APTO" else "queda al límite: "
-                motivos.append(encabezado + " · ".join(partes))
-            if avg > 0 and mx >= 10 * avg:
-                motivos.append(f"pico de {ms(mx)}, {veces(mx / avg)} su promedio")
-            if mx >= 10000:
-                motivos.append(f"pico de {num(mx / 1000, 1)} segundos, "
-                               f"que apunta a una espera agotada")
-
-            transactions.append({
-                'label': label,
-                'muestras': int(row['muestras']),
-                'promedio': round(avg, 2),
-                'p90': round(float(row['p90']), 2),
-                'p95': round(float(row['p95']), 2),
-                'max': round(mx, 2),
-                # ETAPA 5 (D39): TPS = muestras / duracion de toda la prueba. Ya
-                # venia calculado como `rendimiento` en get_summary_table_data;
-                # aqui solo se devuelve, para que el panel no lo recalcule mal.
-                'tps': round(float(row['rendimiento']), 2),
-                'errores': int(row['errores']),
-                'tasa_error': round(float(row['tasa_error']), 4),
-                'verdict': veredicto,
-                'is_critical_suggested': bool(motivos),
-                'motivo': " · ".join(motivos),
-            })
-
-        transactions.sort(key=lambda t: (not t['is_critical_suggested'], -t['max']))
+        # BLOQUE 5: las filas y la marca «crítica» viven en `panel_transacciones`
+        # (extraidas tal cual de aqui) para que la ficha del Analista IA use la
+        # misma regla. El veredicto sigue en gemini.py (KNX-09).
+        transactions = filas_del_panel(summary_df, criteria)
         return {
             "transactions": transactions,
             "count": len(transactions),
@@ -344,6 +298,214 @@ async def parse_jmx_file(
         raise HTTPException(400, f"Error parseando .jmx: {str(e)}")
 
 
+def parsear_archivos(saved_paths: List[str], original_filenames: List[str]):
+    """(df, metrics, parser) de los archivos ya guardados. BLOQUE 5: extraido de
+    `/upload` tal cual para que la ficha del Analista IA lea igual que el informe."""
+    # KNX-16: Detect file format and parse accordingly
+    from app.services.parsers.format_detector import detect_file_format
+    file_format = detect_file_format(original_filenames[0], saved_paths[0])
+    logger.info(f"Formato detectado: {file_format} para {original_filenames[0]}")
+
+    parser = None
+    if file_format == 'jtl':
+        if len(saved_paths) == 1:
+            parser = JTLParser(saved_paths[0])
+            df, metrics = parser.parse()
+        else:
+            df, metrics, parser = JTLParser.parse_multiple(saved_paths)
+    elif file_format == 'locust':
+        from app.services.parsers.locust_parser import parse_locust_csv
+        with open(saved_paths[0], 'rb') as f_content:
+            df = parse_locust_csv(f_content.read())
+        # Use JTLParser on normalized DataFrame to compute metrics
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
+            df.to_csv(tmp.name, index=False)
+            parser = JTLParser(tmp.name)
+            df, metrics = parser.parse()
+    elif file_format in ('wapt_csv', 'wapt_xml'):
+        from app.services.parsers.wapt_parser import parse_wapt_csv, parse_wapt_xml
+        with open(saved_paths[0], 'rb') as f_content:
+            raw = f_content.read()
+        df = parse_wapt_csv(raw) if file_format == 'wapt_csv' else parse_wapt_xml(raw)
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
+            df.to_csv(tmp.name, index=False)
+            parser = JTLParser(tmp.name)
+            df, metrics = parser.parse()
+    else:
+        raise HTTPException(status_code=400, detail=f"Formato no soportado: {original_filenames[0]}")
+
+    logger.info(f"Parseado ({file_format}): {len(df)} muestras totales, {metrics.get('total_main_samples', 0)} principales")
+    return df, metrics, parser
+
+
+async def procesar_subida(
+    saved_paths: List[str],
+    original_filenames: List[str],
+    *,
+    name: str,
+    description: str,
+    test_type: str,
+    client: str,
+    project: str,
+    client_id: str,
+    acceptance_criteria_dict: Optional[dict],
+    metric_unit: str,
+    db: AsyncSession,
+    current_user: User,
+) -> dict:
+    """El camino de `/upload` desde los archivos ya guardados hasta la respuesta:
+    parseo, las secciones de IA, el veredicto, la ejecucion y los informes por
+    transaccion. BLOQUE 5: lo comparten `/upload` y `/analista/.../generar`.
+    Lanza; quien llama decide el 500."""
+    df, metrics, parser = parsear_archivos(saved_paths, original_filenames)
+
+    # ===== ANALISIS IA + VERDICT (Sprint 2.5d.2) =====
+    # Logica movida VERBATIM a app.services.ai.analysis_pipeline.run_ai_and_verdict.
+    # /upload conserva intactos su parsing (formato/multi-archivo) y la construccion
+    # de TestExecution; aqui solo delega el bloque AI + verdict.
+    ai_result = await run_ai_and_verdict(
+        parser=parser,
+        metrics=metrics,
+        test_type=test_type,
+        acceptance_criteria_dict=acceptance_criteria_dict,
+        metric_unit=metric_unit,
+        db=db,
+    )
+    ai_status = ai_result.ai_status
+    ai_analysis_summary = ai_result.ai_analysis_summary
+    ai_analysis_errors = ai_result.ai_analysis_errors
+    ai_analysis_response_times = ai_result.ai_analysis_response_times
+    ai_analysis_response_time_over_time = ai_result.ai_analysis_response_time_over_time
+    ai_analysis_throughput = ai_result.ai_analysis_throughput
+    ai_analysis_latency = ai_result.ai_analysis_latency
+    ai_analysis_error_rate = ai_result.ai_analysis_error_rate
+    ai_analysis_codes_per_second = ai_result.ai_analysis_codes_per_second
+    ai_analysis_transactions_per_second = ai_result.ai_analysis_transactions_per_second
+    ai_analysis_active_threads = ai_result.ai_analysis_active_threads
+    ai_analysis_redirects = ai_result.ai_analysis_redirects
+    ai_conclusions = ai_result.ai_conclusions
+    ai_recommendations = ai_result.ai_recommendations
+
+    # ===== CREAR REGISTRO EN BD =====
+    execution = TestExecution(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        name=name,
+        description=description,
+        jtl_filename=original_filenames[0],
+
+        # v2.0 metadata
+        client=client if client else None,
+        client_id=uuid.UUID(client_id) if client_id else None,
+        project=project if project else None,
+        test_type=test_type,
+        metric_unit=metric_unit,
+        jtl_filenames=original_filenames if len(original_filenames) > 1 else None,
+        acceptance_criteria_json=acceptance_criteria_dict,
+
+        # Info del archivo — strip tzinfo for TIMESTAMP WITHOUT TIME ZONE column
+        # (values are already in COT from jtl_parser, just remove the tz marker)
+        start_time=a_utc(metrics.get('start_time')),  # 146: la base sigue en UTC
+        end_time=a_utc(metrics.get('end_time')),  # 146: la base sigue en UTC
+        duration_seconds=float(metrics.get('duration_seconds', 0)),
+
+        # Metricas basicas
+        total_requests=int(metrics['total_requests']),
+        total_errors=int(metrics['total_errors']),
+        error_rate=float(metrics['error_rate']),
+        avg_response_time=float(metrics['avg_response_time']),
+        median_response_time=float(metrics.get('median_response_time', 0)),
+        min_response_time=float(metrics['min_response_time']),
+        max_response_time=float(metrics['max_response_time']),
+        p50_response_time=float(metrics['p50_response_time']),
+        p90_response_time=float(metrics['p90_response_time']),
+        p95_response_time=float(metrics['p95_response_time']),
+        p99_response_time=float(metrics['p99_response_time']),
+        throughput=float(metrics['throughput']),
+
+        # Metricas adicionales
+        avg_latency=float(metrics.get('avg_latency', 0)),
+        kb_per_sec_received=float(metrics.get('kb_per_sec_received', 0)),
+        kb_per_sec_sent=float(metrics.get('kb_per_sec_sent', 0)),
+
+        # Redirecciones v2.0
+        total_redirects=int(metrics.get('total_redirects', 0)),
+        redirect_labels=metrics.get('redirect_labels', None),
+
+        # Analisis IA
+        ai_analysis_summary=ai_analysis_summary,
+        ai_analysis_errors=ai_analysis_errors,
+        ai_analysis_response_times=ai_analysis_response_times,
+        ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
+        ai_analysis_throughput=ai_analysis_throughput,
+        ai_analysis_latency=ai_analysis_latency,
+        ai_analysis_error_rate=ai_analysis_error_rate,
+        ai_analysis_codes_per_second=ai_analysis_codes_per_second,
+        ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
+        ai_analysis_active_threads=ai_analysis_active_threads,
+        ai_analysis_redirects=ai_analysis_redirects if ai_analysis_redirects else None,
+        ai_conclusions=ai_conclusions,
+        ai_recommendations=ai_recommendations,
+
+        execution_date=datetime.utcnow(),
+    )
+
+    db.add(execution)
+    await db.commit()
+    await db.refresh(execution)
+
+    # F1 (aviso de respaldo): de donde salio cada texto del informe general.
+    # Commit aparte y tolerante: un fallo aqui no puede perder la ejecucion.
+    try:
+        await origen_ia.guardar_general(db, execution.id, ai_result.origenes)
+        await db.commit()
+    except Exception as origen_err:
+        logger.error(f"F1: no se pudo guardar el origen de los textos de {execution.id}: {origen_err}")
+        await db.rollback()
+
+    # N3.4: analisis IA individual de las transacciones marcadas en el panel.
+    # Va DESPUES del pipeline de 12 pasos y de guardar la ejecucion (necesita
+    # su id). Sin transacciones marcadas no hace nada: ni IA ni escrituras.
+    # No lanza nunca; si falla, la ejecucion ya esta guardada igualmente.
+    try:
+        await analyze_critical_transactions(
+            db=db,
+            execution_id=execution.id,
+            summary_df=parser.get_summary_table_data(),
+            acceptance_criteria=acceptance_criteria_dict,
+            test_type=test_type,
+        )
+    except Exception as txn_err:
+        logger.error(f"N3.4: analisis por transaccion omitido: {txn_err}")
+
+    # N4.10: los mini-informes de las marcadas arrancan aqui, en background.
+    # La respuesta NO los espera: el usuario recibe su informe general en los
+    # ~2 min de siempre y la pantalla sigue el avance con el estado pollable.
+    # Sin transacciones marcadas no se crea tarea y todo queda como hoy.
+    mini_informes: List[str] = []
+    try:
+        mini_informes = _lanzar_mini_informes(execution.id, acceptance_criteria_dict)
+    except Exception as bg_err:
+        logger.error(f"N4.10: no se pudo lanzar la generacion automatica: {bg_err}")
+
+    # Update AI usage counters in DB (non-fatal)
+    try:
+        await update_ai_usage_in_db(db)
+        await db.commit()
+    except Exception as usage_err:
+        logger.warning(f"Could not update AI usage counters: {usage_err}")
+
+    logger.info(f"Ejecucion guardada: {execution.id} (ai_status: {ai_status['provider']}, success={ai_status['success']})")
+    response = TestExecutionResponse.model_validate(execution).model_dump(mode='json')
+    response['ai_status'] = ai_status
+    # N4.10: las que se estan generando solas, para que la pantalla sepa que
+    # tiene que sondear sin esperar al primer tick.
+    response['auto_transaction_reports'] = mini_informes
+    return response
+
+
 @router.post("/upload")
 async def upload_jtl(
     files: List[UploadFile] = File(...),
@@ -393,43 +555,6 @@ async def upload_jtl(
 
         logger.info(f"Iniciando procesamiento de {len(files)} archivo(s)")
 
-        # KNX-16: Detect file format and parse accordingly
-        from app.services.parsers.format_detector import detect_file_format
-        file_format = detect_file_format(original_filenames[0], saved_paths[0])
-        logger.info(f"Formato detectado: {file_format} para {original_filenames[0]}")
-
-        parser = None
-        if file_format == 'jtl':
-            if len(saved_paths) == 1:
-                parser = JTLParser(saved_paths[0])
-                df, metrics = parser.parse()
-            else:
-                df, metrics, parser = JTLParser.parse_multiple(saved_paths)
-        elif file_format == 'locust':
-            from app.services.parsers.locust_parser import parse_locust_csv
-            with open(saved_paths[0], 'rb') as f_content:
-                df = parse_locust_csv(f_content.read())
-            # Use JTLParser on normalized DataFrame to compute metrics
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
-                df.to_csv(tmp.name, index=False)
-                parser = JTLParser(tmp.name)
-                df, metrics = parser.parse()
-        elif file_format in ('wapt_csv', 'wapt_xml'):
-            from app.services.parsers.wapt_parser import parse_wapt_csv, parse_wapt_xml
-            with open(saved_paths[0], 'rb') as f_content:
-                raw = f_content.read()
-            df = parse_wapt_csv(raw) if file_format == 'wapt_csv' else parse_wapt_xml(raw)
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp:
-                df.to_csv(tmp.name, index=False)
-                parser = JTLParser(tmp.name)
-                df, metrics = parser.parse()
-        else:
-            raise HTTPException(status_code=400, detail=f"Formato no soportado: {original_filenames[0]}")
-
-        logger.info(f"Parseado ({file_format}): {len(df)} muestras totales, {metrics.get('total_main_samples', 0)} principales")
-
         # Parse acceptance criteria JSON
         acceptance_criteria_dict = None
         if acceptance_criteria:
@@ -439,149 +564,13 @@ async def upload_jtl(
                 # Formato texto legacy - convertir a dict
                 acceptance_criteria_dict = {"raw_text": acceptance_criteria}
 
-        # ===== ANALISIS IA + VERDICT (Sprint 2.5d.2) =====
-        # Logica movida VERBATIM a app.services.ai.analysis_pipeline.run_ai_and_verdict.
-        # /upload conserva intactos su parsing (formato/multi-archivo) y la construccion
-        # de TestExecution; aqui solo delega el bloque AI + verdict.
-        ai_result = await run_ai_and_verdict(
-            parser=parser,
-            metrics=metrics,
-            test_type=test_type,
-            acceptance_criteria_dict=acceptance_criteria_dict,
-            metric_unit=metric_unit,
-            db=db,
-        )
-        ai_status = ai_result.ai_status
-        ai_analysis_summary = ai_result.ai_analysis_summary
-        ai_analysis_errors = ai_result.ai_analysis_errors
-        ai_analysis_response_times = ai_result.ai_analysis_response_times
-        ai_analysis_response_time_over_time = ai_result.ai_analysis_response_time_over_time
-        ai_analysis_throughput = ai_result.ai_analysis_throughput
-        ai_analysis_latency = ai_result.ai_analysis_latency
-        ai_analysis_error_rate = ai_result.ai_analysis_error_rate
-        ai_analysis_codes_per_second = ai_result.ai_analysis_codes_per_second
-        ai_analysis_transactions_per_second = ai_result.ai_analysis_transactions_per_second
-        ai_analysis_active_threads = ai_result.ai_analysis_active_threads
-        ai_analysis_redirects = ai_result.ai_analysis_redirects
-        ai_conclusions = ai_result.ai_conclusions
-        ai_recommendations = ai_result.ai_recommendations
-
-        # ===== CREAR REGISTRO EN BD =====
-        execution = TestExecution(
-            id=uuid.uuid4(),
-            user_id=current_user.id,
-            name=name,
-            description=description,
-            jtl_filename=original_filenames[0],
-
-            # v2.0 metadata
-            client=client if client else None,
-            client_id=uuid.UUID(client_id) if client_id else None,
-            project=project if project else None,
-            test_type=test_type,
-            metric_unit=metric_unit,
-            jtl_filenames=original_filenames if len(original_filenames) > 1 else None,
-            acceptance_criteria_json=acceptance_criteria_dict,
-
-            # Info del archivo — strip tzinfo for TIMESTAMP WITHOUT TIME ZONE column
-            # (values are already in COT from jtl_parser, just remove the tz marker)
-            start_time=a_utc(metrics.get('start_time')),  # 146: la base sigue en UTC
-            end_time=a_utc(metrics.get('end_time')),  # 146: la base sigue en UTC
-            duration_seconds=float(metrics.get('duration_seconds', 0)),
-
-            # Metricas basicas
-            total_requests=int(metrics['total_requests']),
-            total_errors=int(metrics['total_errors']),
-            error_rate=float(metrics['error_rate']),
-            avg_response_time=float(metrics['avg_response_time']),
-            median_response_time=float(metrics.get('median_response_time', 0)),
-            min_response_time=float(metrics['min_response_time']),
-            max_response_time=float(metrics['max_response_time']),
-            p50_response_time=float(metrics['p50_response_time']),
-            p90_response_time=float(metrics['p90_response_time']),
-            p95_response_time=float(metrics['p95_response_time']),
-            p99_response_time=float(metrics['p99_response_time']),
-            throughput=float(metrics['throughput']),
-
-            # Metricas adicionales
-            avg_latency=float(metrics.get('avg_latency', 0)),
-            kb_per_sec_received=float(metrics.get('kb_per_sec_received', 0)),
-            kb_per_sec_sent=float(metrics.get('kb_per_sec_sent', 0)),
-
-            # Redirecciones v2.0
-            total_redirects=int(metrics.get('total_redirects', 0)),
-            redirect_labels=metrics.get('redirect_labels', None),
-
-            # Analisis IA
-            ai_analysis_summary=ai_analysis_summary,
-            ai_analysis_errors=ai_analysis_errors,
-            ai_analysis_response_times=ai_analysis_response_times,
-            ai_analysis_response_time_over_time=ai_analysis_response_time_over_time,
-            ai_analysis_throughput=ai_analysis_throughput,
-            ai_analysis_latency=ai_analysis_latency,
-            ai_analysis_error_rate=ai_analysis_error_rate,
-            ai_analysis_codes_per_second=ai_analysis_codes_per_second,
-            ai_analysis_transactions_per_second=ai_analysis_transactions_per_second,
-            ai_analysis_active_threads=ai_analysis_active_threads,
-            ai_analysis_redirects=ai_analysis_redirects if ai_analysis_redirects else None,
-            ai_conclusions=ai_conclusions,
-            ai_recommendations=ai_recommendations,
-
-            execution_date=datetime.utcnow(),
-        )
-
-        db.add(execution)
-        await db.commit()
-        await db.refresh(execution)
-
-        # F1 (aviso de respaldo): de donde salio cada texto del informe general.
-        # Commit aparte y tolerante: un fallo aqui no puede perder la ejecucion.
-        try:
-            await origen_ia.guardar_general(db, execution.id, ai_result.origenes)
-            await db.commit()
-        except Exception as origen_err:
-            logger.error(f"F1: no se pudo guardar el origen de los textos de {execution.id}: {origen_err}")
-            await db.rollback()
-
-        # N3.4: analisis IA individual de las transacciones marcadas en el panel.
-        # Va DESPUES del pipeline de 12 pasos y de guardar la ejecucion (necesita
-        # su id). Sin transacciones marcadas no hace nada: ni IA ni escrituras.
-        # No lanza nunca; si falla, la ejecucion ya esta guardada igualmente.
-        try:
-            await analyze_critical_transactions(
-                db=db,
-                execution_id=execution.id,
-                summary_df=parser.get_summary_table_data(),
-                acceptance_criteria=acceptance_criteria_dict,
-                test_type=test_type,
-            )
-        except Exception as txn_err:
-            logger.error(f"N3.4: analisis por transaccion omitido: {txn_err}")
-
-        # N4.10: los mini-informes de las marcadas arrancan aqui, en background.
-        # La respuesta NO los espera: el usuario recibe su informe general en los
-        # ~2 min de siempre y la pantalla sigue el avance con el estado pollable.
-        # Sin transacciones marcadas no se crea tarea y todo queda como hoy.
-        mini_informes: List[str] = []
-        try:
-            mini_informes = _lanzar_mini_informes(execution.id, acceptance_criteria_dict)
-        except Exception as bg_err:
-            logger.error(f"N4.10: no se pudo lanzar la generacion automatica: {bg_err}")
-
-        # Update AI usage counters in DB (non-fatal)
-        try:
-            await update_ai_usage_in_db(db)
-            await db.commit()
-        except Exception as usage_err:
-            logger.warning(f"Could not update AI usage counters: {usage_err}")
-
-        logger.info(f"Ejecucion guardada: {execution.id} (ai_status: {ai_status['provider']}, success={ai_status['success']})")
-        response = TestExecutionResponse.model_validate(execution).model_dump(mode='json')
-        response['ai_status'] = ai_status
-        # N4.10: las que se estan generando solas, para que la pantalla sepa que
-        # tiene que sondear sin esperar al primer tick.
-        response['auto_transaction_reports'] = mini_informes
-        return response
+        # BLOQUE 5: el resto es `procesar_subida`, que tambien usa el Analista IA
+        # al generar. Extraccion pura: mismo codigo, mismo orden.
+        return await procesar_subida(
+            saved_paths, original_filenames, name=name, description=description,
+            test_type=test_type, client=client, project=project, client_id=client_id,
+            acceptance_criteria_dict=acceptance_criteria_dict, metric_unit=metric_unit,
+            db=db, current_user=current_user)
 
     except HTTPException:
         raise
