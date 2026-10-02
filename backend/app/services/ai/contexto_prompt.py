@@ -63,7 +63,7 @@ def bloque_ejecucion(metrics: Dict[str, Any], test_type: str, metric_unit: str,
     ]
     if metrics.get("total_redirects"):
         lineas.append(f"- Redirecciones, aparte del trafico principal: {num(metrics['total_redirects'])}")
-    lineas.append("- Percentiles globales (dato de apoyo; si alguno hace falta, uno solo y contado en personas): "
+    lineas.append("- Percentiles globales (dato de apoyo; si hacen falta, como mucho uno o dos, tal cual): "
                   + "; ".join(percentil_frase(p, metrics.get(k, 0)) for p, k in (
                       (50, "median_response_time"), (90, "p90_response_time"),
                       (95, "p95_response_time"), (99, "p99_response_time"))))

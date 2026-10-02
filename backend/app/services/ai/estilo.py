@@ -88,31 +88,26 @@ def kbs(valor: Any, dec: int = 2) -> str:
 # 2. FRASES DE PERCENTIL (D33)
 # ====================================================================
 
-# Cuantas personas hay detras de cada percentil (v1.2 §4.1).
-_PERSONAS = {50: None, 90: 10, 95: 20, 99: 100}
+# 151: los percentiles ya no se traducen a personas (regla 3, Fredy): se
+# nombran tal cual, «percentil 95 de 8.108 ms».
 
 
 def percentil_frase(p: int, valor_ms: Any) -> str:
-    """El percentil ya traducido, listo para que el modelo lo copie.
+    """El percentil nombrado TAL CUAL, como lo escribe Fredy (151, regla 3).
 
-    La tilde de "más" va a proposito, aunque el resto de los prompts del
-    proyecto sea ASCII: el modelo copia esta frase LITERALMENTE al informe
-    (asi se le pide), asi que lo que se escriba aqui es lo que lee el cliente.
+    Antes se traducía a personas («1 de cada 10 usuarios espera más de…»).
+    Fredy pidió nombrarlo como en su modelo de resumen.
 
-    >>> percentil_frase(90, 3515)
-    '1 de cada 10 usuarios espera más de 3,5 segundos (P90: 3.515 ms)'
+    >>> percentil_frase(95, 8108)
+    'percentil 95 de 8.108 ms'
     """
-    cifra = f"(P{p}: {ms(valor_ms)})"
     if p == 50:
-        return f"la mitad de los usuarios espera más de {tiempo(valor_ms)} {cifra}"
-    cada = _PERSONAS.get(p)
-    if cada is None:
-        return f"{tiempo(valor_ms)} {cifra}"
-    return f"1 de cada {cada} usuarios espera más de {tiempo(valor_ms)} {cifra}"
+        return f"mediana de {ms(valor_ms)}"
+    return f"percentil {p} de {ms(valor_ms)}"
 
 
 def mediana_frase(valor_ms: Any) -> str:
-    """La mediana con su lectura en personas."""
+    """La mediana, nombrada tal cual."""
     return percentil_frase(50, valor_ms)
 
 
@@ -141,7 +136,7 @@ BLOQUE_ESTILO = """GUÍA DE ESTILO
 
 - Quién lee: el gerente del cliente, muchas veces sin un técnico al lado. Escribimos para que entienda cómo le fue a su sistema sin saber de performance.
 - Voz: primera persona del plural («observamos», «encontramos», «recomendamos»).
-- Cómo contamos: como quien cuenta cómo nos fue en la prueba: qué pasó, dónde está el problema y qué significa para la operación. Los números sostienen el relato, no lo reemplazan: solo las cifras que prueban el hallazgo. Nunca enumeramos métricas una tras otra ni listamos percentiles; si un percentil hace falta, uno solo y contado en personas.
+- Cómo contamos: como quien cuenta cómo nos fue en la prueba: qué pasó, dónde está el problema y qué significa para la operación. Los números sostienen el relato, no lo reemplazan: solo las cifras que prueban el hallazgo. Nunca enumeramos métricas una tras otra ni listamos percentiles; si hacen falta, como mucho uno o dos por párrafo, nombrados tal cual («percentil 95 de 8.108 ms»).
 - Cifras: como máximo 4 cifras por párrafo de sección; escoge las que prueban el hallazgo principal y deja fuera el resto. Un minuto o una hora cuentan como cifra. Cuando hay criterios de aceptación, el tope NO aplica al resumen ni a las conclusiones: ahí van las cifras necesarias para probar cada criterio.
 - Forma de las secciones: un solo párrafo continuo, de unas 120 a 160 palabras, sin partirlo, sin viñetas ni formato. Orden: comportamiento general → qué destaca y dónde (transacción, fase de la prueba) → qué sugiere (causa posible, como hipótesis) → qué conviene revisar, si aplica. Lo que pasa en las rampas se cuenta como tal, no como hallazgo principal.
 - Conclusiones: viñetas, de 4 a 7, un hallazgo con su porqué en cada una. El dictamen de viabilidad al final y siempre explicado con la razón. No repiten las cifras de las secciones. Con criterios de aceptación, el dictamen frente a ellos va PRIMERO, con la cadena de causa, y cada criterio incumplido tiene su viñeta con las cifras que lo prueban.
@@ -164,9 +159,9 @@ REGLAS QUE SE MANTIENEN
    el formato inglés (8,600 · 1.1 segundos · 179.73ms) y PROHIBIDO inventar una
    cifra que no esté en los datos.
 
-3. UN PERCENTIL, SI HACE FALTA, EN PERSONAS. P90 es 1 de cada 10 usuarios, P95
-   1 de cada 20 y P99 1 de cada 100, con esta forma: «1 de cada 10 usuarios
-   espera más de 3,5 segundos (P90: 3.515 ms)». Nunca un percentil a secas.
+3. PERCENTILES TAL CUAL. Se nombran como los escribe Fredy: «percentil 95 de
+   8.108 ms». Como mucho uno o dos por párrafo, y NUNCA la lista
+   P50/P90/P95/P99 ni todos los percentiles seguidos.
 
 4. HIPÓTESIS MARCADAS. Una causa es una lectura probable: «sugiere», «apunta
    a», «es coherente con». PROHIBIDO afirmar causas como hechos demostrados.
@@ -216,7 +211,7 @@ Recomendaciones:
 CUANDO HAY CRITERIOS DE ACEPTACIÓN — modelos de Fredy (de OTRA prueba, solo por su forma):
 
 Resumen:
-«La ejecución se considera no exitosa respecto a los criterios de aceptación definidos, ya que aunque el Servicio C alcanzó las 34.783 muestras, el Servicio A procesó únicamente 10.935, muy por debajo de las esperadas, mientras que el Servicio B alcanzó 10.908, superando su objetivo. Adicionalmente, el Servicio A evidenció los mayores tiempos de respuesta del flujo, con un promedio de 4.823 ms, 1 de cada 20 usuarios esperando más de 8,1 segundos (P95: 8.108 ms) y un máximo de 9.221 ms, dentro de su umbral; el Servicio C registró un máximo de 21.038 ms, incumpliendo su criterio. Aunque la prueba registró únicamente 2 errores sobre 56.626 muestras, el incumplimiento de la transaccionalidad esperada en el Servicio A y el tiempo máximo del Servicio C impiden considerar la ejecución como satisfactoria.»
+«La ejecución se considera no exitosa respecto a los criterios de aceptación definidos, ya que aunque el Servicio C alcanzó las 34.783 muestras, el Servicio A procesó únicamente 10.935, muy por debajo de las esperadas, mientras que el Servicio B alcanzó 10.908, superando su objetivo. Adicionalmente, el Servicio A evidenció los mayores tiempos de respuesta del flujo, con un promedio de 4.823 ms, percentil 95 de 8.108 ms y un máximo de 9.221 ms, dentro de su umbral; el Servicio C registró un máximo de 21.038 ms, incumpliendo su criterio. Aunque la prueba registró únicamente 2 errores sobre 56.626 muestras, el incumplimiento de la transaccionalidad esperada en el Servicio A y el tiempo máximo del Servicio C impiden considerar la ejecución como satisfactoria.»
 
 Conclusión (primera viñeta):
 «La ejecución no cumplió los criterios de aceptación: aunque el Servicio C superó ampliamente las muestras esperadas, los Servicios A y B se mantuvieron muy por debajo del objetivo. El Servicio A fue el componente con mayor tiempo de procesamiento, cerca de los 9 segundos, lo que impactó directamente el volumen de transacciones que completó y, en consecuencia, el del Servicio B, al estar ambos orquestados en el mismo flujo.»
@@ -267,8 +262,8 @@ _JERGA = [
 ]
 
 # --- D29: percentil sin su frase de usuario ---
-_PERCENTIL = re.compile(r"\b(?:P\s?(?:50|90|95|99)|percentil\s+(?:50|90|95|99))\b", re.I)
-_TRADUCIDO = re.compile(r"\b\d+\s+de\s+cada\s+\d+|\bmitad\s+de\s+(?:los\s+)?usuarios\b", re.I)
+_PERCENTIL = re.compile(r"\b(?:P\s?(50|90|95|99)|percentil\s+(50|90|95|99))\b", re.I)
+MAX_PERCENTILES = 2   # 151: como mucho uno o dos por párrafo
 
 # --- D30: donde SI se permite el veredicto de produccion (v1.2 §4.2) ---
 SECCIONES_CON_VEREDICTO = {
@@ -349,13 +344,14 @@ def detectar_estilo(texto: Optional[str], seccion: str = "") -> List[Dict[str, s
                 avisos.append({"tipo": "jerga", "termino": termino,
                                "contexto": _contexto(texto, m.start(), m.end())})
 
-        for frase in _frases(plano):
-            if _TRADUCIDO.search(frase):
-                continue
-            for m in _PERCENTIL.finditer(frase):
-                avisos.append({"tipo": "percentil_sin_traducir",
-                               "termino": m.group(0).replace(" ", "").upper(),
-                               "contexto": frase.strip()[:140]})
+        # 151 (regla 3): los percentiles se nombran tal cual; el aviso es por
+        # LISTA: más de dos percentiles distintos en un mismo párrafo (o viñeta).
+        for parrafo in re.split(r"\n\s*\n|\n(?=\s*[•\-*] )", plano):
+            distintos = {(m.group(1) or m.group(2)) for m in _PERCENTIL.finditer(parrafo)}
+            if len(distintos) > MAX_PERCENTILES:
+                avisos.append({"tipo": "demasiados_percentiles",
+                               "termino": f"{len(distintos)} percentiles en un párrafo",
+                               "contexto": parrafo.strip()[:140]})
 
         if seccion not in SECCIONES_CON_VEREDICTO:
             for rx, termino in _VEREDICTO:
@@ -423,8 +419,7 @@ def terminos_de(avisos: List[Dict[str, str]]) -> List[str]:
     """Lista corta y sin repetir, para el aviso de pantalla (D36)."""
     vistos, salida = set(), []
     for a in avisos or []:
-        t = (f"{a['termino']} sin traducir"
-             if a.get("tipo") == "percentil_sin_traducir" else a.get("termino", ""))
+        t = a.get("termino", "")
         if t and t not in vistos:
             vistos.add(t)
             salida.append(t)

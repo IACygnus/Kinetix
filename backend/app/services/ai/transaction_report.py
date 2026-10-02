@@ -198,7 +198,7 @@ def build_section_prompts(label: str, m: Dict[str, Any], series: Dict[str, Any],
 - Errores: {_n(m.get('errores', 0))} ({pct(m.get('tasa_error', 0))} de sus muestras)
 - Caudal de la transaccion: {_n(m.get('rendimiento', 0), 2)} por segundo
 
-LECTURA DE SUS PERCENTILES (copia estas frases tal cual):
+SUS PERCENTILES (dato de apoyo: si hacen falta, como mucho uno o dos, nombrados tal cual):
 - {percentil_frase(50, m.get('mediana', 0))}
 - {percentil_frase(90, m.get('p90', 0))}
 - {percentil_frase(95, m.get('p95', 0))}
