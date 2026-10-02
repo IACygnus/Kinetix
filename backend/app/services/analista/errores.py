@@ -12,6 +12,12 @@ mensaje normalizado, con su recuento, su porcentaje, el primer y el último
 momento (en hora de informe) y uno o dos ejemplos recortados. Todo lo que se
 guarda del archivo pasa antes por `enmascarar`.
 
+REPORTE 150: el formato se detecta por el CONTENIDO (el archivo real de Fredy
+era XML con extensión .csv), y cada grupo es transacción + código + CAUSA: el
+failureMessage de las aserciones, si no el mensaje de error que trae la
+respuesta (JSON con errors/errorMessage/message) y, si no, el rm. De una traza
+de Java, la primera línea y el «Caused by».
+
 El XML se lee con un lector que NO admite DOCTYPE ni entidades: JMeter no los
 escribe nunca, y sin ellos no hay entidades externas ni «billion laughs».
 """
@@ -56,6 +62,77 @@ def normalizar_mensaje(m: str) -> str:
     return re.sub(r"\s+", " ", t).strip()[:200] or "(sin mensaje)"
 
 
+def detectar_formato(datos: bytes) -> str:
+    """El formato por el CONTENIDO, nunca por la extensión (150): JMeter guarda
+    XML con extensión .csv sin pestañear. «<» al principio = XML."""
+    cabeza = datos[:4096].lstrip(b"\xef\xbb\xbf").lstrip()
+    return "xml" if cabeza.startswith(b"<") else "csv"
+
+
+_TRAZA = re.compile(r"^\s+at [\w$.<>]+\(", re.M)
+
+
+def resumir_traza(t: str) -> str:
+    """De una traza de Java, la primera línea y el último «Caused by» (la causa
+    raíz). Un texto que no es traza vuelve igual."""
+    if not t or not _TRAZA.search(t):
+        return t
+    lineas = [l.strip() for l in t.splitlines() if l.strip()]
+    causas = [l for l in lineas if l.startswith("Caused by")]
+    return " · ".join([lineas[0]] + causas[-1:])
+
+
+_CLAVES_MENSAJE = ("errorMessage", "message", "error_description", "detail", "error", "description")
+
+
+def mensaje_de_respuesta(cuerpo: str) -> str:
+    """El mensaje de error que trae un cuerpo JSON: errors[].errorMessage/message,
+    errorMessage, message… Vacío si no es JSON o no lo trae."""
+    import json
+    t = (cuerpo or "").strip()
+    if not t.startswith(("{", "[")):
+        return resumir_traza(t) if _TRAZA.search(t or "") else ""
+    try:
+        d = json.loads(t)
+    except Exception:
+        return ""
+
+    def de(o) -> str:
+        if isinstance(o, dict):
+            for lista in ("errors", "error", "errores"):
+                v = o.get(lista)
+                if isinstance(v, list):
+                    msgs = [de(x) for x in v]
+                    msgs = [m for m in msgs if m]
+                    if msgs:
+                        return " · ".join(dict.fromkeys(msgs))
+            for k in _CLAVES_MENSAJE:
+                v = o.get(k)
+                if isinstance(v, str) and v.strip():
+                    return resumir_traza(v.strip())
+                if isinstance(v, dict):
+                    m = de(v)
+                    if m:
+                        return m
+        if isinstance(o, list):
+            for x in o:
+                m = de(x)
+                if m:
+                    return m
+        return ""
+    return de(d)
+
+
+def causa(aserciones: str, respuesta: str, rm: str) -> str:
+    """La causa de un fallo, por este orden (150): el failureMessage de las
+    aserciones, el mensaje de error dentro de la respuesta y el rm."""
+    for c in (aserciones, mensaje_de_respuesta(respuesta), rm):
+        c = resumir_traza((c or "").strip())
+        if c:
+            return c
+    return ""
+
+
 def _es_falso(v) -> bool:
     return str(v).strip().lower() in ("false", "0", "no")
 
@@ -83,7 +160,8 @@ def _filas_csv(datos: bytes, avisos: List[str]):
             "ts": f.get("timeStamp"),
             "label": f.get("label") or "",
             "codigo": (f.get("responseCode") or "").strip(),
-            "mensaje": f.get("failureMessage") or f.get("responseMessage") or "",
+            "mensaje": causa(f.get("failureMessage") or "", f.get("responseData") or "",
+                             f.get("responseMessage") or ""),
             "ok": None if "success" not in campos else not _es_falso(f.get("success")),
             "peticion": " ".join(x for x in (f.get("URL") or "",) if x),
             "respuesta": f.get("responseData") or "",
@@ -132,14 +210,22 @@ def _filas_xml(datos: bytes, avisos: List[str]):
             q = el.findtext("queryString") or ""
             if q and q not in peticion:
                 peticion += "\n" + q
+            cabeceras = (el.findtext("requestHeader") or "").strip()
+            if cabeceras:   # se enmascara al guardar: Authorization, Cookie, claves…
+                # Primero la línea del método y la URL, luego las cabeceras y al
+                # final el cuerpo: el ejemplo se recorta a 400 caracteres y un
+                # cuerpo largo delante dejaba fuera las cabeceras (150).
+                primera, _, resto = peticion.partition("\n")
+                peticion = f"{primera}\n{cabeceras}\n{resto.strip()}".strip()
+            respuesta = el.findtext("responseData") or ""
             yield {
                 "ts": el.get("ts"),
                 "label": el.get("lb") or "",
                 "codigo": (el.get("rc") or "").strip(),
-                "mensaje": fallo or el.get("rm") or "",
+                "mensaje": causa(fallo, respuesta, el.get("rm") or ""),
                 "ok": None if el.get("s") is None else not _es_falso(el.get("s")),
                 "peticion": peticion,
-                "respuesta": el.findtext("responseData") or "",
+                "respuesta": respuesta,
             }
             el.clear()
     except ET.ParseError as e:
@@ -152,6 +238,7 @@ def resumir(datos: bytes, formato: str, fallos_jtl: Dict[str, int]) -> Dict[str,
     """El resumen del archivo, ya enmascarado. `fallos_jtl` = {label: fallos} del JTL."""
     if len(datos) > TOPE_BYTES:
         raise ArchivoInvalido("el archivo pasa del tope")
+    formato = detectar_formato(datos)   # 150: el contenido manda, no la extensión
     avisos: List[str] = []
     filas = _filas_csv(datos, avisos) if formato == "csv" else _filas_xml(datos, avisos)
     grupos: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
@@ -233,7 +320,7 @@ def texto_para_prompt(resumenes: List[Dict[str, Any]], tope: int) -> str:
         for g in r["grupos"]:
             lineas.append(f"- «{g['transaccion']}» · código {g['codigo'] or 'sin código'} · "
                           f"{num(g['recuento'])} ({pct(g['porcentaje'], 1)} de los errores del archivo) · "
-                          f"de {g['primero'] or '?'} a {g['ultimo'] or '?'} · mensaje: {g['mensaje']}")
+                          f"de {g['primero'] or '?'} a {g['ultimo'] or '?'} · causa: {g['mensaje']}")
             for e in g["ejemplos"][:1]:
                 if e.get("respuesta"):
                     lineas.append(f"  respuesta de ejemplo: {e['respuesta'][:200]}")

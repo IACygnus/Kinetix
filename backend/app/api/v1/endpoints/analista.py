@@ -312,9 +312,9 @@ async def adjuntar_errores(sid: str, archivo: UploadFile = File(...), db: AsyncS
     s = await _sesion(db, usuario, sid)
     _abierta(s)
     nombre = Path(archivo.filename or "").name
-    formato = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
-    if formato not in ("csv", "xml"):
-        raise HTTPException(415, "Solo se admiten archivos .csv o .xml de JMeter")
+    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if extension not in ("csv", "xml", "jtl"):
+        raise HTTPException(415, "Solo se admiten archivos .csv, .xml o .jtl de JMeter")
     if len(await _adjuntos(db, s.id)) >= MAX_ADJUNTOS:
         raise HTTPException(409, f"Una sesión admite como máximo {MAX_ADJUNTOS} archivos de errores")
     partes, total = [], 0
@@ -329,9 +329,11 @@ async def adjuntar_errores(sid: str, archivo: UploadFile = File(...), db: AsyncS
     datos = b"".join(partes)
     fallos_jtl = {p["label"]: p["fallos"] for p in (s.ficha.get("fallos") or {}).get("por_transaccion") or []}
     try:
-        resumen = await asyncio.to_thread(ER.resumir, datos, formato, fallos_jtl)
+        # 150: el formato lo decide el CONTENIDO (un XML con extensión .csv es XML).
+        resumen = await asyncio.to_thread(ER.resumir, datos, ER.detectar_formato(datos), fallos_jtl)
     except ER.ArchivoInvalido as e:
         raise HTTPException(400, f"No se pudo leer el archivo de errores: {e}")
+    formato = resumen["formato"]
 
     aid = uuid.uuid4()
     carpeta = UPLOAD_DIR / "analista" / str(s.id)
