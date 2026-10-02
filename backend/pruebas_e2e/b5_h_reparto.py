@@ -10,8 +10,8 @@ gpt-5.5 con esfuerzo MEDIO.
   - transacción: su resumen en medio; sus cinco gráficas en bajo;
   - chat del Analista IA, bajo; comparativa y conclusión única del integrado, medio;
   - capturas (imagen), bajo;
-  - con `AI_MODELO_LIGERO`: el chat y las gráficas van con ese modelo; el resto,
-    con el principal. Sin él, todo con el principal.
+  - con `AI_MODELO_LIGERO`: SOLO las gráficas van con ese modelo (152); el chat
+    y el resto, con el principal. Sin él, todo con el principal.
 """
 import asyncio
 import copy
@@ -134,11 +134,12 @@ async def main():
     por = {}
     for s, m, e in ENVIOS:
         por.setdefault(s, set()).add((m, e))
-    ligeras = [s for s in por if s == "analista_chat" or s.startswith("chart_") or s.startswith("txreport_chart_")]
-    ok(len(ligeras) == 12, f"chat + 6 gráficas + 5 de transacción ({len(ligeras)})")
-    ok(all(por[s] == {(LIGERO, "low")} for s in ligeras), "el chat y las gráficas, con el modelo ligero y en bajo")
+    ligeras = [s for s in por if s.startswith("chart_") or s.startswith("txreport_chart_")]
+    ok(len(ligeras) == 11, f"6 gráficas + 5 de transacción ({len(ligeras)})")
+    ok(all(por[s] == {(LIGERO, "low")} for s in ligeras), "las gráficas, con el modelo ligero y en bajo")
+    ok(por.get("analista_chat") == {("gpt-5.5", "low")}, f"152: el chat, con el principal ({por.get('analista_chat')})")
     ok(all(m == "gpt-5.5" for s in por if s not in ligeras for m, _ in por[s]),
-       "el resto (resumen, conclusiones, recomendaciones, errores, capturas…) con el principal")
+       "el resto (chat, resumen, conclusiones, recomendaciones, errores, capturas…) con el principal")
 
     print("== 3. Vacío = el mismo modelo, también por el entorno")
     os.environ["AI_MODELO_LIGERO"] = ""

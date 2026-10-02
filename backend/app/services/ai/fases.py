@@ -48,7 +48,10 @@ INSTRUCCION_FASES = (
 # por transaccion de tiempos y de caudal: la instruccion del bloque, lejos, no pesaba.
 NOTA_RAMPAS = (
     "Cuenta lo que pasa con la carga sostenida. Un minimo, un maximo o un pico marcado "
-    "[rampa] no es un hallazgo: no lo cites, o dilo como arranque o cierre de la prueba.")
+    "[rampa] no es un hallazgo: no lo cites, o dilo como arranque o cierre de la prueba. "
+    # 152: con el modelo ligero salieron 4 textos citando rampas o escalones (151 §4).
+    "No escribas las palabras rampa, escalon ni meseta, ni comentes la subida o la bajada "
+    "de usuarios: si hace falta situar algo, di «al arranque» o «al cierre de la prueba».")
 
 
 def mmss(seg: float) -> str:

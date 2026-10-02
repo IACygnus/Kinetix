@@ -14,8 +14,11 @@ ESFUERZO
     sin perder el uso de los criterios.
 
 MODELO LIGERO (opcional)
-  - `AI_MODELO_LIGERO` en el entorno: si tiene valor, el chat y las gráficas lo
-    usan en lugar del modelo principal. VACÍO = el mismo modelo (así queda).
+  - `AI_MODELO_LIGERO` en el entorno: si tiene valor, SOLO las gráficas
+    (generales y por transacción) lo usan en lugar del modelo principal.
+    VACÍO = el mismo modelo en todo.
+  - El chat del Analista IA usa SIEMPRE el modelo de la configuración (152): con
+    el mini no aplicó una corrección explícita del analista (reporte 151 §4).
 """
 from __future__ import annotations
 
@@ -42,10 +45,20 @@ def esfuerzo_para(seccion: Optional[str], configurado: Optional[str]) -> str:
     return BAJO
 
 
-def es_ligera(seccion: Optional[str]) -> bool:
-    """El chat y las gráficas: lo que puede ir con el modelo ligero."""
+def es_grafica(seccion: Optional[str]) -> bool:
+    """Los textos de gráficas, generales y por transacción."""
     s = seccion or ""
-    return s == "analista_chat" or s.startswith("chart_") or s.startswith("txreport_chart_")
+    return s.startswith("chart_") or s.startswith("txreport_chart_")
+
+
+def es_chat(seccion: Optional[str]) -> bool:
+    """El chat del Analista IA: siempre con el modelo de la configuración."""
+    return (seccion or "") == "analista_chat"
+
+
+def es_ligera(seccion: Optional[str]) -> bool:
+    """Lo que puede ir con el modelo ligero: solo las gráficas (152)."""
+    return es_grafica(seccion)
 
 
 def modelo_ligero_del_entorno() -> Optional[str]:
