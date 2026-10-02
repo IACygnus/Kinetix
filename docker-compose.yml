@@ -42,6 +42,8 @@ services:
       - FERNET_KEY=${FERNET_KEY:-}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-sqa2024}
       - ENVIRONMENT=${ENVIRONMENT:-development}
+      # Reporte 146: la zona de las horas de los informes. No hace falta definirla.
+      - REPORT_TIMEZONE=${REPORT_TIMEZONE:-America/Bogota}
     volumes:
       - ./backend:/app
       - uploads_data:/app/uploads

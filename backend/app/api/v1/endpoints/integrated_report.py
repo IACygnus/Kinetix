@@ -12,6 +12,7 @@ import logging
 from typing import List, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.services.zona_informe import a_informe   # 146
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -197,8 +198,8 @@ async def _generate_full_execution_pdf_html(execution, db: AsyncSession, overrid
             'testType': execution.test_type or 'load', 'testTypeLabel': test_type_info['label'],
             'testTypeColor': test_type_info['color'], 'filename': execution.jtl_filename,
             'filenames': execution.jtl_filenames or [execution.jtl_filename],
-            'startTime': execution.start_time.strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
-            'endTime': execution.end_time.strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
+            'startTime': a_informe(execution.start_time).strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
+            'endTime': a_informe(execution.end_time).strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
             'duration': float(execution.duration_seconds or 0),
             'totalRequests': execution.total_requests, 'totalErrors': execution.total_errors,
             'errorRate': float(execution.error_rate), 'avgResponseTime': float(execution.avg_response_time),
@@ -889,8 +890,8 @@ async def _generate_full_execution_plotly_html(execution, db: AsyncSession, pref
             'testType': execution.test_type or 'load', 'testTypeLabel': test_type_info['label'],
             'testTypeColor': test_type_info['color'], 'filename': execution.jtl_filename,
             'filenames': execution.jtl_filenames or [execution.jtl_filename],
-            'startTime': execution.start_time.strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
-            'endTime': execution.end_time.strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
+            'startTime': a_informe(execution.start_time).strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
+            'endTime': a_informe(execution.end_time).strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
             'duration': float(execution.duration_seconds or 0),
             'totalRequests': execution.total_requests, 'totalErrors': execution.total_errors,
             'errorRate': float(execution.error_rate), 'avgResponseTime': float(execution.avg_response_time),
@@ -1829,7 +1830,7 @@ async def export_integrated_pdf(
                 'name': execution.name,
                 'client': execution.client or '—',
                 'test_type': (execution.test_type or 'load').upper(),
-                'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
+                'date': a_informe(execution.execution_date).strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
             full_html = await _generate_full_execution_pdf_html(
                 execution, db, overrides_by_exec.get(section.source_id),
@@ -1949,7 +1950,7 @@ async def export_integrated_html(
                 'name': execution.name,
                 'client': execution.client or '—',
                 'test_type': (execution.test_type or 'load').upper(),
-                'date': execution.execution_date.strftime('%d/%m/%Y') if execution.execution_date else '—',
+                'date': a_informe(execution.execution_date).strftime('%d/%m/%Y') if execution.execution_date else '—',
             })
             # HF10h: Use Plotly interactive fragment with unique prefix per execution
             fragment = await _generate_full_execution_plotly_html(

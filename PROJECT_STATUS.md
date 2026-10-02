@@ -423,6 +423,10 @@ CONCLUSIONES Y RECOMENDACIONES      ← una sola vez, de toda la prueba
 8. **Despliegue a producción de las seis etapas** — lista completa en
    `docs/reporte_claude_code/53_checklist_despliegue.md`. **Nada de eso se ha
    ejecutado.**
+   **Añadido el 01/10/2026 (reporte 146):** `REPORT_TIMEZONE`, la zona de las
+   horas de los informes. **Por defecto `America/Bogota`: no hay que definirla.**
+   `docker-compose.yml` la pasa al backend; sin SQL y sin migrar nada (la base
+   sigue en UTC). Solo hay que desplegar el backend.
 9. **`docker-compose.prod.yml` no hace lo que parece.** Verificado en la Etapa
    6.6 con `docker compose -f docker-compose.yml -f docker-compose.prod.yml
    config`: compose **fusiona** las listas, así que los `ports: []` no cierran

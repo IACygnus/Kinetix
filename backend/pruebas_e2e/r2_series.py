@@ -128,7 +128,7 @@ async def main():
     for s, pr in LLAMADAS:
         comprobar("Subida 0:00–3:14 · Carga sostenida 3:14–30:00 · Sin bajada" in pr
                   and pr.count("FASES DE LA PRUEBA") == 1, f"{s} recibe las fases de la prueba entera, una vez")
-    comprobar("el primero min 0:05 (20:05:00) y el ultimo" not in LLAMADAS[0][1],
+    comprobar("el primero min 0:05 (15:05:00) y el ultimo" not in LLAMADAS[0][1],
               "transaccion: los fallos sin el primero y el ultimo")
     comprobar("pesa la red" not in " ".join(pr for _, pr in LLAMADAS), "R-D13: fuera «cuanto pesa la red»")
 
@@ -209,7 +209,7 @@ async def main():
               in por["chart_error_rate"], "tasa de error: 1.244 de 1.307 fallos en la carga sostenida, 63 en la subida")
     comprobar("Primera min" not in por["chart_codes_per_second"], "codigos: sin «Primera… ultima…»")
     comprobar("HTTP 502: 10 respuestas" in por["chart_codes_per_second"]
-              and "concentrados en min 18:32–19:26 (20:23:27–20:24:21): 7 de 10" in por["chart_codes_per_second"],
+              and "concentrados en min 18:32–19:26 (15:23:27–15:24:21): 7 de 10" in por["chart_codes_per_second"],
               "codigos: el 502 concentrado (7 de 10 en min 18:32-19:26)")
     comprobar("del min" not in por["errors"] and "repartidos sin concentracion; 63 en las rampas" in por["errors"],
               "tabla de errores: la concentracion de cada error en «Cuando»")

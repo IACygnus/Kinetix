@@ -13,6 +13,7 @@ import json
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.services.zona_informe import a_informe   # 146
 import logging
 
 import pandas as pd
@@ -629,8 +630,8 @@ async def export_html(
             'testTypeColor': test_type_info['color'],
             'filename': execution.jtl_filename,
             'filenames': execution.jtl_filenames or [execution.jtl_filename],
-            'startTime': execution.start_time.strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
-            'endTime': execution.end_time.strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
+            'startTime': a_informe(execution.start_time).strftime('%d/%m/%Y %H:%M:%S') if execution.start_time else '--',
+            'endTime': a_informe(execution.end_time).strftime('%d/%m/%Y %H:%M:%S') if execution.end_time else '--',
             'duration': float(execution.duration_seconds or 0),
             'totalRequests': execution.total_requests,
             'totalErrors': execution.total_errors,

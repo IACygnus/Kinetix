@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Set
 import logging
 
+from app.services.zona_informe import a_informe
+
 logger = logging.getLogger(__name__)
 
 
@@ -217,7 +219,7 @@ class JTLParser:
         logger.debug(f"Columnas en JTL: {list(self.df.columns)}")
 
         # Convertir timestamp a datetime
-        self.df['timestamp'] = pd.to_datetime(self.df['timeStamp'], unit='ms')
+        self.df['timestamp'] = a_informe(pd.to_datetime(self.df['timeStamp'], unit='ms'))
 
         # Convertir success a boolean
         if 'success' in self.df.columns:
@@ -251,7 +253,7 @@ class JTLParser:
         combined.reset_index(drop=True, inplace=True)
 
         # Convertir timestamp a datetime
-        combined['timestamp'] = pd.to_datetime(combined['timeStamp'], unit='ms')
+        combined['timestamp'] = a_informe(pd.to_datetime(combined['timeStamp'], unit='ms'))
 
         # Convertir success a boolean
         if 'success' in combined.columns:

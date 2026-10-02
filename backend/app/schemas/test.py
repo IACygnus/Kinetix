@@ -1,9 +1,11 @@
 """
 Schemas Pydantic para validacion de API - Test Executions v2.0
 """
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+from app.services.zona_informe import a_informe
 
 
 class TestExecutionBase(BaseModel):
@@ -89,6 +91,13 @@ class TestExecutionResponse(TestExecutionBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    # 146: la base guarda UTC sin zona; la API entrega la hora de los informes
+    # (REPORT_TIMEZONE, America/Bogota por defecto), tambien sin zona, y la
+    # pantalla la pinta tal cual. Un solo punto para todas las pantallas.
+    @field_serializer('start_time', 'end_time', 'execution_date', 'created_at', 'updated_at')
+    def _hora_informe(self, v: Optional[datetime]):
+        return a_informe(v)
 
 
 class TimelineData(BaseModel):

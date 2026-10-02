@@ -41,6 +41,7 @@ from app.services.ai import fases as F   # BLOQUE 2.1
 from app.services.ai import contexto_prompt   # BLOQUE 2.2
 # F1 (aviso de respaldo): de donde sale cada texto, y por que.
 from app.services.ai import origen
+from app.services.zona_informe import a_utc   # 146
 
 logger = logging.getLogger(__name__)
 
@@ -626,8 +627,8 @@ async def run_jtl_analysis_pipeline(
     )
 
     # === 2. Popular metricas basicas (mismo mapeo que upload.py) ===
-    test_execution.start_time = _strip_tz(metrics.get('start_time'))
-    test_execution.end_time = _strip_tz(metrics.get('end_time'))
+    test_execution.start_time = _strip_tz(a_utc(metrics.get('start_time')))  # 146: la base sigue en UTC
+    test_execution.end_time = _strip_tz(a_utc(metrics.get('end_time')))  # 146: la base sigue en UTC
     test_execution.duration_seconds = float(metrics.get('duration_seconds', 0))
     test_execution.total_requests = int(metrics['total_requests'])
     test_execution.total_errors = int(metrics['total_errors'])

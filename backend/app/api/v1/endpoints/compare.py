@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.db.session import get_db
 from app.core.security import get_current_user
 from app.db.models.test import TestExecution
+from app.services.zona_informe import a_informe   # 146
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,8 +25,8 @@ def _exec_to_dict(exc) -> dict:
         "test_type": exc.test_type,
         "client": exc.client,
         "project": exc.project,
-        "start_time": exc.start_time.isoformat() if exc.start_time else None,
-        "end_time": exc.end_time.isoformat() if exc.end_time else None,
+        "start_time": a_informe(exc.start_time).isoformat() if exc.start_time else None,
+        "end_time": a_informe(exc.end_time).isoformat() if exc.end_time else None,
         "duration_seconds": exc.duration_seconds,
         "total_requests": exc.total_requests,
         "total_errors": exc.total_errors,

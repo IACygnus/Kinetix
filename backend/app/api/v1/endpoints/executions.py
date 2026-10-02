@@ -25,6 +25,7 @@ from app.db.models.test import TestExecution
 from app.db.models.client import Client
 from app.services.engine.stepping_controller import SteppingController
 from app.services.engine.execution_manager import execution_manager
+from app.services.zona_informe import a_utc   # 146
 
 logger = logging.getLogger(__name__)
 
@@ -632,8 +633,8 @@ async def generate_report_from_execution(
             project=snapshot.get("scenario_name", project_name),
             test_type=test_type,
             # Strip tzinfo for TIMESTAMP WITHOUT TIME ZONE (value already in COT)
-            start_time=metrics.get('start_time').replace(tzinfo=None) if hasattr(metrics.get('start_time'), 'tzinfo') and metrics.get('start_time') is not None else metrics.get('start_time'),
-            end_time=metrics.get('end_time').replace(tzinfo=None) if hasattr(metrics.get('end_time'), 'tzinfo') and metrics.get('end_time') is not None else metrics.get('end_time'),
+            start_time=a_utc(metrics.get('start_time')),  # 146: la base sigue en UTC
+            end_time=a_utc(metrics.get('end_time')),  # 146: la base sigue en UTC
             duration_seconds=float(metrics.get('duration_seconds', 0)),
             total_requests=int(metrics['total_requests']),
             total_errors=int(metrics['total_errors']),

@@ -45,6 +45,7 @@ from app.db.models.transaction_chart_analysis import (                          
     SECTIONS,
     SECTIONS_GENERADAS,   # ETAPA 2 (D20)
 )
+from app.services.zona_informe import a_utc   # 146
 from app.schemas.test import (
     TestExecutionResponse,
     ChartData,
@@ -484,8 +485,8 @@ async def upload_jtl(
 
             # Info del archivo — strip tzinfo for TIMESTAMP WITHOUT TIME ZONE column
             # (values are already in COT from jtl_parser, just remove the tz marker)
-            start_time=metrics.get('start_time').replace(tzinfo=None) if hasattr(metrics.get('start_time'), 'tzinfo') and metrics.get('start_time') is not None else metrics.get('start_time'),
-            end_time=metrics.get('end_time').replace(tzinfo=None) if hasattr(metrics.get('end_time'), 'tzinfo') and metrics.get('end_time') is not None else metrics.get('end_time'),
+            start_time=a_utc(metrics.get('start_time')),  # 146: la base sigue en UTC
+            end_time=a_utc(metrics.get('end_time')),  # 146: la base sigue en UTC
             duration_seconds=float(metrics.get('duration_seconds', 0)),
 
             # Metricas basicas

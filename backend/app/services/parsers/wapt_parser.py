@@ -8,6 +8,8 @@ from io import BytesIO
 from urllib.parse import urlparse
 import logging
 
+from app.services.zona_informe import a_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +24,8 @@ def parse_wapt_csv(file_content: bytes) -> pd.DataFrame:
     time_col = col_map.get('time')
     if time_col:
         try:
-            normalized['timeStamp'] = (pd.to_datetime(df[time_col]).astype('int64') // 10**6)
+            # 146: una hora de reloj sin zona es hora de los informes, no UTC
+            normalized['timeStamp'] = (a_utc(pd.to_datetime(df[time_col])).astype('int64') // 10**6)
         except Exception:
             normalized['timeStamp'] = pd.Series(range(len(df))) * 100 + int(pd.Timestamp.now().timestamp() * 1000)
     else:
