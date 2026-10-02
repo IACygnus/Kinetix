@@ -4,6 +4,7 @@
     GET    /analista/sesiones                    las mías (admin: todas)
     GET    /analista/sesiones/{id}               la sesión: ficha, mensajes, adjuntos
     PATCH  /analista/sesiones/{id}               lo que el analista toca a mano
+    POST   /analista/sesiones/{id}/adjuntos      el CSV/XML de JMeter con el detalle de los errores
 
 Admin y analista. **Cada analista ve solo las suyas**: la de otro responde 404,
 como si no existiera. El admin ve todas.
@@ -33,6 +34,7 @@ from app.db.models.client import Client
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.analista import CambiosFicha
+from app.services.analista import errores as ER
 from app.services.analista import ficha as FI
 
 logger = logging.getLogger(__name__)
@@ -225,4 +227,69 @@ async def cambiar_ficha(sid: str, cambios: CambiosFicha, db: AsyncSession = Depe
     s.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(s)
+    return await _lectura(db, s)
+
+
+# ------------------------------------------------------------------ adjuntos (B)
+
+async def asociar_adjuntos(db: AsyncSession, session_id, execution_id) -> int:
+    """B.8: al generar, los adjuntos quedan enlazados a la ejecución como
+    evidencia (`analysis_attachments.execution_id`). La pantalla de Evidencias
+    todavía no los pinta: el enlace queda en el modelo."""
+    adjuntos = await _adjuntos(db, session_id)
+    for a in adjuntos:
+        a.execution_id = execution_id
+    return len(adjuntos)
+
+
+MAX_ADJUNTOS = 5
+
+
+@router.post("/sesiones/{sid}/adjuntos", status_code=201)
+async def adjuntar_errores(sid: str, archivo: UploadFile = File(...), db: AsyncSession = Depends(get_db),
+                           usuario: User = Depends(ROL)):
+    """El CSV o XML de JMeter con el detalle de los errores. Devuelve la sesión
+    con su resumen, ya enmascarado. Ni el contenido ni los ejemplos van al log."""
+    s = await _sesion(db, usuario, sid)
+    _abierta(s)
+    nombre = Path(archivo.filename or "").name
+    formato = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if formato not in ("csv", "xml"):
+        raise HTTPException(415, "Solo se admiten archivos .csv o .xml de JMeter")
+    if len(await _adjuntos(db, s.id)) >= MAX_ADJUNTOS:
+        raise HTTPException(409, f"Una sesión admite como máximo {MAX_ADJUNTOS} archivos de errores")
+    partes, total = [], 0
+    while True:
+        trozo = await archivo.read(1024 * 1024)
+        if not trozo:
+            break
+        total += len(trozo)
+        if total > ER.TOPE_BYTES:
+            raise HTTPException(413, f"El archivo pasa del tope de {ER.TOPE_BYTES // (1024 * 1024)} MB")
+        partes.append(trozo)
+    datos = b"".join(partes)
+    fallos_jtl = {p["label"]: p["fallos"] for p in (s.ficha.get("fallos") or {}).get("por_transaccion") or []}
+    try:
+        resumen = await asyncio.to_thread(ER.resumir, datos, formato, fallos_jtl)
+    except ER.ArchivoInvalido as e:
+        raise HTTPException(400, f"No se pudo leer el archivo de errores: {e}")
+
+    aid = uuid.uuid4()
+    carpeta = UPLOAD_DIR / "analista" / str(s.id)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta = carpeta / f"{aid}.{formato}"
+    async with aiofiles.open(ruta, "wb") as out:
+        await out.write(datos)
+    a = AnalysisAttachment(id=aid, session_id=s.id, nombre=nombre[:255], formato=formato, ruta=str(ruta),
+                           tamano=total, resumen=resumen)
+    db.add(a)
+    ficha = copy.deepcopy(s.ficha)
+    ficha["errores_detalle"]["adjuntos"].append(ER.resumen_corto(str(aid), nombre, resumen))
+    FI.recalcular(ficha)
+    s.ficha = ficha
+    s.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(s)
+    logger.info(f"Analista: adjunto {aid} en la sesion {s.id} ({formato}, {total} bytes, "
+                f"{resumen['errores']} errores, cuadra={resumen['cruce']['cuadra']})")
     return await _lectura(db, s)
