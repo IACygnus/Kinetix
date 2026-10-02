@@ -12,6 +12,7 @@ import SummaryTable from './SummaryTable';   // ETAPA 2 (D15): la tabla resumen
 import TransactionReportSection from './TransactionReportSection';   // N4.7
 import AvisoEstilo from '../common/AvisoEstilo';   // ETAPA 3 (D36)
 import { FranjaRespaldo } from '../common/AvisoRespaldo';   // F2
+import { umbralDeTiempo } from '../../utils/umbralTiempo';   // 151
 import { useChartLayers, capasComoParams } from '../../hooks/useChartLayers';   // ETAPA 6 (D46-D48)
 import ExportScopeDialog, { FormatoExport, SeleccionExport } from './ExportScopeDialog';   // ETAPA 6 (D50)
 import {
@@ -676,7 +677,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                     <tr className="border-b-2 border-gray-200">
                       <th className="text-left py-3 px-4 text-base font-bold text-gray-500 uppercase">Transacción</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">P90 (ms)</th>
-                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">Umbral RT (ms)</th>
+                      <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">{execution.acceptance_criteria_json?.analista ? 'Criterio de tiempo' : 'Umbral RT (ms)'}</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">% Error</th>
                       <th className="text-center py-3 px-4 text-base font-bold text-gray-500 uppercase">Veredicto</th>
                     </tr>
@@ -689,7 +690,7 @@ export default function Dashboard({ executionId, onLogout: _onLogout, onBack, em
                         <tr key={txn} className="hover:bg-gray-50">
                           <td className="py-3 px-4 text-xl text-gray-900 font-medium">{txn}</td>
                           <td className="py-3 px-4 text-xl text-center text-gray-700">{txnData?.p90?.toFixed(0) || '--'}</td>
-                          <td className="py-3 px-4 text-xl text-center text-gray-400">{rtThreshold}</td>
+                          <td className="py-3 px-4 text-xl text-center text-gray-400" data-testid="umbral-tx">{umbralDeTiempo(execution.acceptance_criteria_json, txn) ?? rtThreshold}</td>
                           <td className="py-3 px-4 text-xl text-center text-gray-700">{txnData?.error_rate?.toFixed(2) || '0.00'}%</td>
                           <td className="py-3 px-4 text-center">
                             <span className={`px-3 py-1 rounded-full text-base font-bold uppercase ${
