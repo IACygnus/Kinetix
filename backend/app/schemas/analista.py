@@ -7,7 +7,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Tipo = Literal["tiempo_respuesta", "disponibilidad_o_error", "concurrencia", "caudal", "proceso", "otro"]
+Tipo = Literal["tiempo_respuesta", "disponibilidad_o_error", "concurrencia", "caudal", "volumen", "proceso", "otro"]
 Operador = Literal["<", "<=", ">", ">=", "="]
 
 
@@ -25,6 +25,14 @@ class CriterioEntrada(_Estricto):
     cantidad: Optional[float] = Field(None, ge=0)
     transaccion: Optional[str] = Field(None, max_length=300)
     cada_transaccion: Optional[bool] = None   # el límite vale para cada una
+    # 150: el alcance. Las transacciones nombradas (cada una por separado), o su
+    # suma («N entre A y B»), o toda la prueba solo si el analista lo dijo.
+    transacciones: Optional[List[str]] = Field(None, max_length=20)
+    suma: Optional[bool] = None
+    toda_la_prueba: Optional[bool] = None
+    metrica_supuesta: Optional[bool] = None   # tiempo sin medida dicha: P90, y se dice
+    ventana_valor: Optional[float] = Field(None, ge=0)   # volumen «en 30 minutos»
+    ventana_unidad: Optional[Literal["s", "min", "h"]] = None
 
 
 class CriterioEdicion(_Estricto):
@@ -38,6 +46,14 @@ class CriterioEdicion(_Estricto):
     cantidad: Optional[float] = Field(None, ge=0)
     transaccion: Optional[str] = Field(None, max_length=300)
     cada_transaccion: Optional[bool] = None
+    # 150: el alcance. Las transacciones nombradas (cada una por separado), o su
+    # suma («N entre A y B»), o toda la prueba solo si el analista lo dijo.
+    transacciones: Optional[List[str]] = Field(None, max_length=20)
+    suma: Optional[bool] = None
+    toda_la_prueba: Optional[bool] = None
+    metrica_supuesta: Optional[bool] = None   # tiempo sin medida dicha: P90, y se dice
+    ventana_valor: Optional[float] = Field(None, ge=0)   # volumen «en 30 minutos»
+    ventana_unidad: Optional[Literal["s", "min", "h"]] = None
     # Solo para los «lo confirma el analista»: lo que dice él. No es un resultado
     # calculado: esos no se tocan.
     confirmacion: Optional[Literal["cumple", "no_cumple"]] = None

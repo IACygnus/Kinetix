@@ -26,6 +26,7 @@ correr "B adjuntos de errores"  python3 $D/b5_b_adjuntos.py
 correr "C prompts"              python3 $D/b5_c_prompts.py
 correr "D chat y generar"       python3 $D/b5_d_chat.py
 correr "E adjuntos v2 (150)"    python3 $D/b5_e_adjuntos_v2.py
+correr "F criterios v2 (150)"   python3 $D/b5_f_criterios_v2.py
 echo
 [ "$fallos" -eq 0 ] && echo "CIERRE B5: TODO PASA" || echo "CIERRE B5: $fallos suite(s) con fallos"
 exit "$fallos"

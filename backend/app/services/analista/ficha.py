@@ -72,14 +72,23 @@ def construir(parser, metrics: Dict[str, Any], *, cliente: Optional[str], client
     concentracion = F.concentracion(df_main[~ok]["timestamp"], fases, "fallos") if total_err else ""
 
     extra = {str(r["label"]): r for _, r in summary.iterrows()}
+    # 150: los usuarios del grupo de hilos de cada transacción (grpThreads): la
+    # concurrencia «de un servicio» se mide con su grupo, no con la prueba entera.
+    grupo = {}
+    if "grpThreads" in df_main.columns:
+        import pandas as pd
+        grupo = pd.to_numeric(df_main["grpThreads"], errors="coerce").groupby(df_main["label"]).max().to_dict()
     transacciones = []
     for t in filas_del_panel(summary, None):
         r = extra[t["label"]]
         # Sin criterios, la marca crítica es solo la del pico (señales b y c):
         # se guarda aparte para volver a ella si se quitan los criterios.
         t["pico"], t["motivo_pico"] = t.pop("is_critical_suggested"), t["motivo"]
+        g = grupo.get(t["label"])
         t.update(mediana=round(float(r["mediana"]), 2), p99=round(float(r["p99"]), 2),
                  min=round(float(r["min"]), 2), critica=t["pico"],
+                 correctas=int(t["muestras"]) - int(t["errores"]),
+                 usuarios_grupo=None if g is None or g != g else int(g),
                  informe=t["errores"] > 0, informe_origen="auto")
         transacciones.append(t)
 
@@ -191,15 +200,22 @@ def recalcular(ficha: Dict[str, Any], cargar_df: Optional[Callable[[], Any]] = N
     # las que tienen errores; con criterios, las críticas. Las que el analista
     # tocó a mano se quedan como él las dejó.
     con_criterios = crit["estado"] == "declarados"
-    m = motor(ficha)
-    if con_criterios:
-        import pandas as pd
-        resumen = pd.DataFrame([{**t, "rendimiento": t["tps"]} for t in ficha["transacciones"]])
-        criticas = {f["label"]: f for f in filas_del_panel(resumen, m)} if len(resumen) else {}
+    todas = [t["label"] for t in ficha["transacciones"]]
+    # 150: el veredicto y la marca crítica salen de los criterios declarados, no
+    # de los tres fijos del motor: una transacción es crítica si algún criterio
+    # que la toca no se cumple (o si tiene un pico, como siempre).
+    ver = CL.veredicto(crit["lista"], todas) if con_criterios else None
+    crit["veredicto"] = ver
+    crit["grupos"] = CL.agrupar(crit["lista"], todas) if con_criterios else []
     for t in ficha["transacciones"]:
         if con_criterios:
-            f = criticas[t["label"]]
-            t["critica"], t["motivo"], t["verdict"] = f["is_critical_suggested"], f["motivo"], f["verdict"]
+            fallos = [CL.describir(c) for c in crit["lista"]
+                      if t["label"] in ((c.get("resultado") or {}).get("fallan") or [])]
+            vt = (ver or {}).get("verdicts_per_transaction", {}).get(t["label"])
+            t["critica"] = bool(fallos) or bool(t.get("pico"))
+            t["motivo"] = " · ".join((["no cumple: " + "; ".join(fallos)] if fallos else [])
+                                     + ([t.get("motivo_pico")] if t.get("pico") and t.get("motivo_pico") else []))
+            t["verdict"] = vt
         else:
             t["critica"], t["motivo"], t["verdict"] = bool(t.get("pico")), t.get("motivo_pico", ""), None
         if t.get("informe_origen") != "analista":
@@ -271,18 +287,49 @@ def agregar_criterios(ficha, entradas: List[Dict[str, Any]], origen: str) -> set
             c = CL.normalizar(e, labels, _nuevo_id("c", lista), origen)
         except CL.CriterioInvalido as err:
             raise CambioInvalido(str(err))
-        igual = next((x for x in lista if c["tipo"] != "otro" and x["tipo"] == c["tipo"]
-                      and x["metrica"] == c["metrica"] and x["alcance"] == c["alcance"]
-                      and x["operador"] == c["operador"]), None)
-        if igual is not None:
-            c["id"] = igual["id"]
-            lista[lista.index(igual)] = c
+        # Solo se reemplazan criterios de ANTES: una misma tanda no se corrige a sí misma.
+        sustituye = [x for x in lista if x["id"] not in tocados and cubre(c, x, labels)]
+        if sustituye:
+            c["id"] = sustituye[0]["id"]
+            lista[lista.index(sustituye[0])] = c
+            for x in sustituye[1:]:
+                lista.remove(x)
         else:
             lista.append(c)
         tocados.add(c["id"])
     if lista:
         ficha["criterios"]["ninguno_acordado"] = False
     return tocados
+
+
+def cubre(nuevo: Dict[str, Any], viejo: Dict[str, Any], labels: List[str]) -> bool:
+    """¿El criterio nuevo REEMPLAZA al viejo? (150: una corrección no añade
+    duplicados.) Mismo tipo —y misma medida si es de tiempo o de errores—, y o
+    bien el MISMO alcance, o bien el viejo era una suma que toca las mismas
+    transacciones («es por servicio, no el total»). Un criterio más general no
+    se traga a uno más concreto: para eso la IA manda `reemplaza`."""
+    if nuevo["tipo"] == "otro" or viejo["tipo"] != nuevo["tipo"]:
+        return False
+    if nuevo["tipo"] in ("tiempo_respuesta", "disponibilidad_o_error") and viejo.get("metrica") != nuevo.get("metrica"):
+        return False
+    a_n, a_v = nuevo.get("alcance") or {}, viejo.get("alcance") or {}
+    if a_n.get("tipo") == "global" or a_v.get("tipo") == "global":
+        return a_n.get("tipo") == a_v.get("tipo")
+    tn, tv = set(CL.transacciones_de(nuevo, labels)), set(CL.transacciones_de(viejo, labels))
+    if not tn and not tv:
+        return True
+    if not tn or not tv or not (tn & tv):
+        return False
+    if a_v.get("tipo") == "suma":
+        return True
+    return tv == tn and (a_v.get("tipo") == "cada_transaccion") == (a_n.get("tipo") == "cada_transaccion")
+
+
+def reemplazar(ficha, ids: List[str]) -> None:
+    """Quita los criterios que la IA dice que reemplaza (los que no existen se ignoran)."""
+    lista = ficha["criterios"]["lista"]
+    for x in [x for x in lista if x["id"] in set(ids or [])]:
+        lista.remove(x)
 
 
 def _buscar(lista, cid, que):
@@ -293,7 +340,9 @@ def _buscar(lista, cid, que):
 
 
 CAMPOS_CRITERIO = ("texto", "tipo", "metrica", "operador", "valor", "unidad", "cantidad", "transaccion",
-                   "cada_transaccion")
+                   "transacciones", "suma", "cada_transaccion", "toda_la_prueba", "metrica_supuesta",
+                   "ventana_valor", "ventana_unidad")
+_ALCANCE = ("transaccion", "transacciones", "suma", "cada_transaccion", "toda_la_prueba")
 
 
 def aplicar_patch(ficha: Dict[str, Any], cambios: Dict[str, Any]) -> set:
@@ -326,10 +375,18 @@ def aplicar_patch(ficha: Dict[str, Any], cambios: Dict[str, Any]) -> set:
             if (viejo.get("resultado") or {}).get("estado") != "lo_confirma_el_analista" and e["confirmacion"]:
                 raise CambioInvalido("solo se confirma a mano un criterio que Kinetix no puede medir")
             viejo["confirmacion"] = e["confirmacion"]
-        base = {k: viejo.get(k) for k in CAMPOS_CRITERIO if k not in ("transaccion", "cada_transaccion")}
-        base["transaccion"] = (viejo.get("alcance") or {}).get("transaccion")
-        base["cada_transaccion"] = (viejo.get("alcance") or {}).get("tipo") == "cada_transaccion"
+        a = viejo.get("alcance") or {}
+        base = {k: viejo.get(k) for k in CAMPOS_CRITERIO if k not in _ALCANCE and k not in ("ventana_valor",
+                                                                                          "ventana_unidad")}
+        base.update(transacciones=CL.transacciones_de(viejo, sorted(labels)) if a.get("tipo") != "cada_transaccion"
+                    else [], suma=a.get("tipo") == "suma", cada_transaccion=a.get("tipo") == "cada_transaccion",
+                    toda_la_prueba=a.get("tipo") == "global")
+        if viejo.get("ventana"):
+            base.update(ventana_valor=viejo["ventana"]["valor"], ventana_unidad=viejo["ventana"]["unidad"])
         campos = {k: v for k, v in e.items() if k in CAMPOS_CRITERIO}
+        if any(k in campos for k in _ALCANCE):   # un alcance nuevo sustituye entero al viejo
+            for k in _ALCANCE:
+                base.pop(k, None)
         if not campos:
             continue
         base.update(campos)

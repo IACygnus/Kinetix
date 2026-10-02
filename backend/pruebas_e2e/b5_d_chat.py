@@ -115,7 +115,7 @@ ok(crit["response_time"] == 500 and crit["availability"] == 99.5 and crit["verdi
    "con criterios: el motor los recibe y da su veredicto (NO APTO)")
 ok(crit["critical_transactions"] == [t["label"] for t in ficha2["transacciones"] if t["informe"]],
    "las transacciones con informe propio: las críticas de la ficha")
-ok([c["resultado"]["estado"] for c in crit["analista"]["criterios"]] == ["cumple", "no_cumple"],
+ok([c["resultado"]["estado"] for c in crit["analista"]["criterios"]] == ["no_cumple", "no_cumple"],
    "los resultados del servidor viajan a la ejecución")
 
 # El log del 8002: el de reiniciar_8002.sh o el del arranque con --reload.
@@ -181,7 +181,8 @@ async def proceso():
                 {"texto": "El 90 % en menos de 300 ms", "tipo": "tiempo_respuesta", "metrica": "p90",
                  "operador": "<=", "valor": 300, "unidad": "ms", "resultado": {"estado": "cumple"}},
                 {"texto": "Procesar 2.000 registros en menos de 5 minutos", "tipo": "proceso",
-                 "metrica": "registros_en_tiempo", "operador": "<=", "valor": 5, "unidad": "min", "cantidad": 2000},
+                 "metrica": "registros_en_tiempo", "operador": "<=", "valor": 5, "unidad": "min", "cantidad": 2000,
+                 "toda_la_prueba": True},
                 {"texto": "algo raro", "tipo": "magia"}],
             "relato": ["Era una ronda corta de calentamiento."],
             "contexto": {"ambiente": None, "version": "3.2.1"},
@@ -206,8 +207,8 @@ async def proceso():
            "pendientes: descartado, resuelto, y los criterios por su lista")
         ok(f["listo"]["puede_generar"] and f["listo"]["n"] == 3, f"listo {f['listo']['n']} de {f['listo']['m']}")
         ult = d["mensajes"][-1]
-        ok(ult["origen"] == "ia" and ult["cambios"]["criterios"] and ult["pregunta"] and ult["texto"].endswith(CH.SALIDA),
-           "la respuesta en el chat, con sus cambios y la salida")
+        ok(ult["origen"] == "ia" and ult["cambios"]["criterios"] and ult["pregunta"] and CH.SALIDA in ult["texto"]
+           and "Así los entendí:" in ult["texto"], "la respuesta en el chat, con sus cambios, la salida y «Así los entendí»")
         p_turno = PROMPTS[-1][0]
         ok(PROMPTS[-1][2] is False and p_turno.startswith("DATOS DE LA EJECUCION"), "el turno: sin sanear, con el bloque")
         for t in ("FICHA DEL INFORME, COMO ESTÁ AHORA", "TRANSACCIONES DEL JTL", "PREGUNTAS ABIERTAS QUE YA HICISTE "

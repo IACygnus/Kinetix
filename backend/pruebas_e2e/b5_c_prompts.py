@@ -70,7 +70,7 @@ def _ficha(p, metrics):
         {"texto": "Disponibilidad del 99,5 %", "tipo": "disponibilidad_o_error", "metrica": "disponibilidad",
          "operador": ">=", "valor": 99.5, "unidad": "%"},
         {"texto": "Procesar 20.000 registros en menos de 30 minutos", "tipo": "proceso", "cantidad": 20000,
-         "valor": 30, "unidad": "min"}], "chat")
+         "valor": 30, "unidad": "min", "toda_la_prueba": True}], "chat")
     FI.agregar_relato(f, ["Era una ronda corta de calentamiento, de 5 minutos.", INYECCION], "chat")
     f["contexto"].update(ambiente="QA", version="3.2.1")
     df = p.df_main
@@ -141,9 +141,9 @@ async def main():
     ok("CRITERIOS DE ACEPTACION: no se definieron" not in contexto
        and "CRITERIOS DE ACEPTACIÓN DE LA PRUEBA:" not in contexto,
        "sustituyen al bloque de los tres criterios fijos")
-    for t in ("«El 90 % en menos de 500 ms» (tiempo de respuesta, toda la prueba): CUMPLE",
-              "«Disponibilidad del 99,5 %» (disponibilidad o errores, toda la prueba): NO CUMPLE",
-              "(proceso, toda la prueba): LO CONFIRMA EL ANALISTA", "Ambiente: QA", "Versión desplegada: 3.2.1",
+    for t in ("«El 90 % en menos de 500 ms» (tiempo de respuesta, cada transacción): NO CUMPLE",
+              "«Disponibilidad del 99,5 %» (disponibilidad o errores, cada transacción): NO CUMPLE",
+              "(proceso, toda la prueba): NO CUMPLE", "Ambiente: QA", "Versión desplegada: 3.2.1",
               "Era una ronda corta", "Archivo de errores (CSV): 1.988 errores", "Cuadra con el JTL"):
         ok(t in contexto, f"lleva: {t[:60]}")
     i_c = contexto.index("CRITERIOS DE ACEPTACIÓN (los dio")

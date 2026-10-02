@@ -58,10 +58,8 @@ def seccion_criterios(an: Dict[str, Any]) -> str:
     filas = []
     for c in an.get("criterios") or []:
         r = c.get("resultado") or {}
-        alcance = (c.get("alcance") or {}).get("transaccion")
-        cada = (c.get("alcance") or {}).get("tipo") == "cada_transaccion"
-        donde = (f"transacción «{limpio(alcance)}»" if alcance
-                 else "cada transacción por separado" if cada else "toda la prueba")
+        from app.services.analista.criterios_libres import alcance_txt
+        donde = limpio(alcance_txt(c))
         linea = (f"- «{limpio(c.get('texto'))}» ({_TIPO.get(c.get('tipo'), 'otro')}, {donde}): "
                  f"{_ESTADO.get(r.get('estado'), 'NO EVALUADO')}")
         detalle = "; ".join(limpio(x) for x in (r.get("texto"), r.get("motivo"), r.get("nota")) if x)

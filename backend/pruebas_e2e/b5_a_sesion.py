@@ -73,12 +73,16 @@ r = admin.patch(f"{A}/{sid}", json={"criterios": {"agregar": [
     {"texto": "Menos del 50 % de errores en Get_Booking_Id", "tipo": "disponibilidad_o_error",
      "metrica": "tasa_error", "operador": "<", "valor": 50, "transaccion": "4. get_booking_id"},
     {"texto": "Procesar 2.000 registros en menos de 5 minutos", "tipo": "proceso",
-     "metrica": "registros_en_tiempo", "operador": "<=", "valor": 5, "unidad": "min", "cantidad": 2000},
+     "metrica": "registros_en_tiempo", "operador": "<=", "valor": 5, "unidad": "min", "cantidad": 2000,
+     "toda_la_prueba": True},
     {"texto": "Procesar 20.000 registros en menos de 30 minutos", "tipo": "proceso", "cantidad": 20000,
-     "valor": 30, "unidad": "min"},
+     "valor": 30, "unidad": "min", "toda_la_prueba": True},
+    {"texto": "Disponibilidad global del 50 %", "tipo": "disponibilidad_o_error", "metrica": "disponibilidad",
+     "valor": 50, "toda_la_prueba": True},
     {"texto": "Auth en menos de 1 s", "tipo": "tiempo_respuesta", "valor": 1, "unidad": "s",
      "transaccion": "1. Auth"},
-    {"texto": "5 usuarios", "tipo": "concurrencia", "valor": 5},
+    {"texto": "5 usuarios", "tipo": "concurrencia", "valor": 5, "toda_la_prueba": True},
+    {"texto": "10.000 peticiones", "tipo": "volumen", "valor": 10000},
     {"texto": "Caudal de 20 por segundo", "tipo": "caudal", "valor": 20},
     {"texto": "Que el cliente lo apruebe", "tipo": "otro"},
     {"texto": "Login en menos de 2 s", "tipo": "tiempo_respuesta", "valor": 2, "unidad": "s",
@@ -86,21 +90,30 @@ r = admin.patch(f"{A}/{sid}", json={"criterios": {"agregar": [
     {"texto": "Ninguna transacción por encima del 5 % de errores", "tipo": "disponibilidad_o_error",
      "metrica": "tasa_error", "valor": 5, "cada_transaccion": True},
 ]}})
-ok(r.status_code == 200, f"PATCH con 11 criterios -> 200 ({r.status_code})")
+ok(r.status_code == 200, f"PATCH con 13 criterios -> 200 ({r.status_code})")
 f = r.json()["ficha"]
 L = {c["texto"]: c for c in f["criterios"]["lista"]}
 res = lambda t: L[t]["resultado"]
 p90 = float(df["elapsed"].quantile(0.90))
-ok(res("El 90 % en menos de 500 ms")["estado"] == "cumple" and abs(res("El 90 % en menos de 500 ms")["medido"] - p90) < 0.01,
-   f"P90 global {p90:.0f} ms ≤ 500 -> cumple")
-ok("1 de 6 transacciones" in (res("El 90 % en menos de 500 ms")["nota"] or ""), "la nota: cuántas no lo cumplen por su cuenta")
+# 150: sin servicio, el tiempo vale para CADA transacción (nunca contra el total)
+r1 = res("El 90 % en menos de 500 ms")
+p90_auth = float(df[df["label"] == "1. Auth"]["elapsed"].quantile(0.90))
+ok(L["El 90 % en menos de 500 ms"]["alcance"]["tipo"] == "cada_transaccion", "sin servicio: por transacción")
+ok(r1["estado"] == "no_cumple" and r1["fallan"] == ["1. Auth"] and abs(r1["medido"] - p90_auth) < 0.01
+   and not r1.get("nota"), f"P90 por transacción: Auth {p90_auth:.0f} ms > 500 -> no cumple y la nombra (sin nota)")
+ok(len(r1["por_transaccion"]) == 6, "con el detalle de las 6")
+ok(res("Disponibilidad del 99,5 %")["estado"] == "no_cumple" and len(res("Disponibilidad del 99,5 %")["fallan"]) == 3,
+   "disponibilidad 99,5 % por transacción: no cumplen las 3 con errores")
 disp = 100 * okmask.mean()
-ok(res("Disponibilidad del 99,5 %")["estado"] == "no_cumple" and abs(res("Disponibilidad del 99,5 %")["medido"] - disp) < 0.01,
-   f"disponibilidad {disp:.2f} % < 99,5 -> no_cumple")
+ok(res("Disponibilidad global del 50 %")["estado"] == "cumple"
+   and abs(res("Disponibilidad global del 50 %")["medido"] - disp) < 0.01,
+   f"«toda la prueba» solo si se dice: disponibilidad global {disp:.2f} % ≥ 50 -> cumple")
+ok(res("10.000 peticiones")["estado"] == "no_evaluado" and "a qué servicio" in res("10.000 peticiones")["motivo"],
+   "un volumen sin servicio no se evalúa contra el total")
 g = df[df["label"] == "4. Get_Booking_Id"]
 tasa_g = 100 * (1 - _ok(g).mean())
 c3 = L["Menos del 50 % de errores en Get_Booking_Id"]
-ok(c3["alcance"]["transaccion"] == "4. Get_Booking_Id", "el nombre de la transacción se normaliza al del JTL")
+ok(c3["alcance"]["transacciones"] == ["4. Get_Booking_Id"], "el nombre de la transacción se normaliza al del JTL")
 ok(c3["resultado"]["estado"] == "no_cumple" and abs(c3["resultado"]["medido"] - tasa_g) < 0.01,
    f"tasa de error de Get_Booking_Id {tasa_g:.2f} % -> no_cumple")
 t0 = df["timestamp"].min()
@@ -111,8 +124,8 @@ r4 = res("Procesar 2.000 registros en menos de 5 minutos")
 ok(r4["estado"] == ("cumple" if t2000 <= 5 else "no_cumple") and abs(r4["medido"] - round(t2000, 2)) < 0.01,
    f"proceso: las 2.000 primeras correctas en {t2000:.2f} min -> {r4['estado']}")
 r5 = res("Procesar 20.000 registros en menos de 30 minutos")
-ok(r5["estado"] == "lo_confirma_el_analista" and r5["medido"] == n_ok and r5["motivo"],
-   f"proceso: {n_ok} correctas < 20.000 -> lo confirma el analista")
+ok(r5["estado"] == "no_cumple" and r5["medido"] == n_ok,
+   f"proceso: {n_ok} correctas < 20.000 -> no cumple (150: un conteo que el JTL sí mide)")
 ok(res("Auth en menos de 1 s")["estado"] == "cumple", "Auth P90 < 1 s -> cumple")
 ok(res("5 usuarios")["estado"] == "cumple" and res("5 usuarios")["medido"] == 5, "concurrencia 5 -> cumple")
 ok(res("Caudal de 20 por segundo")["estado"] == "no_cumple", "caudal 16/s < 20 -> no_cumple")
@@ -123,7 +136,8 @@ cada = L["Ninguna transacción por encima del 5 % de errores"]
 peor = 100 * (1 - _ok(df[df["label"] == "6. Delete_Booking_Id"]).mean())
 ok(cada["alcance"]["tipo"] == "cada_transaccion" and cada["operador"] == "<=", "«cada transacción»: alcance y operador por defecto")
 ok(cada["resultado"]["estado"] == "no_cumple" and abs(cada["resultado"]["medido"] - peor) < 0.01
-   and "3 de 6 no lo cumplen" in cada["resultado"]["nota"], f"«cada transacción»: la peor, Delete ({peor:.2f} %), y cuáles no")
+   and len(cada["resultado"]["fallan"]) == 3 and "No cumplen:" in cada["resultado"]["texto"],
+   f"«cada transacción»: la peor, Delete ({peor:.2f} %), y cuáles no")
 ok(f["criterios"]["estado"] == "declarados" and f["listo"]["puede_generar"], "declarados -> se puede generar")
 
 print("== 3. Los que encajan con el motor")
@@ -136,8 +150,10 @@ ok(m["per_transaction"]["1. Auth"] == {"response_time": 1000.0}
 ok(not L["Caudal de 20 por segundo"]["en_motor"] and L["Disponibilidad del 99,5 %"]["en_motor"], "en_motor marcado")
 ok(all(t["informe"] == t["critica"] for t in f["transacciones"]), "con criterios, informe propio = las críticas")
 crit = {t["label"]: t for t in f["transacciones"]}
-ok(crit["6. Delete_Booking_Id"]["verdict"] == "NO APTO" and crit["1. Auth"]["verdict"] == "APTO",
-   "veredictos por transacción del motor")
+ok(crit["6. Delete_Booking_Id"]["verdict"] == "NO APTO" and crit["1. Auth"]["verdict"] == "NO APTO"
+   and "tiempo P90 ≤ 500 ms" in crit["1. Auth"]["motivo"],
+   "veredictos por transacción, desde los criterios (Auth incumple su P90)")
+ok(f["criterios"]["veredicto"]["verdict"] == "NO APTO", "y el de la ejecución")
 
 print("== 4. Casillas, contexto, «no hay criterios»")
 r = admin.patch(f"{A}/{sid}", json={"transacciones": {"1. Auth": True}, "contexto": {"ambiente": "QA"}})
@@ -172,8 +188,8 @@ for nombre, cuerpo in (
         ("operador inventado", {"criterios": {"agregar": [{"texto": "x", "tipo": "caudal", "operador": "~"}]}}),
         ("unidad que no va", {"criterios": {"agregar": [{"texto": "x", "tipo": "tiempo_respuesta", "unidad": "%"}]}}),
         ("valor negativo", {"criterios": {"agregar": [{"texto": "x", "tipo": "caudal", "valor": -3}]}}),
-        ("concurrencia por cada transacción", {"criterios": {"agregar": [{"texto": "x", "tipo": "concurrencia",
-                                                                         "valor": 5, "cada_transaccion": True}]}}),
+        ("proceso por cada transacción", {"criterios": {"agregar": [{"texto": "x", "tipo": "proceso",
+                                                                    "cantidad": 5, "cada_transaccion": True}]}}),
         ("casilla de una transacción que no existe", {"transacciones": {"No existe": True}}),
         ("quitar una línea que no existe", {"relato": {"quitar": ["r99"]}}),
         ("descartar los criterios", {"pendientes": {"descartar": ["criterios"]}}),
