@@ -138,12 +138,12 @@ instante (regla 31). Por eso, el método de la Etapa 0:
   «Historial Integrado» (sus rutas exigen admin o analista). Se dejó así a
   propósito en la Etapa 0, por decisión de Fredy; está anotado en
   `navegacion.ts`.
-- `Sidebar.tsx` y `Footer.tsx` siguen en el árbol **sin importar** hasta que
-  Fredy valide el armazón; después se borran.
+- ~~`Sidebar.tsx` y `Footer.tsx`~~: borrados al empezar la Etapa 1, con el armazón
+  ya aprobado.
 - El aviso de sesión expirada vive en `AuthContext.tsx` y sigue sin tildes
   («Tu sesion se cerro…»): no era de la Etapa 0.
 - El favicon (`/vite.svg`) no existe: 404 desde antes del rediseño.
 - Las pantallas que abren un modal propio al entrar (Script Designer, Diseñador
   IA) lo pintan con `z-50` por encima de la cabecera, como antes.
 - `ExecutionDashboard.tsx` tiene una tarjeta `sticky top-4` que, con la cabecera
-  fija de 60 px, se mete debajo al desplazar. Se corrige al migrarla (Etapa 5).
+  fija de 76 px, se mete debajo al desplazar. Se corrige al migrarla (Etapa 5).

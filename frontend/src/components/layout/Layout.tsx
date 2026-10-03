@@ -1,8 +1,8 @@
 /**
  * Layout — el armazón de Kinetix (rediseño, Etapa 0).
  *
- * Sustituye al menú lateral fijo de 288 px (Sidebar.tsx y Footer.tsx quedan
- * en el árbol, sin importar, hasta la validación de Fredy) por el del mockup:
+ * Sustituye al menú lateral fijo de 288 px (Sidebar.tsx y Footer.tsx, borrados
+ * en la Etapa 1) por el del mockup:
  *
  *   ┌──────────── cabecera: marca · módulos · buscar · pausa · tema · cuenta ┐
  *   │ riel de sección │ contenido (ancho máximo común, centrado)             │

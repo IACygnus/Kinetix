@@ -49,10 +49,6 @@ ALCANCE: list[Path] = [
 EXENTOS: set[Path] = {
     # La definición de los tokens: el único sitio donde puede haber un color.
     SRC / "styles" / "tokens.css",
-    # El menú viejo, sin importar desde la Etapa 0; se conserva hasta la
-    # validación de Fredy y luego se borra. No es código migrado.
-    SRC / "components" / "layout" / "Sidebar.tsx",
-    SRC / "components" / "layout" / "Footer.tsx",
 }
 
 EXTENSIONES = {".ts", ".tsx", ".css"}

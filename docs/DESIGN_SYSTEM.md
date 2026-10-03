@@ -163,7 +163,7 @@ login (`text-titular`, `text-cifra-login`, `text-lema`). Cifras siempre con
 | `rounded-panel` | 20 px | Paneles, KPI, Hero, zona de arrastre, modales |
 | `rounded-pill` | 999 px | Insignias, avatar, progreso |
 | `min-h-control` · `-sm` · `-lg` | 42 · 32 · 50 px | Alturas de control |
-| `min-h-hdr` | 60 px | Cabecera |
+| `min-h-hdr` | 76 px (`--hdr-h`) | Cabecera |
 | `w-riel` | 232 px | Riel de sección |
 | `max-w-pagina` | 98rem (1.568 px) | **Ancho máximo común del contenido** |
 | `max-w-lectura` | 68ch | Párrafos largos |
@@ -318,11 +318,14 @@ Reglas:
 | `amplia:` | 1500 px | Vuelven el nombre, el rol y «Ctrl K» a la cabecera (entre 1100 y 1499 se esconden) |
 | `sm:` … `2xl:` | los de Tailwind | Márgenes del contenido |
 
-- **La cabecera es siempre de una línea (60 px).** Entre 1100 y 1499 px, para que
-  quepan los siete módulos del admin, se esconden el nombre, el rol y «Ctrl K»;
+- **La cabecera es siempre de una línea, de 76 px de alto** (Fredy, revisión de
+  la Etapa 0: era de 60). Logo a 36 px de alto, módulos a 1rem con peso 600,
+  botones de la derecha de 44 × 44 con iconos de 22 px y avatar de 40 px. Si un
+  día no caben, se reduce el espacio entre módulos antes que la letra.
+  Entre 1100 y 1499 px, para que quepan los siete módulos del admin, se esconden el nombre, el rol y «Ctrl K»;
   el avatar lleva el nombre en `aria-label` y `title` (decisión de Fredy en la
   revisión de la Etapa 0; el mockup partía los módulos en dos líneas). Medido a
-  1194, 1280 y 1366: una línea.
+  1194, 1280 y 1366: una línea (a 1194 sobran unos 10 px).
 - `<main>` **no** lleva `overflow-x-hidden`: si algo no cabe, se ve.
 - Los ítems, rutas y roles del menú salen de `navegacion.ts`, una sola definición
   para cabecera, riel, menú desplegable y buscador. `ubicar(ruta)` decide el módulo
@@ -343,6 +346,6 @@ python tools/check_tokens.py --lista   # qué archivos revisa
 
 Revisa el **alcance de cada etapa** (lista `ALCANCE`, ampliable) y busca hex,
 colores funcionales literales, valores/variantes/propiedades arbitrarias de
-Tailwind y clases de la paleta por defecto o de `sqa-*`. Exentos: `tokens.css` y
-el menú viejo (`Sidebar.tsx`, `Footer.tsx`), sin importar desde la Etapa 0.
+Tailwind y clases de la paleta por defecto o de `sqa-*`. Exento: solo `tokens.css` (el menú viejo,
+`Sidebar.tsx` y `Footer.tsx`, se borró al empezar la Etapa 1).
 **Cada etapa añade a `ALCANCE` lo que migra.**

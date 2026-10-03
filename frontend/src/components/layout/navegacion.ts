@@ -2,8 +2,8 @@
  * El menú de Kinetix: módulos, pantallas, rutas y roles. Una sola definición
  * para la cabecera, el riel de sección, el menú desplegable y el buscador.
  *
- * Copiado ÍTEM POR ÍTEM de `Sidebar.tsx` (que queda sin importar hasta la
- * validación de Fredy): mismas rutas, mismo orden y mismos `roles`. Los
+ * Copiado ÍTEM POR ÍTEM de `Sidebar.tsx` (el menú viejo, borrado en la Etapa
+ * 1): mismas rutas, mismo orden y mismos `roles`. Los
  * únicos cambios son las tildes de «Administración» y «Configuración IA».
  *
  * Deuda conocida, a propósito sin corregir (decisión de Fredy, Etapa 0):
