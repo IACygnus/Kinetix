@@ -1,0 +1,230 @@
+/*
+ * Lo que la biblioteca base (src/components/ui) necesita y Tailwind 3.4 no sabe
+ * escribir sin valores arbitrarios: consultas de contenedor, pseudoelementos y
+ * la regla global de pausa. Todo sale de tokens.css.
+ */
+
+/* ---------- Movimiento ----------
+ * Dos interruptores, y basta uno para que todo quede quieto:
+ *   - prefers-reduced-motion: reduce (el sistema operativo).
+ *   - html[data-movimiento='pausado'] (el botón de pausa de la cabecera,
+ *     recordado en localStorage por PreferenciasContext).
+ * Las animaciones de las piezas se escriben con `motion-safe:animate-*`, así
+ * que con movimiento reducido ni siquiera arrancan. Los lienzos (<canvas>) leen
+ * los dos interruptores en JavaScript: ver hooks/useMovimiento.ts.
+ */
+/* En pausa las animaciones se QUITAN, no se congelan: congeladas, las de
+ * entrada (pop, sube, tarjeta) se quedaban en su primer fotograma, que es
+ * opacity: 0, y un diálogo abierto con la pausa puesta no se veía. Sin
+ * animación, cada elemento está en su estado final. */
+html[data-movimiento='pausado'] *,
+html[data-movimiento='pausado'] *::before,
+html[data-movimiento='pausado'] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Interruptor (Switch) ---------- */
+.kx-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 2.75rem;
+  height: 1.5rem;
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: rgb(var(--border-strong));
+  cursor: pointer;
+}
+
+.kx-switch::after {
+  content: '';
+  position: absolute;
+  top: 0.1875rem;
+  left: 0.1875rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  background: rgb(var(--surface));
+}
+
+.kx-switch:checked {
+  background: rgb(var(--ok));
+}
+
+.kx-switch:checked::after {
+  left: 1.4375rem;
+}
+
+.kx-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .kx-switch::after {
+    transition: left 0.14s;
+  }
+}
+
+/* ---------- Tabla: acciones fijas, y tarjetas en contenedor angosto ----------
+ * Mockup, «Tabla: acciones fijas, y tarjetas cuando el contenedor es angosto».
+ * El corte es del CONTENEDOR (58rem), no de la ventana: la misma tabla se
+ * apila dentro de una columna estrecha aunque la pantalla sea ancha.
+ */
+.kx-tabla-caja {
+  container-type: inline-size;
+}
+
+.kx-tabla-scroll {
+  overflow-x: auto;
+}
+
+.kx-tabla {
+  min-width: var(--kx-tabla-min, 0);
+}
+
+.kx-tabla .kx-acciones {
+  position: sticky;
+  right: 0;
+  width: 1%;
+  white-space: nowrap;
+  background: rgb(var(--surface));
+  box-shadow: -1px 0 0 rgb(var(--border));
+}
+
+.kx-tabla tbody tr:hover td {
+  background: rgb(var(--surface-2));
+}
+
+@container (max-width: 58rem) {
+  .kx-tabla-scroll {
+    overflow: visible;
+  }
+
+  .kx-tabla {
+    min-width: 0;
+  }
+
+  .kx-tabla thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .kx-tabla,
+  .kx-tabla tbody,
+  .kx-tabla tr,
+  .kx-tabla td {
+    display: block;
+    width: auto;
+  }
+
+  .kx-tabla tbody {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .kx-tabla tr {
+    border: 1px solid rgb(var(--border));
+    border-radius: var(--r-m);
+    padding: 0.5rem 0.875rem;
+    background: rgb(var(--surface));
+  }
+
+  .kx-tabla td {
+    display: grid;
+    grid-template-columns: minmax(6rem, 9.5rem) minmax(0, 1fr);
+    gap: 0.75rem;
+    border: 0;
+    padding: 0.3125rem 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .kx-tabla td::before {
+    content: attr(data-l);
+    color: rgb(var(--text-muted));
+    font: 700 0.8125rem var(--font-body);
+  }
+
+  .kx-tabla td > * {
+    justify-self: start;
+  }
+
+  .kx-tabla tbody tr:hover td {
+    background: transparent;
+  }
+
+  .kx-tabla .kx-acciones {
+    position: static;
+    width: auto;
+    box-shadow: none;
+    border-top: 1px solid rgb(var(--border));
+    margin-top: 0.375rem;
+    padding-top: 0.5rem;
+  }
+
+  /* Las acciones y las celdas «completas» no llevan encabezado delante. */
+  .kx-tabla td:not([data-l]) {
+    display: block;
+  }
+
+  .kx-tabla td:not([data-l])::before {
+    display: none;
+  }
+
+  .kx-tabla .kx-acciones > div {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------- Zona de arrastre: «hormigas» del borde ---------- */
+.kx-hormigas rect {
+  x: 1.5px;
+  y: 1.5px;
+  width: calc(100% - 3px);
+  height: calc(100% - 3px);
+  rx: var(--r-l);
+  fill: none;
+  stroke: rgb(var(--primary));
+  stroke-width: 2;
+  stroke-dasharray: 9 8;
+}
+
+.kx-drop:hover .kx-hormigas rect,
+.kx-drop[data-sobre='true'] .kx-hormigas rect {
+  stroke-width: 3;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .kx-hormigas rect {
+    animation: kx-hormigas 1s linear infinite;
+  }
+
+  .kx-drop:hover .kx-hormigas rect,
+  .kx-drop[data-sobre='true'] .kx-hormigas rect {
+    animation-duration: 0.35s;
+  }
+}
+
+@keyframes kx-hormigas {
+  to {
+    stroke-dashoffset: -17;
+  }
+}

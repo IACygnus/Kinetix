@@ -1,0 +1,33 @@
+/*
+ * Tipografías autoalojadas (rediseño, Etapa 0). Sin CDN.
+ *
+ * Extraídas tal cual de las @font-face en base64 de docs/diseno/kinetix-mockup.html:
+ * fuentes variables, subconjunto latino (cubre todo el español; no trae «≤»).
+ *   - Plus Jakarta Sans: la interfaz entera.
+ *   - JetBrains Mono: código, nombres de archivo y cifras del inicio de sesión.
+ *   - Space Grotesk: el titular del inicio de sesión.
+ */
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('../assets/fonts/plus-jakarta-sans-var.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../assets/fonts/jetbrains-mono-var.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('../assets/fonts/space-grotesk-var.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}

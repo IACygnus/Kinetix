@@ -1,80 +1,53 @@
+/* Rediseño (Etapa 0): tokens y tipografías primero; el resto sale de ellos. */
+@import './styles/tokens.css';
+@import './styles/fonts.css';
+@import './styles/ui.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Inter se declaraba aquí y no cargaba de ningún sitio (auditoría 153 §1f): se
+   pintaba Segoe UI en Windows y otra cosa en cada sistema. Ahora la familia es
+   la autoalojada del mockup. */
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #0a1628;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
 }
 
-/* Scrollbar styling for SQA dark theme */
+/* Foco visible en toda la app (WCAG 2.4.7). Las pantallas que ya ponían su
+   propio anillo con `focus:outline-none focus:ring-*` lo conservan: las
+   utilidades de Tailwind van después y ganan. */
+:focus-visible {
+  outline: 3px solid rgb(var(--focus));
+  outline-offset: 2px;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a1628;
+  background: rgb(var(--surface-2));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e3a5f;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #2a5080;
+  background: rgb(var(--border-strong));
+  border-radius: 4px;
 }
 
 .no-print {
   display: none !important;
 }
 
-/* Particle animation for Login */
-@keyframes float-particle {
-  0%, 100% {
-    transform: translateY(0px) translateX(0px);
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  90% {
-    opacity: 1;
-  }
-  50% {
-    transform: translateY(-100px) translateX(30px);
-  }
-}
-
-.particle {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  background: rgba(245, 166, 35, 0.3);
-  border-radius: 50%;
-  animation: float-particle 6s ease-in-out infinite;
-}
-
-.particle:nth-child(2) { animation-delay: 1s; animation-duration: 8s; }
-.particle:nth-child(3) { animation-delay: 2s; animation-duration: 7s; }
-.particle:nth-child(4) { animation-delay: 3s; animation-duration: 9s; }
-.particle:nth-child(5) { animation-delay: 0.5s; animation-duration: 6.5s; }
-.particle:nth-child(6) { animation-delay: 1.5s; animation-duration: 7.5s; }
-.particle:nth-child(7) { animation-delay: 2.5s; animation-duration: 8.5s; }
-.particle:nth-child(8) { animation-delay: 3.5s; animation-duration: 5.5s; }
-
-/* Header solid background */
-.sqa-animated-header {
-  background-color: #0a1628;
-}
-
-/* Slide-in animation for toast notifications */
+/* Slide-in animation for toast notifications (Dashboard.tsx, protegido) */
 @keyframes slide-in-right {
   from {
     transform: translateX(100%);

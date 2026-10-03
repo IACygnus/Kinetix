@@ -1,0 +1,183 @@
+/*
+ * Tokens del sistema de diseño de Kinetix (rediseño, Etapa 0).
+ *
+ * Fuente única: docs/diseno/kinetix-mockup.html, variante Índigo (data-dir="i").
+ * Generado de sus bloques de tokens; no se edita a mano un valor sin cambiarlo
+ * primero en el mockup o en docs/DESIGN_SYSTEM.md.
+ *
+ * Los colores van como canales RGB sueltos («79 70 229») para que Tailwind pueda
+ * aplicarles opacidad: rgb(var(--primary) / <alpha-value>). En CSS propio se
+ * usan igual: rgb(var(--primary)). El comentario de cada línea es el hex del mockup.
+ *
+ * Tema: data-theme="light" | "dark" en <html>. La clase .tema-claro fuerza el
+ * claro en un subárbol (el contenido de las pantallas aún no migradas).
+ *
+ * Este es el ÚNICO archivo del frontend donde puede escribirse un color literal
+ * (tools/check_tokens.py lo exime a propósito).
+ */
+
+:root,
+:root[data-theme='light'],
+.tema-claro {
+  --bg: 243 244 249; /* #F3F4F9 */
+  --surface: 255 255 255; /* #FFFFFF */
+  --surface-2: 238 240 248; /* #EEF0F8 */
+  --border: 223 226 238; /* #DFE2EE */
+  --border-strong: 124 131 161; /* #7C83A1 */
+  --text: 20 21 58; /* #14153A */
+  --text-muted: 85 90 123; /* #555A7B */
+  --link: 67 56 202; /* #4338CA */
+  --primary: 79 70 229; /* #4F46E5 */
+  --on-primary: 255 255 255; /* #FFFFFF */
+  --primary-hover: 67 56 202; /* #4338CA */
+  --primary-soft: 232 234 255; /* #E8EAFF */
+  --on-primary-soft: 55 48 163; /* #3730A3 */
+  --accent: 165 180 252; /* #A5B4FC */
+  --accent-text: 67 56 202; /* #4338CA */
+  --cta: 79 70 229; /* #4F46E5 */
+  --on-cta: 255 255 255; /* #FFFFFF */
+  --cta-hover: 67 56 202; /* #4338CA */
+  --nav-bg: 30 27 75; /* #1E1B4B */
+  --nav-text: 255 255 255; /* #FFFFFF */
+  --nav-muted: 199 210 254; /* #C7D2FE */
+  --nav-hover: 49 46 129; /* #312E81 */
+  --nav-active-bg: 79 70 229; /* #4F46E5 */
+  --nav-active-text: 255 255 255; /* #FFFFFF */
+  --nav-border: 49 46 129; /* #312E81 */
+  --nav-label: 199 210 254; /* #C7D2FE */
+  --hdr-bg: 30 27 75; /* #1E1B4B */
+  --hdr-text: 255 255 255; /* #FFFFFF */
+  --hdr-muted: 199 210 254; /* #C7D2FE */
+  --hdr-border: 30 27 75; /* #1E1B4B */
+  --lg-bg: 49 46 129; /* #312E81 */
+  --lg-2: 79 70 229; /* #4F46E5 */
+  --lg-text: 255 255 255; /* #FFFFFF */
+  --lg-muted: 199 210 254; /* #C7D2FE */
+  --lg-line: 199 210 254; /* #C7D2FE */
+  --lg-hot: 252 163 17; /* #FCA311 */
+  --brand-bg: 30 27 75; /* #1E1B4B */
+  --brand-text: 255 255 255; /* #FFFFFF */
+  --brand-muted: 199 210 254; /* #C7D2FE */
+  --hero-bg: 67 56 202; /* #4338CA */
+  --hero-2: 85 72 224; /* #5548E0 */
+  --hero-text: 255 255 255; /* #FFFFFF */
+  --hero-muted: 224 231 255; /* #E0E7FF */
+  --hero-line: 199 210 254; /* #C7D2FE */
+  --ok: 11 107 58; /* #0B6B3A */
+  --ok-bg: 225 244 232; /* #E1F4E8 */
+  --warn: 122 75 0; /* #7A4B00 */
+  --warn-bg: 255 241 204; /* #FFF1CC */
+  --err: 168 32 26; /* #A8201A */
+  --err-bg: 252 232 230; /* #FCE8E6 */
+  --info: 55 48 163; /* #3730A3 */
+  --info-bg: 232 234 255; /* #E8EAFF */
+  --danger: 179 38 30; /* #B3261E */
+  --on-danger: 255 255 255; /* #FFFFFF */
+  --focus: 67 56 202; /* #4338CA */
+  --focus-nav: 255 255 255; /* #FFFFFF */
+  --focus-hdr: 255 255 255; /* #FFFFFF */
+  --focus-hero: 255 255 255; /* #FFFFFF */
+  --chart-1: 79 70 229; /* #4F46E5 */
+  --chart-2: 199 106 0; /* #C76A00 */
+  --chart-3: 14 159 110; /* #0E9F6E */
+  --sh-card: 0 1px 2px rgb(20 21 58 / .05),0 12px 28px -16px rgb(20 21 58 / .18);
+  --sh-pop: 0 24px 60px -16px rgb(20 21 58 / .38);
+  /* Velo de los modales y del menú desplegable (rgb(6 11 41 / .6) en el mockup) */
+  --scrim: 6 11 41;
+  /* Sombra del botón de pausa y de los segmentados */
+  --sh-seg: 0 1px 2px rgb(20 21 58 / .15);
+  /* Sombra de la tarjeta del inicio de sesión */
+  --sh-login: 0 40px 90px -30px rgb(5 6 25 / .75);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: 13 14 36; /* #0D0E24 */
+  --surface: 22 24 58; /* #16183A */
+  --surface-2: 32 35 77; /* #20234D */
+  --border: 44 48 98; /* #2C3062 */
+  --border-strong: 122 128 184; /* #7A80B8 */
+  --text: 238 240 255; /* #EEF0FF */
+  --text-muted: 169 174 214; /* #A9AED6 */
+  --link: 165 180 252; /* #A5B4FC */
+  --primary: 139 147 249; /* #8B93F9 */
+  --on-primary: 13 14 36; /* #0D0E24 */
+  --primary-hover: 165 180 252; /* #A5B4FC */
+  --primary-soft: 38 41 92; /* #26295C */
+  --on-primary-soft: 199 210 254; /* #C7D2FE */
+  --accent: 109 95 245; /* #6D5FF5 */
+  --accent-text: 199 210 254; /* #C7D2FE */
+  --cta: 139 147 249; /* #8B93F9 */
+  --on-cta: 13 14 36; /* #0D0E24 */
+  --cta-hover: 165 180 252; /* #A5B4FC */
+  --nav-bg: 9 10 28; /* #090A1C */
+  --nav-text: 238 240 255; /* #EEF0FF */
+  --nav-muted: 169 174 214; /* #A9AED6 */
+  --nav-hover: 32 35 77; /* #20234D */
+  --nav-active-bg: 139 147 249; /* #8B93F9 */
+  --nav-active-text: 13 14 36; /* #0D0E24 */
+  --nav-border: 44 48 98; /* #2C3062 */
+  --nav-label: 169 174 214; /* #A9AED6 */
+  --hdr-bg: 9 10 28; /* #090A1C */
+  --hdr-text: 238 240 255; /* #EEF0FF */
+  --hdr-muted: 169 174 214; /* #A9AED6 */
+  --hdr-border: 44 48 98; /* #2C3062 */
+  --lg-bg: 11 12 32; /* #0B0C20 */
+  --lg-2: 42 38 128; /* #2A2680 */
+  --lg-text: 255 255 255; /* #FFFFFF */
+  --lg-muted: 185 192 238; /* #B9C0EE */
+  --lg-line: 165 180 252; /* #A5B4FC */
+  --lg-hot: 252 163 17; /* #FCA311 */
+  --brand-bg: 30 27 75; /* #1E1B4B */
+  --hero-bg: 49 46 129; /* #312E81 */
+  --hero-2: 67 56 202; /* #4338CA */
+  --hero-text: 255 255 255; /* #FFFFFF */
+  --hero-muted: 224 231 255; /* #E0E7FF */
+  --hero-line: 165 180 252; /* #A5B4FC */
+  --ok: 126 226 168; /* #7EE2A8 */
+  --ok-bg: 15 51 36; /* #0F3324 */
+  --warn: 255 212 121; /* #FFD479 */
+  --warn-bg: 58 42 5; /* #3A2A05 */
+  --err: 255 177 171; /* #FFB1AB */
+  --err-bg: 69 20 15; /* #45140F */
+  --info: 199 210 254; /* #C7D2FE */
+  --info-bg: 38 41 92; /* #26295C */
+  --danger: 196 50 42; /* #C4322A */
+  --on-danger: 255 255 255; /* #FFFFFF */
+  --focus: 199 210 254; /* #C7D2FE */
+  --focus-nav: 199 210 254; /* #C7D2FE */
+  --focus-hdr: 199 210 254; /* #C7D2FE */
+  --focus-hero: 255 255 255; /* #FFFFFF */
+  --chart-1: 124 131 240; /* #7C83F0 */
+  --chart-2: 200 130 15; /* #C8820F */
+  --chart-3: 47 174 127; /* #2FAE7F */
+  --sh-card: 0 1px 2px rgb(0 0 0 / .4);
+  --sh-pop: 0 24px 60px -16px rgb(0 0 0 / .8);
+  --brand-text: 255 255 255; /* #FFFFFF (hereda del claro en el mockup) */
+  --brand-muted: 199 210 254; /* #C7D2FE (hereda del claro en el mockup) */
+  --scrim: 0 0 0;
+  --sh-seg: 0 1px 2px rgb(0 0 0 / .4);
+  --sh-login: 0 40px 90px -30px rgb(0 0 0 / .8);
+  color-scheme: dark;
+}
+
+:root {
+  /* Tipografías: las tres autoalojadas en src/assets/fonts (fonts.css) */
+  --font-display: "Plus Jakarta Sans",system-ui,sans-serif;
+  --font-body: "Plus Jakarta Sans",system-ui,sans-serif;
+  --font-num: "Plus Jakarta Sans",system-ui,sans-serif;
+  --font-code: "JetBrains Mono",ui-monospace,monospace;
+  --r-s: 8px;
+  --r-m: 12px;
+  --r-l: 20px;
+  --r-pill: 999px;
+  --h1: 2rem;
+  --w-display: 800;
+  --ls-display: -.025em;
+  --font-titular: "Space Grotesk", system-ui, sans-serif;
+  /* Geometría del armazón */
+  --hdr-h: 3.75rem;
+  --page-max: 98rem;
+  --read-max: 68ch;
+  --riel-w: 14.5rem;
+}

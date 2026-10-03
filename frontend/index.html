@@ -1,10 +1,20 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="light" data-movimiento="activo">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SQA Kinetix Pro</title>
+    <script>
+      // Rediseño (Etapa 0): el tema y la pausa recordados se aplican ANTES del
+      // primer pintado, para que no parpadee. Mismas claves que
+      // src/context/PreferenciasContext.tsx.
+      try {
+        var d = document.documentElement;
+        if (localStorage.getItem('kx-tema') === 'dark') d.dataset.theme = 'dark';
+        if (localStorage.getItem('kx-movimiento') === 'pausado') d.dataset.movimiento = 'pausado';
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
