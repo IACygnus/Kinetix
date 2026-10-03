@@ -241,11 +241,20 @@ intermedias la reutilizaron. Nunca más de uno en 15 minutos.
   la cabecera, la tarjeta `sticky top-4` de Ejecución que ahora se mete bajo la
   cabecera fija (Etapa 5), y el título blanco de «Mi Perfil» sobre fondo claro
   (Etapa 1).
-- Entre 1100 y 1366 px la cabecera del admin ocupa dos líneas (98 px). Igual que
-  el mockup; si Fredy lo quiere en una, es una decisión de diseño (menos módulos
-  a la vista o etiquetas más cortas).
-- El retardo escalonado de entrada del texto del login (0,08 s entre líneas) no se
-  portó: necesita un retardo por elemento que Tailwind no trae sin valores
-  arbitrarios. Las líneas entran a la vez.
 - `LoadFx` superó en más de un 50 % su estimación de líneas (471 frente a 220):
   avisado aquí; es el código de las dos escenas del mockup (D11).
+
+## 10. Ajustes tras la revisión de Fredy (mismo día)
+
+| Pedido | Hecho | Comprobado |
+|---|---|---|
+| Cabecera en una sola línea | Entre 1100 y 1499 px se esconden el nombre, el rol y el atajo «Ctrl K» (corte nuevo `amplia:`, 1500 px); el avatar lleva nombre y rol en `aria-label` y `title`. Esconder solo el nombre no bastaba a 1194: los módulos seguían en dos líneas, y el atajo era lo siguiente que menos se pierde (la lupa sigue, con el atajo en su nombre accesible) | Una línea y 60 px de alto a 1194, 1280 y 1366 (claro y oscuro); nombre visible a 1536, 1920 y 2560 |
+| Punto ámbar de la fase | **Ya estaba** (`Login.tsx`, 10 × 10 px, `lg-hot`, parpadeo de 1,4 s como el mockup). Las capturas lo cogían siempre apagado: el guion fotografiaba a unos 2,1 s de cargar, que es justo la fase apagada (0,7 s + 1,4 s). Ahora el guion lo mide, y `punto-parpadeo.png` (en el zip) son 8 fotos a lo largo de un ciclo: se ve encendido, a medias y apagado | Tamaño, color y opacidad 1 en pausa, en 834 y 1366, claro y oscuro |
+| Entrada escalonada del texto | `.kx-escalonado` en `ui.css` con el token `--entrada-paso` (80 ms), como el mockup | Retardos medidos: 0 · 0,08 · 0,16 · 0,24 · 0,32 s |
+| — (encontrado al repetir) | «Performance» del login dio 4,17:1 en una corrida: una partícula le pasó por detrás. Halo del color del fondo (`.kx-sobre-lienzo`) en el texto del login | Peor texto del login: 6,2:1 |
+
+Repetidos `tsc`, `vite build`, el guardián (43 archivos, 0 valores prohibidos) y
+`etapa0.py` completo: 0 desbordes, 0 recortes, 0 objetivos pequeños, 0 fallos de
+contraste, 0 errores de JavaScript, menú idéntico por rol, lienzo quieto con pausa
+y con movimiento reducido. **Llamadas a la IA: 0. Abortadas: 0. Inicios de sesión
+en esta pasada: 1** (el de la primera corrida; la segunda reutilizó la sesión).

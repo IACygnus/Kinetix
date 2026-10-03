@@ -180,4 +180,7 @@
   --page-max: 98rem;
   --read-max: 68ch;
   --riel-w: 14.5rem;
+  /* Movimiento: separación entre las líneas de una entrada escalonada
+     (mockup: .lg-copy>*:nth-child(n), .08s entre una y otra) */
+  --entrada-paso: 80ms;
 }

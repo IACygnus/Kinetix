@@ -23,6 +23,9 @@ export default {
       screens: {
         cabecera: '901px',
         nav: '1100px',
+        // Desde 1500 px vuelve el nombre del usuario a la cabecera: entre 1100 y
+        // 1500 los siete módulos del admin no caben en una línea con él.
+        amplia: '1500px',
       },
       gridTemplateColumns: {
         login: 'minmax(0, 1.3fr) minmax(19rem, 27rem)',

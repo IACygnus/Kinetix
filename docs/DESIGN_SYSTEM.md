@@ -288,6 +288,11 @@ Reglas:
    (barras), `flota` (icono de la zona de arrastre). Duraciones de 0,18 a 1,8 s con
    `cubic-bezier(.2,.8,.2,1)` (`ease-suave`).
 5. Nada parpadea más de 3 veces por segundo (WCAG 2.3.1).
+6. **Entrada escalonada**: los hijos de `.kx-escalonado` (en `ui.css`) entran uno
+   tras otro, separados por el token `--entrada-paso` (80 ms). Solo afecta a los
+   que ya tienen una animación `motion-safe:`.
+7. **Texto sobre un lienzo animado** lleva `.kx-sobre-lienzo`: un halo del color
+   del fondo para que una partícula que pase por detrás no baje el contraste.
 
 ## 6. Armazón y cortes de ancho
 
@@ -300,6 +305,9 @@ Reglas:
             [contenido]
             «menú» abre el panel desplegable (todos los módulos, plegables)
 
+1100-1499   la cabecera esconde el nombre, el rol y «Ctrl K»: queda el avatar
+            (nombre y rol en su aria-label y title), y los módulos caben en UNA línea
+
 <   900 px  la cabecera esconde el nombre del usuario y el atajo «Ctrl K»
 ```
 
@@ -307,10 +315,14 @@ Reglas:
 |---|---|---|
 | `nav:` | 1100 px | Módulos en la cabecera y riel vertical; por debajo, menú desplegable y sub-pestañas |
 | `cabecera:` | 901 px | Nombre del usuario y «Ctrl K»; el login pasa a dos columnas |
+| `amplia:` | 1500 px | Vuelven el nombre, el rol y «Ctrl K» a la cabecera (entre 1100 y 1499 se esconden) |
 | `sm:` … `2xl:` | los de Tailwind | Márgenes del contenido |
 
-- Entre 1100 y 1366 px los siete módulos del admin ocupan **dos líneas** en la
-  cabecera (98 px de alto). Igual que el mockup: se parte, no se corta.
+- **La cabecera es siempre de una línea (60 px).** Entre 1100 y 1499 px, para que
+  quepan los siete módulos del admin, se esconden el nombre, el rol y «Ctrl K»;
+  el avatar lleva el nombre en `aria-label` y `title` (decisión de Fredy en la
+  revisión de la Etapa 0; el mockup partía los módulos en dos líneas). Medido a
+  1194, 1280 y 1366: una línea.
 - `<main>` **no** lleva `overflow-x-hidden`: si algo no cabe, se ve.
 - Los ítems, rutas y roles del menú salen de `navegacion.ts`, una sola definición
   para cabecera, riel, menú desplegable y buscador. `ubicar(ruta)` decide el módulo

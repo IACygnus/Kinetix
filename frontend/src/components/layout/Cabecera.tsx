@@ -5,7 +5,10 @@
  *
  * (*) El botón de menú solo aparece bajo 1100 px, cuando los módulos se van
  * al menú desplegable. Bajo 900 px se esconden el nombre del usuario y el
- * atajo Ctrl K. Todo lo de la derecha son botones de 40 px.
+ * atajo Ctrl K. Entre 1100 y 1500 px el nombre y el rol también se esconden
+ * y queda solo el avatar (con el nombre en aria-label y title), para que los
+ * siete módulos del admin quepan en UNA línea. Todo lo de la derecha son
+ * botones de 40 px.
  */
 import { Link } from 'react-router-dom';
 import { Menu, Moon, Pause, Play, Search, Sun } from 'lucide-react';
@@ -77,7 +80,7 @@ export function Cabecera({ modulos, moduloActual, menuAbierto, onMenu, onBuscar,
           className="flex min-h-10 items-center gap-2 rounded-control border border-nav-border bg-nav-hover px-3 text-nav-muted cursor-pointer hover:text-nav-text focus-visible:outline-focus-hdr"
         >
           <Search aria-hidden="true" strokeWidth={1.8} className="h-5 w-5" />
-          <kbd className="hidden rounded border border-nav-muted px-1.5 font-code text-mini font-semibold cabecera:inline">
+          <kbd className="hidden rounded border border-nav-muted px-1.5 font-code text-mini font-semibold cabecera:inline nav:hidden amplia:inline">
             Ctrl K
           </kbd>
         </button>
@@ -99,9 +102,10 @@ export function Cabecera({ modulos, moduloActual, menuAbierto, onMenu, onBuscar,
           onClick={onUsuario}
           aria-haspopup="dialog"
           aria-label={`Cuenta de ${user?.full_name || 'usuario'}`}
+          title={`${user?.full_name || 'Usuario'} · ${nombreRol(user?.role)}`}
           className="flex items-center gap-2.5 rounded-control px-1.5 py-1 text-left text-sm leading-tight cursor-pointer hover:bg-nav-hover focus-visible:outline-focus-hdr"
         >
-          <span className="hidden max-w-60 cabecera:block">
+          <span className="hidden max-w-60 cabecera:block nav:hidden amplia:block">
             <span className="block truncate font-semibold" title={user?.full_name}>
               {user?.full_name || 'Usuario'}
             </span>

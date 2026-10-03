@@ -83,7 +83,7 @@ export default function Login() {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-velo-login opacity-90" />
 
       {/* La historia: marca, titular, cifras en vivo de la prueba simulada. */}
-      <div className="grid min-w-0 content-center gap-login-copia">
+      <div className="kx-escalonado kx-sobre-lienzo grid min-w-0 content-center gap-login-copia">
         <div className="flex items-center gap-3.5 motion-safe:animate-sube">
           <img src={logo} alt="SQA" className="block h-11 w-auto" />
           <span>

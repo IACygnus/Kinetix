@@ -67,9 +67,8 @@ Capturas de todo, en los 7 anchos, en claro y oscuro y junto al mockup:
    para que cambie, o hazlo tú con
    `git merge --ff-only rediseno-ui-e0` en `C:\proyectos\Kinetix`.
 2. **Tu aprobación** para el `git push github rediseno-ui`, que solo hago después.
-3. **Una decisión de diseño**: entre 1100 y 1366 px, los siete módulos del admin
-   ocupan **dos líneas** en la cabecera. Así está en el mockup. ¿Lo dejamos o lo
-   quieres en una línea (etiquetas más cortas o algún módulo dentro de «Más»)?
+3. ~~Cabecera en una línea~~: **hecho** tras tu revisión (reporte 155 §10). Entre
+   1100 y 1499 px queda solo el avatar.
 4. **Para la Etapa 1** (Perfil, Usuarios, Clientes, Asignaciones, Configuración IA):
    que confirmes que, una vez validado el armazón, borro `Sidebar.tsx` y
    `Footer.tsx`. Y, si quieres que pruebe las pantallas con los roles de analista

@@ -35,6 +35,26 @@ html[data-movimiento='pausado'] *::after {
   }
 }
 
+/* ---------- Entrada escalonada ----------
+ * Los hijos de .kx-escalonado entran uno tras otro, separados por
+ * --entrada-paso (tokens.css). Solo afecta a hijos que YA tienen una animación
+ * (`motion-safe:animate-sube`): con pausa o movimiento reducido no hay
+ * animación y el retardo no hace nada. Mockup: .lg-copy>*:nth-child(n).
+ */
+.kx-escalonado > :nth-child(2) { animation-delay: var(--entrada-paso); }
+.kx-escalonado > :nth-child(3) { animation-delay: calc(var(--entrada-paso) * 2); }
+.kx-escalonado > :nth-child(4) { animation-delay: calc(var(--entrada-paso) * 3); }
+.kx-escalonado > :nth-child(5) { animation-delay: calc(var(--entrada-paso) * 4); }
+
+/* ---------- Texto sobre el lienzo animado ----------
+ * Las partículas del login cruzan por detrás del texto: un halo del color del
+ * fondo (--lg-bg) evita que un trazo claro le baje el contraste por debajo de
+ * 4,5:1 (medido en la Etapa 0: «Performance» llegó a 4,17:1 sin él).
+ */
+.kx-sobre-lienzo {
+  text-shadow: 0 0 2px rgb(var(--lg-bg)), 0 0 8px rgb(var(--lg-bg));
+}
+
 /* ---------- Interruptor (Switch) ---------- */
 .kx-switch {
   appearance: none;
