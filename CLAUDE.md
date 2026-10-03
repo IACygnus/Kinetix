@@ -59,6 +59,15 @@
   Windows del agente está escrito y NO probado** (O-D21), y **el punto de
   entrada HTTPS que el modo con agente necesitaría para un servidor de un
   cliente no existe** (reporte 103 §1).
+- **Estado del rediseño de la interfaz:** **Etapa 0** (tokens, tipografías,
+  biblioteca base en `frontend/src/components/ui/`, armazón nuevo e inicio de
+  sesión) hecha en la rama `rediseno-ui-e0`, **pendiente de la validación de
+  Fredy**; reportes 155-156. La especificación visual es el mockup
+  `docs/diseno/kinetix-mockup.html` (variante Índigo). **Antes de tocar cualquier
+  pantalla, leer `docs/diseno/PLAN-REDISENO.md`** (reglas, etapas y cómo se
+  trabaja sin tocar la pantalla de Fredy) y **`docs/DESIGN_SYSTEM.md`** (tokens,
+  contraste, componentes, movimiento y cortes de ancho). El guardián de tokens es
+  `tools/check_tokens.py`.
 
 ### 1.1 REMOTOS GIT
 
