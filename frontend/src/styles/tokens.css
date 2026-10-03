@@ -176,7 +176,7 @@
   --ls-display: -.025em;
   --font-titular: "Space Grotesk", system-ui, sans-serif;
   /* Geometría del armazón */
-  --hdr-h: 3.75rem;
+  --hdr-h: 4.75rem; /* 76 px (Fredy, revisión de la Etapa 0) */
   --page-max: 98rem;
   --read-max: 68ch;
   --riel-w: 14.5rem;

@@ -16,8 +16,8 @@ export function Marca({ soloLogo, className }: { soloLogo?: boolean; className?:
         className,
       )}
     >
-      <span className="grid place-items-center rounded-control bg-brand-bg px-2.5 py-1.5">
-        <img src={logo} alt="SQA" className="block h-5.5 w-auto" />
+      <span className="grid place-items-center rounded-control bg-brand-bg px-2.5 py-1">
+        <img src={logo} alt="SQA" className="block h-9 w-auto" />
       </span>
       {!soloLogo && (
         <span className="grid leading-tight">

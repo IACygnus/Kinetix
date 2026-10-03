@@ -57,7 +57,7 @@ export function Cabecera({ modulos, moduloActual, menuAbierto, onMenu, onBuscar,
                   to={rutaDeModulo(m)}
                   aria-current={actual ? 'true' : undefined}
                   className={cx(
-                    'inline-flex min-h-10 items-center whitespace-nowrap rounded-control px-3 font-semibold no-underline',
+                    'inline-flex min-h-11 items-center whitespace-nowrap rounded-control px-3 text-base font-semibold no-underline',
                     'motion-safe:transition-colors focus-visible:outline-focus-hdr',
                     actual ? 'bg-nav-active-bg text-nav-active-text' : 'text-nav-muted hover:bg-nav-hover hover:text-nav-text',
                   )}
@@ -77,9 +77,9 @@ export function Cabecera({ modulos, moduloActual, menuAbierto, onMenu, onBuscar,
           aria-label="Buscar una pantalla (Ctrl + K)"
           title="Buscar una pantalla (Ctrl + K)"
           aria-haspopup="dialog"
-          className="flex min-h-10 items-center gap-2 rounded-control border border-nav-border bg-nav-hover px-3 text-nav-muted cursor-pointer hover:text-nav-text focus-visible:outline-focus-hdr"
+          className="flex min-h-11 items-center gap-2 rounded-control border border-nav-border bg-nav-hover px-3 text-nav-muted cursor-pointer hover:text-nav-text focus-visible:outline-focus-hdr"
         >
-          <Search aria-hidden="true" strokeWidth={1.8} className="h-5 w-5" />
+          <Search aria-hidden="true" strokeWidth={1.8} className="h-5.5 w-5.5" />
           <kbd className="hidden rounded border border-nav-muted px-1.5 font-code text-mini font-semibold cabecera:inline nav:hidden amplia:inline">
             Ctrl K
           </kbd>
@@ -113,7 +113,7 @@ export function Cabecera({ modulos, moduloActual, menuAbierto, onMenu, onBuscar,
           </span>
           <span
             aria-hidden="true"
-            className="inline-grid h-9 w-9 flex-none place-items-center rounded-pill bg-primary font-display font-extrabold text-on-primary"
+            className="inline-grid h-10 w-10 flex-none place-items-center rounded-pill bg-primary font-display font-extrabold text-on-primary"
           >
             {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
           </span>
