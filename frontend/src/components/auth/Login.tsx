@@ -1,27 +1,61 @@
 /**
- * Login - Pagina de inicio de sesion - SQA Corporate Branding
+ * Login — inicio de sesión (rediseño, Etapa 0; mockup: V.login y AFTER.login).
+ *
+ * A la izquierda, una prueba de carga simulada en <canvas> (LoadFx) con sus
+ * cifras en vivo; a la derecha, el formulario. Bajo 900 px, una columna.
+ *
+ * La autenticación es la de siempre: `login()` de AuthContext, el mensaje de
+ * sesión expirada con su cierre, el 429 del límite de intentos y el `detail`
+ * del servidor tal cual. Lo único nuevo del formulario es que avisa en la
+ * propia página si falta el usuario o la contraseña, en vez de con la burbuja
+ * del navegador (`required`).
+ *
+ * Movimiento: el botón «Pausar animación» es la MISMA pausa de la cabecera
+ * (se recuerda); con prefers-reduced-motion el lienzo es una imagen quieta y
+ * el botón no aparece.
  */
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { LogIn } from 'lucide-react';
+import { FormEvent, useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { usePreferencias } from '../../context/PreferenciasContext';
+import { LoadFx, LecturaCarga } from '../ui/LoadFx';
+import { Button } from '../ui/Button';
+import { Field } from '../ui/Field';
+import { Input } from '../ui/Input';
+import { cx } from '../ui/cx';
+import logo from '../../assets/logo-sqa.png';
+
+const nf = (n: number, d = 0) =>
+  Number(n).toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 export default function Login() {
   const navigate = useNavigate();
   const { login, isAuthenticated, sessionExpiredMessage, clearSessionMessage } = useAuth();
+  const { pausado, alternarPausa, reducido } = usePreferencias();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [faltan, setFaltan] = useState<{ usuario: boolean; clave: boolean }>({ usuario: false, clave: false });
   const [loading, setLoading] = useState(false);
+  const [lectura, setLectura] = useState<LecturaCarga | null>(null);
 
-  // Si ya esta autenticado, redirigir
+  // Si ya está autenticado, redirigir (después de todos los hooks: regla 16).
   if (isAuthenticated) {
-    navigate('/dashboard', { replace: true });
-    return null;
+    return <Navigate to="/dashboard" replace />;
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const sinUsuario = !username.trim();
+    const sinClave = !password;
+    setFaltan({ usuario: sinUsuario, clave: sinClave });
+    if (sinUsuario || sinClave) {
+      setError('');
+      document.getElementById(sinUsuario ? 'login-usuario' : 'login-clave')?.focus();
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -34,119 +68,145 @@ export default function Login() {
       if (status === 429) {
         setError(detail || 'Demasiados intentos. Intenta en 15 minutos.');
       } else {
-        setError(detail || 'Credenciales invalidas. Verifica tu usuario y contrasena.');
+        setError(detail || 'Credenciales inválidas. Verifica tu usuario y contraseña.');
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const faltaAlgo = faltan.usuario || faltan.clave;
+
   return (
-    <div className="min-h-screen bg-sqa-navy flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Particle Effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="particle" style={{ top: '20%', left: '10%' }} />
-        <div className="particle" style={{ top: '60%', left: '25%' }} />
-        <div className="particle" style={{ top: '30%', left: '70%' }} />
-        <div className="particle" style={{ top: '80%', left: '85%' }} />
-        <div className="particle" style={{ top: '10%', left: '50%' }} />
-        <div className="particle" style={{ top: '50%', left: '40%' }} />
-        <div className="particle" style={{ top: '70%', left: '60%' }} />
-        <div className="particle" style={{ top: '40%', left: '90%' }} />
-      </div>
+    <div className="relative isolate grid min-h-screen grid-cols-1 content-start items-start gap-login-gap overflow-hidden bg-lg-bg px-login-x py-login-y text-lg-text cabecera:grid-cols-login cabecera:content-center">
+      <LoadFx escena="login" onLectura={setLectura} className="-z-20" />
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-velo-login opacity-90" />
 
-      {/* Subtle gradient overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-sqa-navy via-sqa-navy-light/50 to-sqa-navy opacity-80" />
-
-      <div className="w-full relative z-10" style={{ maxWidth: '550px' }}>
-        {/* Logo and Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-7xl font-bold text-white tracking-tight">
-            sqa<span className="text-sqa-gold">_</span>
-          </h1>
-          <h2 className="text-3xl font-semibold text-slate-300 mt-4">
-            Software Quality Assurance
-          </h2>
-          <p className="text-xl text-slate-400/70 italic mt-3">
-            Del pasado aprendimos, En el presente construimos,
-            <br />
-            Para el futuro nos preparamos
-          </p>
+      {/* La historia: marca, titular, cifras en vivo de la prueba simulada. */}
+      <div className="grid min-w-0 content-center gap-login-copia">
+        <div className="flex items-center gap-3.5 motion-safe:animate-sube">
+          <img src={logo} alt="SQA" className="block h-11 w-auto" />
+          <span>
+            <b className="block font-titular text-xl font-semibold tracking-display">Kinetix</b>
+            <small className="block text-nota text-lg-muted">Performance</small>
+          </span>
         </div>
-
-        {/* Login Card - Glassmorphism */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-12 border border-white/10">
-          <h3 className="text-4xl font-bold text-white mb-10 text-center">
-            Iniciar Sesion
-          </h3>
-
-          <form onSubmit={handleSubmit} className="space-y-8">
-            <div>
-              <label className="block text-xl font-medium text-slate-300 mb-3">
-                Usuario o Email
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-6 h-16 bg-sqa-navy/60 border border-sqa-border rounded-xl text-2xl text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold transition-all"
-                placeholder="admin"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xl font-medium text-slate-300 mb-3">
-                Contrasena
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-6 h-16 bg-sqa-navy/60 border border-sqa-border rounded-xl text-2xl text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sqa-gold/50 focus:border-sqa-gold transition-all"
-                placeholder="••••••••"
-                required
-              />
-            </div>
-
-            {sessionExpiredMessage && (
-              <div className="bg-amber-900/20 border border-amber-600/50 text-amber-300 px-6 py-4 rounded-xl text-xl">
-                {sessionExpiredMessage}
-                <button
-                  type="button"
-                  onClick={clearSessionMessage}
-                  className="ml-3 text-amber-400 hover:text-amber-200 font-bold"
-                >&times;</button>
-              </div>
-            )}
-
-            {error && (
-              <div className="bg-red-900/20 border border-red-700/50 text-red-300 px-6 py-4 rounded-xl text-xl">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-sqa-gold text-sqa-navy font-bold h-16 px-6 rounded-xl text-2xl hover:bg-sqa-gold-light disabled:bg-slate-600 disabled:text-slate-400 transition-all shadow-lg hover:shadow-sqa-gold/25 hover:shadow-xl transform hover:-translate-y-0.5 flex items-center justify-center space-x-3"
+        <p className="max-w-none font-titular text-titular font-semibold tracking-titular text-lg-text motion-safe:animate-sube cabecera:max-w-titular">
+          Cada milisegundo cuenta.
+        </p>
+        <p className="max-w-lema text-lema text-lg-muted motion-safe:animate-sube">
+          Diseña, ejecuta y analiza pruebas de carga. Kinetix convierte cada JTL en un veredicto por servicio.
+        </p>
+        <div aria-hidden="true" className="flex flex-wrap gap-x-10 gap-y-3 motion-safe:animate-sube">
+          <div>
+            <span className="block text-nota text-lg-muted">Usuarios activos</span>
+            <b className="block min-w-cifra font-code text-cifra-login font-medium tabular-nums tracking-tight">
+              {nf(lectura?.usuarios ?? 0)}
+            </b>
+          </div>
+          <div>
+            <span className="block text-nota text-lg-muted">Peticiones por segundo</span>
+            <b className="block min-w-cifra font-code text-cifra-login font-medium tabular-nums tracking-tight">
+              {nf(lectura?.tps ?? 0, 1)}
+            </b>
+          </div>
+          <div>
+            <span className="block text-nota text-lg-muted">Percentil 90</span>
+            <b
+              className={cx(
+                'block min-w-cifra font-code text-cifra-login font-medium tabular-nums tracking-tight',
+                lectura?.excedido && 'text-lg-hot',
+              )}
             >
-              <LogIn className="w-8 h-8" />
-              <span>{loading ? 'Ingresando...' : 'Ingresar'}</span>
-            </button>
-          </form>
-
-          <div className="mt-8 pt-6 border-t border-white/10 text-center">
-            <p className="text-xl text-slate-500">Contacta al administrador si no tienes cuenta</p>
+              {nf(lectura?.p90 ?? 0)} ms
+            </b>
           </div>
         </div>
-
-        <div className="text-center mt-8">
-          <p className="text-2xl text-slate-500">
-            SQA Kinetix Pro
-          </p>
+        <div className="flex flex-wrap items-center gap-2.5 text-sm text-lg-muted motion-safe:animate-sube">
+          <i aria-hidden="true" className="h-2.5 w-2.5 flex-none rounded-pill bg-lg-hot motion-safe:animate-parpadeo" />
+          <span>
+            <strong className="font-semibold text-lg-text">{lectura?.fase ?? 'Rampa de subida'}</strong> · prueba simulada
+          </span>
+          {!reducido && (
+            <button
+              type="button"
+              onClick={alternarPausa}
+              aria-pressed={pausado}
+              className="min-h-8 rounded-pill border border-lg-muted bg-lg-bg/70 px-3 text-nota font-semibold text-lg-text cursor-pointer hover:bg-lg-bg focus-visible:outline-focus-hero"
+            >
+              {pausado ? 'Reanudar animación' : 'Pausar animación'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* El formulario. */}
+      <form
+        noValidate
+        onSubmit={handleSubmit}
+        className="grid w-full max-w-tarjeta-login gap-4 rounded-tarjeta-login bg-surface p-tarjeta-login text-ink shadow-login ring-1 ring-line motion-safe:animate-tarjeta cabecera:max-w-none cabecera:justify-self-end"
+      >
+        <div>
+          <h1 className="font-display text-tarjeta font-extrabold leading-tight tracking-display">Iniciar sesión</h1>
+          <p className="text-ink-muted">Entra con tu usuario de SQA.</p>
+        </div>
+
+        <Field id="login-usuario" etiqueta="Usuario o correo">
+          <Input
+            id="login-usuario"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            invalido={faltan.usuario}
+            aria-describedby={faltaAlgo ? 'login-faltan' : undefined}
+          />
+        </Field>
+
+        <Field id="login-clave" etiqueta="Contraseña">
+          <Input
+            id="login-clave"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            invalido={faltan.clave}
+            aria-describedby={faltaAlgo ? 'login-faltan' : undefined}
+          />
+        </Field>
+
+        {faltaAlgo && (
+          <p id="login-faltan" role="alert" className="text-sm font-semibold text-err">
+            Escribe tu usuario y tu contraseña.
+          </p>
+        )}
+
+        {sessionExpiredMessage && (
+          <div role="status" className="flex items-start gap-2 rounded-control bg-warn-bg px-4 py-3 text-warn">
+            <p className="flex-1 text-ink">{sessionExpiredMessage}</p>
+            <button
+              type="button"
+              onClick={clearSessionMessage}
+              aria-label="Cerrar el aviso"
+              title="Cerrar el aviso"
+              className="-my-1 inline-grid h-8 w-8 flex-none place-items-center rounded-chico cursor-pointer hover:bg-surface/60"
+            >
+              <X aria-hidden="true" strokeWidth={1.8} className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p role="alert" className="rounded-control bg-err-bg px-4 py-3 font-semibold text-err">
+            {error}
+          </p>
+        )}
+
+        <Button type="submit" variant="cta" size="lg" bloque cargando={loading}>
+          {loading ? 'Ingresando…' : 'Ingresar'}
+        </Button>
+
+        <p className="text-sm text-ink-muted">Contacta al administrador si no tienes cuenta.</p>
+      </form>
     </div>
   );
 }
